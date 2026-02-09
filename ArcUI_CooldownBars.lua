@@ -6311,9 +6311,19 @@ local function UpdateTimerBar(barData)
   local remaining = barData.endTime - GetTime()
   
   if remaining <= 0 then
-    -- Timer completed
+    -- Timer completed - show full bar again
     barData.isActive = false
     barData.bar:SetScript("OnUpdate", nil)
+    barData.durObj = nil
+    
+    -- Clear timer duration control and reset bar to full
+    barData.bar:SetMinMaxValues(0, 1)
+    barData.bar:SetTimerDuration(nil)  -- Clear timer control
+    barData.bar:SetValue(1)
+    local barTexture = barData.bar:GetStatusBarTexture()
+    if barTexture then
+      barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+    end
     
     if barData.showZeroWhenReady then
       SetDurationText("0")
