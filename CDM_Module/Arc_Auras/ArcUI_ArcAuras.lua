@@ -1986,8 +1986,9 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
     -- Ensure scale is 1 (size is handled above)
     frame:SetScale(1)
     
-    -- Check if Masque is controlling this frame's icon
-    local masqueActive = frame._arcAuraMasqueRegistered and ns.Masque and ns.Masque.IsEnabled and ns.Masque.IsEnabled()
+    -- Check if Masque is globally enabled - skip ArcUI visuals even if frame not yet registered
+    -- This prevents visual conflicts during zone load when frames are updated before Masque registration
+    local masqueActive = ns.Masque and ns.Masque.IsEnabled and ns.Masque.IsEnabled()
     
     -- Get zoom and padding from config (needed for cooldown positioning even when Masque is active)
     local zoom = cfg.zoom or 0.08
@@ -1996,11 +1997,8 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
     -- Apply zoom/texcoords (skip if Masque is active)
     if frame.Icon then
         if masqueActive then
-            -- Masque controls icon - reset to defaults
-            frame.Icon:SetTexCoord(0, 1, 0, 1)
-            frame.Icon:ClearAllPoints()
-            frame.Icon:SetAllPoints()
-            -- Override padding/zoom when Masque is active
+            -- Masque controls icon completely - don't touch it at all
+            -- Just override padding/zoom values so any later code doesn't try to use them
             zoom = 0
             padding = 0
         else
@@ -2025,7 +2023,7 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
     if frame.Cooldown then
         local swipe = cfg.cooldownSwipe or {}
         
-        -- Basic swipe settings
+        -- Basic swipe settings (apply regardless of Masque - these are user preferences)
         frame.Cooldown:SetDrawSwipe(swipe.showSwipe ~= false)
         frame.Cooldown:SetDrawEdge(swipe.showEdge ~= false)
         frame.Cooldown:SetDrawBling(swipe.showBling ~= false)
@@ -2052,34 +2050,37 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
         end
         
         -- Swipe insets (adjust cooldown frame positioning)
-        local swipeInsetX, swipeInsetY
-        
-        if swipe.separateInsets then
-            swipeInsetX = swipe.swipeInsetX or 0
-            swipeInsetY = swipe.swipeInsetY or 0
-        else
-            local inset = swipe.swipeInset or 0
-            swipeInsetX = inset
-            swipeInsetY = inset
-        end
-        
-        local totalPaddingX = padding + swipeInsetX
-        local totalPaddingY = padding + swipeInsetY
-        
-        -- Apply insets to cooldown frame
-        frame.Cooldown:ClearAllPoints()
-        frame.Cooldown:SetPoint("TOPLEFT", frame, "TOPLEFT", totalPaddingX, -totalPaddingY)
-        frame.Cooldown:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -totalPaddingX, totalPaddingY)
-        
-        -- Store padding for hooks
-        frame.Cooldown._arcPaddingX = totalPaddingX
-        frame.Cooldown._arcPaddingY = totalPaddingY
-        
-        -- Apply texcoord range to cooldown swipe to match icon crop
-        if swipe.showSwipe ~= false then
-            local left, right, top, bottom = zoom, 1 - zoom, zoom, 1 - zoom
-            if frame.Cooldown.SetSwipeTexCoords then
-                frame.Cooldown:SetSwipeTexCoords(left, right, top, bottom)
+        -- Skip positioning when Masque is active - Masque controls size and position
+        if not masqueActive then
+            local swipeInsetX, swipeInsetY
+            
+            if swipe.separateInsets then
+                swipeInsetX = swipe.swipeInsetX or 0
+                swipeInsetY = swipe.swipeInsetY or 0
+            else
+                local inset = swipe.swipeInset or 0
+                swipeInsetX = inset
+                swipeInsetY = inset
+            end
+            
+            local totalPaddingX = padding + swipeInsetX
+            local totalPaddingY = padding + swipeInsetY
+            
+            -- Apply insets to cooldown frame
+            frame.Cooldown:ClearAllPoints()
+            frame.Cooldown:SetPoint("TOPLEFT", frame, "TOPLEFT", totalPaddingX, -totalPaddingY)
+            frame.Cooldown:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -totalPaddingX, totalPaddingY)
+            
+            -- Store padding for hooks
+            frame.Cooldown._arcPaddingX = totalPaddingX
+            frame.Cooldown._arcPaddingY = totalPaddingY
+            
+            -- Apply texcoord range to cooldown swipe to match icon crop
+            if swipe.showSwipe ~= false then
+                local left, right, top, bottom = zoom, 1 - zoom, zoom, 1 - zoom
+                if frame.Cooldown.SetSwipeTexCoords then
+                    frame.Cooldown:SetSwipeTexCoords(left, right, top, bottom)
+                end
             end
         end
         

@@ -377,6 +377,85 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function() return not expandedTimers[timerKey] end,
       },
       
+      -- Talent conditions
+      talentCondLabel = {
+        type = "description",
+        name = "|cffffd700Talent:|r",
+        order = 10.5,
+        width = 0.35,
+        fontSize = "medium",
+        hidden = function() return not expandedTimers[timerKey] end,
+      },
+      talentCondBtn = {
+        type = "execute",
+        name = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+            return "|cff00ff00Active|r"
+          end
+          return "None"
+        end,
+        desc = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+            local summary = ns.TalentPicker and ns.TalentPicker.GetConditionSummary and 
+                            ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode) or "Active"
+            return summary .. "\n\n|cffffd700Click to edit talent conditions|r"
+          end
+          return "Show/hide this timer bar based on your talent choices.\n\n|cffffd700Click to open talent picker|r"
+        end,
+        func = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
+          local matchMode = cfg and cfg.behavior and cfg.behavior.talentMatchMode or "all"
+          
+          if ns.TalentPicker and ns.TalentPicker.OpenPicker then
+            ns.TalentPicker.OpenPicker(existingConditions, matchMode, function(conditions, newMatchMode)
+              local timerCfg = ns.CooldownBars.GetTimerConfig(timerID)
+              if timerCfg then
+                if not timerCfg.behavior then timerCfg.behavior = {} end
+                timerCfg.behavior.talentConditions = conditions
+                timerCfg.behavior.talentMatchMode = newMatchMode
+                -- Refresh bar visibility immediately
+                if ns.CooldownBars and ns.CooldownBars.UpdateBarVisibilityForSpec then
+                  ns.CooldownBars.UpdateBarVisibilityForSpec()
+                end
+                LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+              end
+            end)
+          else
+            print("|cff00ccffArc UI|r: Talent picker not available")
+          end
+        end,
+        order = 10.6,
+        width = 0.45,
+        hidden = function() return not expandedTimers[timerKey] end,
+      },
+      talentCondClear = {
+        type = "execute",
+        name = "X",
+        desc = "Clear talent conditions",
+        func = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg and cfg.behavior then
+            cfg.behavior.talentConditions = nil
+            cfg.behavior.talentMatchMode = nil
+            -- Refresh bar visibility immediately
+            if ns.CooldownBars and ns.CooldownBars.UpdateBarVisibilityForSpec then
+              ns.CooldownBars.UpdateBarVisibilityForSpec()
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+          end
+        end,
+        order = 10.7,
+        width = 0.2,
+        hidden = function()
+          if not expandedTimers[timerKey] then return true end
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
+        end,
+      },
+      
       lineBreak3 = {
         type = "description",
         name = "",

@@ -1126,6 +1126,10 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
             if ns.Masque.IsMasqueActive() then
                 ns.Masque.ReregisterAllFrames()
             end
+            -- Also refresh Arc Auras to ensure correct Masque state
+            if ns.ArcAuras and ns.ArcAuras.RefreshMasqueState then
+                ns.ArcAuras.RefreshMasqueState()
+            end
         end)
         
         -- Second pass for any stragglers
@@ -1143,6 +1147,10 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(0.3, function()
             if ns.Masque.IsMasqueActive() then
                 ns.Masque.ReregisterAllFrames()
+            end
+            -- Also refresh Arc Auras to ensure correct Masque state
+            if ns.ArcAuras and ns.ArcAuras.RefreshMasqueState then
+                ns.ArcAuras.RefreshMasqueState()
             end
         end)
     end
