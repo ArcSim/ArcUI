@@ -1,7 +1,8 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- ArcUI Data Repair Module
--- Fixes SavedVariables corruption (sparse arrays in resourceBars/cooldownBars)
--- Version: 1.4
+-- ArcUI Data Repair & Cleanup Module
+-- Removes bloated empty bar configs from SavedVariables
+-- Fixes CDM profile corruption
+-- Version: 2.0
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local ADDON_NAME, ns = ...
@@ -16,78 +17,108 @@ local function PrintMsg(msg)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- REPAIR: Fill Sparse Array Holes in resourceBars
+-- HELPER: Check if a bar entry is an empty/unconfigured default
+-- Returns true if the bar has no real tracking config (safe to remove)
 -- ═══════════════════════════════════════════════════════════════════════════
-local function FillResourceBarHoles()
-    if not ns.db or not ns.db.char or not ns.db.char.resourceBars then 
-        return 0 
-    end
+local function IsEmptyBar(bar)
+    if not bar or not bar.tracking then return true end
     
-    local resourceBars = ns.db.char.resourceBars
-    local maxIndex = 0
-    local fixed = 0
+    -- A bar is empty if tracking is disabled AND no spell/buff/cooldown is configured
+    -- This protects bars that are temporarily disabled but have real config
+    if bar.tracking.enabled then return false end
     
-    for k, v in pairs(resourceBars) do
-        if type(k) == "number" and k >= 1 and math.floor(k) == k then
-            if k > maxIndex then maxIndex = k end
-        end
-    end
+    local hasSpell = bar.tracking.spellID and bar.tracking.spellID > 0
+    local hasBuff = bar.tracking.buffName and bar.tracking.buffName ~= ""
+    local hasCooldown = bar.tracking.cooldownID and bar.tracking.cooldownID > 0
+    local hasCustom = bar.tracking.customEnabled and bar.tracking.customSpellID and bar.tracking.customSpellID > 0
     
-    for i = 1, maxIndex do
-        if resourceBars[i] == nil then
-            resourceBars[i] = CopyTable(ns.DB_DEFAULTS.char.resourceBars[1])
-            resourceBars[i].tracking.enabled = false
-            resourceBars[i].display.enabled = false
-            local yOffset = -100 - ((i - 1) * 35)
-            resourceBars[i].display.barPosition.y = yOffset
-            resourceBars[i].display.textPosition.y = yOffset + 30
-            PrintMsg("Filled empty resourceBars[" .. i .. "]")
-            fixed = fixed + 1
-        end
-    end
+    return not hasSpell and not hasBuff and not hasCooldown and not hasCustom
+end
+
+local function IsEmptyResourceBar(bar)
+    if not bar or not bar.tracking then return true end
+    if bar.tracking.enabled then return false end
     
-    return fixed
+    -- Resource bar is empty if no power type is configured
+    local hasPower = bar.tracking.powerType and bar.tracking.powerType > 0
+    local hasPowerName = bar.tracking.powerName and bar.tracking.powerName ~= ""
+    local hasSecondary = bar.tracking.secondaryType and bar.tracking.secondaryType ~= ""
+    
+    return not hasPower and not hasPowerName and not hasSecondary
+end
+
+local function IsEmptyCooldownBar(bar)
+    if not bar or not bar.tracking then return true end
+    if bar.tracking.enabled then return false end
+    
+    return true  -- Legacy cooldownBars: if not enabled, it's unused
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- REPAIR: Fill Sparse Array Holes in cooldownBars
+-- CLEANUP: Remove empty/unconfigured bars for current character
+-- Old versions pre-created 20-30 empty bar slots per character.
+-- All bar iteration uses pairs() so sparse arrays are safe.
+-- GetBarConfig() auto-creates from defaults if accessed later.
+-- InitializeNewCooldownBar() loops for i=1,500 checking nil → reuses slots.
 -- ═══════════════════════════════════════════════════════════════════════════
-local function FillCooldownBarHoles()
-    if not ns.db or not ns.db.char or not ns.db.char.cooldownBars then 
-        return 0 
+local function CleanEmptyBars()
+    if not ns.db or not ns.db.char or not ns.db.char.bars then
+        return 0
+    end
+    
+    local bars = ns.db.char.bars
+    local removed = 0
+    
+    for i, bar in pairs(bars) do
+        if type(i) == "number" and IsEmptyBar(bar) then
+            bars[i] = nil
+            removed = removed + 1
+        end
+    end
+    
+    return removed
+end
+
+local function CleanEmptyResourceBars()
+    if not ns.db or not ns.db.char or not ns.db.char.resourceBars then
+        return 0
+    end
+    
+    local resourceBars = ns.db.char.resourceBars
+    local removed = 0
+    
+    for i, bar in pairs(resourceBars) do
+        if type(i) == "number" and IsEmptyResourceBar(bar) then
+            resourceBars[i] = nil
+            removed = removed + 1
+        end
+    end
+    
+    return removed
+end
+
+local function CleanEmptyCooldownBars()
+    if not ns.db or not ns.db.char or not ns.db.char.cooldownBars then
+        return 0
     end
     
     local cooldownBars = ns.db.char.cooldownBars
-    local maxIndex = 0
-    local fixed = 0
+    local removed = 0
     
-    for k, v in pairs(cooldownBars) do
-        if type(k) == "number" and k >= 1 and math.floor(k) == k then
-            if k > maxIndex then maxIndex = k end
+    for i, bar in pairs(cooldownBars) do
+        if type(i) == "number" and IsEmptyCooldownBar(bar) then
+            cooldownBars[i] = nil
+            removed = removed + 1
         end
     end
     
-    for i = 1, maxIndex do
-        if cooldownBars[i] == nil then
-            cooldownBars[i] = CopyTable(ns.DB_DEFAULTS.char.cooldownBars[1])
-            cooldownBars[i].tracking.enabled = false
-            cooldownBars[i].display.enabled = false
-            local yOffset = -200 - ((i - 1) * 30)
-            cooldownBars[i].display.barPosition.y = yOffset
-            cooldownBars[i].display.textPosition.y = yOffset + 30
-            cooldownBars[i].display.iconPosition.y = yOffset
-            PrintMsg("Filled empty cooldownBars[" .. i .. "]")
-            fixed = fixed + 1
-        end
-    end
-    
-    return fixed
+    return removed
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- REPAIR: Fix Missing CDM Profile
 -- ═══════════════════════════════════════════════════════════════════════════
-local function FixMissingActiveProfile()
+local function FixMissingActiveProfile(silent)
     if not ns.db or not ns.db.char or not ns.db.char.cdmGroups then
         return 0
     end
@@ -101,11 +132,13 @@ local function FixMissingActiveProfile()
         if type(specData) == "table" and specData.layoutProfiles and specData.activeProfile then
             local activeProfile = specData.activeProfile
             if not specData.layoutProfiles[activeProfile] then
-                PrintMsg("Profile '" .. activeProfile .. "' missing for " .. specKey)
+                if not silent then
+                    PrintMsg("Profile '" .. activeProfile .. "' missing for " .. specKey)
+                end
                 
                 if specData.layoutProfiles["Default"] then
                     specData.activeProfile = "Default"
-                    PrintMsg("Reset to 'Default' profile")
+                    if not silent then PrintMsg("Reset to 'Default' profile") end
                 else
                     specData.layoutProfiles["Default"] = {
                         savedPositions = {},
@@ -114,7 +147,7 @@ local function FixMissingActiveProfile()
                         iconSettings = {},
                     }
                     specData.activeProfile = "Default"
-                    PrintMsg("Created new 'Default' profile")
+                    if not silent then PrintMsg("Created new 'Default' profile") end
                 end
                 fixed = fixed + 1
             end
@@ -125,16 +158,20 @@ local function FixMissingActiveProfile()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- MAIN REPAIR FUNCTION
+-- AUTO CLEANUP: Called from Options.lua after DB init
+-- Runs every login — scan is fast (just iterates existing entries)
 -- ═══════════════════════════════════════════════════════════════════════════
-function DR.RepairSavedVariables()
-    local repairCount = 0
+function DR.RunAutoCleanup()
+    local totalRemoved = 0
     
-    repairCount = repairCount + FillResourceBarHoles()
-    repairCount = repairCount + FillCooldownBarHoles()
-    repairCount = repairCount + FixMissingActiveProfile()
+    local bars = CleanEmptyBars()
+    local resources = CleanEmptyResourceBars()
+    local cooldowns = CleanEmptyCooldownBars()
+    local profiles = FixMissingActiveProfile(true)  -- silent on auto cleanup
     
-    return repairCount
+    totalRemoved = bars + resources + cooldowns + profiles
+    
+    return totalRemoved
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -143,7 +180,7 @@ end
 function DR.EmergencyRepair()
     PrintMsg("Running emergency repair...")
     
-    local repairCount = DR.RepairSavedVariables()
+    local repairCount = DR.RunAutoCleanup()
     
     -- Create current spec data if missing
     if ns.db and ns.db.char and ns.db.char.cdmGroups then
@@ -198,7 +235,7 @@ SlashCmdList["ARCUIREPAIR"] = function(msg)
     if msg == "emergency" then
         DR.EmergencyRepair()
     else
-        local count = DR.RepairSavedVariables()
+        local count = DR.RunAutoCleanup()
         if count == 0 then
             PrintMsg("No repairs needed - data looks healthy!")
         else

@@ -19,7 +19,7 @@
 --   }
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local Type, Version = "ItemDropBox", 2
+local Type, Version = "ItemDropBox", 3
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 if not AceGUI or (AceGUI:GetWidgetVersion(Type) or 0) >= Version then return end
 
@@ -29,7 +29,7 @@ local methods = {
         self:SetHeight(110)
         self:SetFullWidth(true)
         self.itemID = nil
-        self.frame.StatusText:SetText("|cff888888Drop item from bags here|r")
+        self.frame.StatusText:SetText("|cff888888Drop item or spell here|r")
         self.frame.DropBox.Icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot")
         self.frame.DropBox.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     end,
@@ -56,7 +56,7 @@ local methods = {
     
     -- AceConfig compatibility - SetLabel (from name field)
     ["SetLabel"] = function(self, text)
-        self.frame.Title:SetText(text or "|cff00CCFFDrag Item to Track|r")
+        self.frame.Title:SetText(text or "|cff00CCFFDrag Item or Spell to Track|r")
     end,
     
     -- AceConfig compatibility - SetText (alias for SetLabel)
@@ -99,7 +99,7 @@ local methods = {
         else
             self.frame.DropBox.Icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot")
             self.frame.DropBox.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            self.frame.StatusText:SetText("|cff888888Drop item from bags here|r")
+            self.frame.StatusText:SetText("|cff888888Drop item or spell here|r")
         end
     end,
     
@@ -146,7 +146,7 @@ local function Constructor()
     -- Title (centered at top)
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", frame, "TOP", 0, -8)
-    title:SetText("|cff00CCFFDrag Item to Track|r")
+    title:SetText("|cff00CCFFDrag Item or Spell to Track|r")
     frame.Title = title
     
     -- Drop box (centered)
@@ -174,7 +174,7 @@ local function Constructor()
     -- Status text (below drop box)
     local statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 8)
-    statusText:SetText("|cff888888Drop item from bags here|r")
+    statusText:SetText("|cff888888Drop item or spell here|r")
     statusText:SetWidth(260)
     frame.StatusText = statusText
     
@@ -185,11 +185,16 @@ local function Constructor()
         callbacks = {},
     }
     
-    -- Handle item drop
+    -- Handle item or spell drop
     local function HandleDrop()
         if widget.disabled then return end
-        local infoType, itemID = GetCursorInfo()
+        local infoType, id, subType, spellIDArg = GetCursorInfo()
+        
+        -- ═══════════════════════════════════════════════════════════════
+        -- ITEM DROP
+        -- ═══════════════════════════════════════════════════════════════
         if infoType == "item" then
+            local itemID = id
             ClearCursor()
             widget.itemID = itemID
             
@@ -229,29 +234,91 @@ local function Constructor()
                         AceConfigRegistry:NotifyChange("ArcUI")
                     end
                     
-                    -- Reset status after delay
                     C_Timer.After(1.5, function()
                         if frame:IsShown() then
-                            statusText:SetText("|cff888888Drop another item|r")
+                            statusText:SetText("|cff888888Drop another item or spell|r")
                         end
                     end)
                 else
                     statusText:SetText("|cffff4444Already tracked or invalid|r")
                     C_Timer.After(2, function()
                         if frame:IsShown() then
-                            statusText:SetText("|cff888888Drop item from bags here|r")
+                            statusText:SetText("|cff888888Drop item or spell here|r")
                             widget:ClearItem()
                         end
                     end)
                 end
             else
-                -- No ArcAuras, just show what was dropped
                 statusText:SetText(name and ("|cff00ff00" .. name .. "|r") or ("|cff00ff00Item " .. itemID .. "|r"))
             end
             
-            -- Fire callbacks
             widget:Fire("OnItemDropped", itemID, name, icon)
-            widget:Fire("OnClick")  -- For AceConfig compatibility
+            widget:Fire("OnClick")
+            
+        -- ═══════════════════════════════════════════════════════════════
+        -- SPELL DROP
+        -- GetCursorInfo returns: "spell", spellIndex, bookType, spellID
+        -- In 12.0+, spellIDArg (4th return) is the actual spellID
+        -- ═══════════════════════════════════════════════════════════════
+        elseif infoType == "spell" then
+            -- Resolve actual spellID: prefer 4th return, fall back to 2nd
+            local spellID = (type(spellIDArg) == "number" and spellIDArg > 0) and spellIDArg or id
+            ClearCursor()
+            
+            -- Get spell info for display
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo(spellID)
+            local name = spellInfo and spellInfo.name
+            local icon = spellInfo and (spellInfo.iconID or spellInfo.originalIconID)
+            
+            if icon then
+                dropBox.Icon:SetTexture(icon)
+                dropBox.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            end
+            
+            -- Try to add via ArcAurasCooldown
+            local ADDON_NAME, ns = "ArcUI", _G.ArcUI_NS
+            local ArcAurasCooldown = ns and ns.ArcAurasCooldown
+            local ArcAurasOptions = ns and ns.ArcAurasOptions
+            
+            if ArcAurasCooldown and ArcAurasCooldown.AddTrackedSpell then
+                local success = ArcAurasCooldown.AddTrackedSpell(spellID)
+                
+                if success then
+                    local displayName = name or ("Spell " .. spellID)
+                    print("|cff00CCFF[Arc Auras]|r Added spell: " .. displayName)
+                    statusText:SetText("|cff00ff00Added: " .. displayName .. "|r")
+                    
+                    if ArcAurasOptions and ArcAurasOptions.InvalidateCache then
+                        ArcAurasOptions.InvalidateCache()
+                    end
+                    if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.InvalidateCache then
+                        ns.CDMEnhanceOptions.InvalidateCache()
+                    end
+                    local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+                    if AceConfigRegistry then
+                        AceConfigRegistry:NotifyChange("ArcUI")
+                    end
+                    
+                    C_Timer.After(1.5, function()
+                        if frame:IsShown() then
+                            statusText:SetText("|cff888888Drop another item or spell|r")
+                        end
+                    end)
+                else
+                    statusText:SetText("|cffff4444Already tracked or invalid spell|r")
+                    C_Timer.After(2, function()
+                        if frame:IsShown() then
+                            statusText:SetText("|cff888888Drop item or spell here|r")
+                            widget:ClearItem()
+                        end
+                    end)
+                end
+            else
+                statusText:SetText(name and ("|cff00ff00" .. name .. "|r") or ("|cff00ff00Spell " .. spellID .. "|r"))
+            end
+            
+            widget:Fire("OnItemDropped", spellID, name, icon)
+            widget:Fire("OnClick")
         end
     end
     
@@ -263,8 +330,8 @@ local function Constructor()
     dropBox:SetScript("OnEnter", function(self)
         self:SetBackdropBorderColor(0.3, 0.8, 1, 1)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Drop Item Here", 0, 0.8, 1)
-        GameTooltip:AddLine("Drag an item from your bags", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Drop Item or Spell Here", 0, 0.8, 1)
+        GameTooltip:AddLine("Drag an item from bags or a spell from the spellbook", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     

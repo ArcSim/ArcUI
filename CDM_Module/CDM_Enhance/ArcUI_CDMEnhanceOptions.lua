@@ -51,6 +51,7 @@ local collapsedSections = {
   cooldownText = true,
   keybindText = true,      -- Per-icon keybind display settings
   customLabel = true,      -- Per-icon custom label text
+  spellUsability = true,   -- Per-icon spell usability tinting/glow
 }
 
 -- Cache for unified icon list
@@ -71,7 +72,7 @@ local RebuildUnifiedIconCache
 -- Define which fields belong to each section for per-icon indicator
 -- ===================================================================
 local SECTION_FIELDS = {
-  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "hideShadow", "debuffBorder.enabled", "pandemicBorder.enabled" },
+  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "hideShadow", "keepBright", "keepBrightAllowDesat", "debuffBorder.enabled", "pandemicBorder.enabled" },
   position = { "position" },
   -- Ready State / Aura Active - all actual stored fields
   activeState = { 
@@ -88,6 +89,8 @@ local SECTION_FIELDS = {
     "cooldownStateVisuals.readyState.glowParticles",
     "cooldownStateVisuals.readyState.glowXOffset",
     "cooldownStateVisuals.readyState.glowYOffset",
+    "cooldownStateVisuals.readyState.glowFrameStrata",
+    "cooldownStateVisuals.readyState.glowFrameLevel",
   },
   -- On Cooldown State / Aura Missing - all actual stored fields
   inactiveState = { 
@@ -103,12 +106,13 @@ local SECTION_FIELDS = {
   rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
   procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
-  cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride" },
+  cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride" },
   chargeText = { "chargeText.enabled", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY" },
   cooldownText = { "cooldownText.enabled", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
   alertEvents = { "alertEvents" },
+  spellUsability = { "spellUsability.enabled", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles" },
 }
 
 -- Purple indicator for customized sections
@@ -965,11 +969,15 @@ local function ApplyAuraReadyStateGlowSliderSetting(setter)
   ApplyAuraOnlySetting(setter)
   if ns.CDMEnhance then
     local icons = GetAuraIconsToUpdate()
-    -- Only refresh preview if active - no signature clearing, no full UpdateIcon
+    -- Invalidate cache so next FeedCooldown picks up new values
+    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
     for _, cdID in ipairs(icons) do
+      -- If preview is active, refresh preview
       if ns.CDMEnhanceOptions.IsGlowPreviewActive and ns.CDMEnhanceOptions.IsGlowPreviewActive(cdID) then
         ns.CDMEnhanceOptions.SetGlowPreview(cdID, true)
       end
+      -- Always update icon for immediate slider feedback
+      if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
     end
   end
 end
@@ -2629,6 +2637,19 @@ function ns.GetCDMAuraIconsOptionsTable()
       desc = "Per-icon scale multiplier (only used when Group Scale is disabled)",
       get = function() local c = GetAuraCfg(); return c and c.scale or 1.0 end,
       set = function(_, v)
+        -- For single Arc Aura: direct resize (no heavy refresh)
+        if not editAllUnifiedMode and not next(selectedAuraIcons) and selectedAuraIcon then
+          local cfg = ns.CDMEnhance.GetOrCreateIconSettings(selectedAuraIcon)
+          if cfg then
+            cfg.scale = v
+            -- Direct frame resize for Arc Auras
+            if ns.ArcAuras and ns.ArcAuras.SetFrameSizeDirectly and type(selectedAuraIcon) == "string" and selectedAuraIcon:match("^arc_") then
+              ns.ArcAuras.SetFrameSizeDirectly(selectedAuraIcon, v, cfg.width or 40, cfg.height or 40)
+              return
+            end
+          end
+        end
+        -- Multi-select / edit-all: use normal flow
         ApplyAuraSetting(function(c) c.scale = v end)
       end,
       order = 101, width = 0.7,
@@ -2643,7 +2664,22 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "range", name = "Width", min = 5, max = 200, step = 1,
       desc = "Icon width in pixels (before scale). Default is CDM's native size (36).",
       get = function() local c = GetAuraCfg(); return c and c.width or 36 end,
-      set = function(_, v) ApplyAuraSetting(function(c) c.width = v end) end,
+      set = function(_, v)
+        -- For single Arc Aura: direct resize (no heavy refresh)
+        if not editAllUnifiedMode and not next(selectedAuraIcons) and selectedAuraIcon then
+          local cfg = ns.CDMEnhance.GetOrCreateIconSettings(selectedAuraIcon)
+          if cfg then
+            cfg.width = v
+            -- Direct frame resize for Arc Auras
+            if ns.ArcAuras and ns.ArcAuras.SetFrameSizeDirectly and type(selectedAuraIcon) == "string" and selectedAuraIcon:match("^arc_") then
+              ns.ArcAuras.SetFrameSizeDirectly(selectedAuraIcon, cfg.scale or 1, v, cfg.height or 40)
+              return
+            end
+          end
+        end
+        -- Multi-select / edit-all: use normal flow
+        ApplyAuraSetting(function(c) c.width = v end)
+      end,
       order = 102, width = 0.65,
       hidden = function()
         if HideAuraIconAppearance() then return true end
@@ -2661,7 +2697,22 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "range", name = "Height", min = 5, max = 200, step = 1,
       desc = "Icon height in pixels (before scale). Default is CDM's native size (36).",
       get = function() local c = GetAuraCfg(); return c and c.height or 36 end,
-      set = function(_, v) ApplyAuraSetting(function(c) c.height = v end) end,
+      set = function(_, v)
+        -- For single Arc Aura: direct resize (no heavy refresh)
+        if not editAllUnifiedMode and not next(selectedAuraIcons) and selectedAuraIcon then
+          local cfg = ns.CDMEnhance.GetOrCreateIconSettings(selectedAuraIcon)
+          if cfg then
+            cfg.height = v
+            -- Direct frame resize for Arc Auras
+            if ns.ArcAuras and ns.ArcAuras.SetFrameSizeDirectly and type(selectedAuraIcon) == "string" and selectedAuraIcon:match("^arc_") then
+              ns.ArcAuras.SetFrameSizeDirectly(selectedAuraIcon, cfg.scale or 1, cfg.width or 40, v)
+              return
+            end
+          end
+        end
+        -- Multi-select / edit-all: use normal flow
+        ApplyAuraSetting(function(c) c.height = v end)
+      end,
       order = 103, width = 0.65,
       hidden = function()
         if HideAuraIconAppearance() then return true end
@@ -2714,6 +2765,39 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       set = function(_, v) ApplyAuraSetting(function(c) c.hideShadow = v end) end,
       order = 107.5, width = 0.85, hidden = HideAuraIconAppearance,
+    },
+    keepBright = {
+      type = "toggle", name = "Keep Bright",
+      desc = "Prevents the icon from being dimmed or desaturated. The icon will always stay at full brightness and color regardless of cooldown or aura state.\n\nUseful for spells you always want visible, like short-cooldown heals.",
+      get = function()
+        return GetAuraBoolSetting(function(c) return c.keepBright end, function() local c = GetAuraCfg(); return c and c.keepBright end)
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) c.keepBright = v end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 107.535, width = 0.85, hidden = HideAuraIconAppearance,
+    },
+    keepBrightAllowDesat = {
+      type = "toggle", name = "    Allow Desaturation",
+      desc = "When Keep Bright is enabled, still allow the icon to go grayscale when on cooldown or inactive. The icon stays full brightness but turns black & white.",
+      get = function()
+        return GetAuraBoolSetting(function(c) return c.keepBrightAllowDesat end, function() local c = GetAuraCfg(); return c and c.keepBrightAllowDesat end)
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) c.keepBrightAllowDesat = v end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 107.536, width = 0.85,
+      hidden = function()
+        if HideAuraIconAppearance() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.keepBright)
+      end,
     },
     showDebuffBorder = {
       type = "toggle", name = "Debuff Border",
@@ -3266,6 +3350,66 @@ function ns.GetCDMAuraIconsOptionsTable()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Button glow doesn't support offset
         return c.cooldownStateVisuals.readyState.glowType == "button"
+      end,
+    },
+    activeStateGlowFrameStrata = {
+      type = "select",
+      name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = {
+        ["inherit"] = "Inherit (Default)",
+        ["MEDIUM"] = "MEDIUM",
+        ["HIGH"] = "HIGH",
+        ["DIALOG"] = "DIALOG",
+      },
+      sorting = {"inherit", "MEDIUM", "HIGH", "DIALOG"},
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+          return c.cooldownStateVisuals.readyState.glowFrameStrata or "inherit"
+        end
+        return "inherit"
+      end,
+      set = function(_, v)
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowFrameStrata = (v ~= "inherit") and v or nil
+        end)
+      end,
+      order = 107.8496, width = 0.85,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
+    activeStateGlowFrameLevel = {
+      type = "input",
+      name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata. Works with both inherited and custom strata.\n\nAccepts a number from 1 to 10000.",
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glowFrameLevel then
+          return tostring(c.cooldownStateVisuals.readyState.glowFrameLevel)
+        end
+        return ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowFrameLevel = num
+        end)
+      end,
+      order = 107.8497, width = 0.55,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
     },
     activeStateGlowThreshold = {
@@ -3822,11 +3966,18 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 120.3, width = 0.5, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipeExceptNoGCD,
     },
     swipeWaitForNoCharges = {
-      type = "toggle", name = "Wait No Charges",
-      desc = "For charge spells: Only show swipe when ALL charges are consumed. When disabled, shows swipe during any charge recharge.",
+      type = "toggle", name = "Wait for No Charges",
+      desc = "For charge spells: Hides the full cooldown animation during recharge. Only shows the cooldown when ALL charges are consumed.",
       get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges end, function() local c = GetAuraCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges or false end) end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.swipeWaitForNoCharges = v end) end,
-      order = 120.4, width = 0.7, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipe,
+      order = 120.4, width = 0.55, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipe,
+    },
+    edgeWaitForNoCharges = {
+      type = "toggle", name = "Edge Wait",
+      desc = "For charge spells: Only show edge when ALL charges are consumed. When disabled, shows edge during any charge recharge.",
+      get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.edgeWaitForNoCharges end, function() local c = GetAuraCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.edgeWaitForNoCharges or false end) end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.edgeWaitForNoCharges = v end) end,
+      order = 120.5, width = 0.55, hidden = function() return true end, disabled = DisableAuraCooldownSwipe,
     },
     
     -- ═══════════════════════════════════════════════════════════════════
@@ -4368,6 +4519,13 @@ function ns.GetCDMAuraIconsOptionsTable()
     end
   end
   
+  -- Merge Spell Usability options from external module
+  if ns.SpellUsabilityOptions and ns.SpellUsabilityOptions.GetAuraArgs then
+    for k, v in pairs(ns.SpellUsabilityOptions.GetAuraArgs()) do
+      args[k] = v
+    end
+  end
+  
   return {
     type = "group",
     name = "CDM Aura Icons",
@@ -4804,6 +4962,39 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       set = function(_, v) ApplySharedCooldownSetting(function(c) c.hideShadow = v end) end,
       order = 107.5, width = 0.85, hidden = HideCooldownIconAppearance,
+    },
+    keepBright = {
+      type = "toggle", name = "Keep Bright",
+      desc = "Prevents the icon from being dimmed or desaturated. The icon will always stay at full brightness and color regardless of cooldown state.\n\nUseful for spells you always want visible, like short-cooldown heals.",
+      get = function()
+        return GetCooldownBoolSetting(function(c) return c.keepBright end, function() local c = GetCooldownCfg(); return c and c.keepBright end)
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) c.keepBright = v end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.535, width = 0.85, hidden = HideCooldownIconAppearance,
+    },
+    keepBrightAllowDesat = {
+      type = "toggle", name = "    Allow Desaturation",
+      desc = "When Keep Bright is enabled, still allow the icon to go grayscale when on cooldown. The icon stays full brightness but turns black & white.",
+      get = function()
+        return GetCooldownBoolSetting(function(c) return c.keepBrightAllowDesat end, function() local c = GetCooldownCfg(); return c and c.keepBrightAllowDesat end)
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) c.keepBrightAllowDesat = v end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.536, width = 0.85,
+      hidden = function()
+        if HideCooldownIconAppearance() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.keepBright)
+      end,
     },
     showPandemicBorder = {
       type = "toggle", name = "Pandemic Glow",
@@ -5384,6 +5575,66 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return c.cooldownStateVisuals.readyState.glowType == "button"
       end,
     },
+    readyStateGlowFrameStrata = {
+      type = "select",
+      name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = {
+        ["inherit"] = "Inherit (Default)",
+        ["MEDIUM"] = "MEDIUM",
+        ["HIGH"] = "HIGH",
+        ["DIALOG"] = "DIALOG",
+      },
+      sorting = {"inherit", "MEDIUM", "HIGH", "DIALOG"},
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+          return c.cooldownStateVisuals.readyState.glowFrameStrata or "inherit"
+        end
+        return "inherit"
+      end,
+      set = function(_, v)
+        ApplyReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowFrameStrata = (v ~= "inherit") and v or nil
+        end)
+      end,
+      order = 107.8496, width = 0.85,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
+    readyStateGlowFrameLevel = {
+      type = "input",
+      name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata. Works with both inherited and custom strata.\n\nAccepts a number from 1 to 10000.",
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glowFrameLevel then
+          return tostring(c.cooldownStateVisuals.readyState.glowFrameLevel)
+        end
+        return ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowFrameLevel = num
+        end)
+      end,
+      order = 107.8497, width = 0.55,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
     resetReadyState = {
       type = "execute",
       name = "Reset Section",
@@ -5953,11 +6204,18 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 120.3, width = 0.5, hidden = HideCooldownCooldownSwipe, disabled = DisableCooldownCooldownSwipeExceptNoGCD,
     },
     swipeWaitForNoCharges = {
-      type = "toggle", name = "Wait No Charges",
-      desc = "For charge spells: Only show swipe when ALL charges are consumed. When disabled, shows swipe during any charge recharge.",
+      type = "toggle", name = "Swipe Wait",
+      desc = "For charge spells: Only show swipe when ALL charges are consumed. On CDM frames this hides the full cooldown animation during recharge.",
       get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges end, function() local c = GetCooldownCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges or false end) end,
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.swipeWaitForNoCharges = v end) end,
-      order = 120.4, width = 0.7, hidden = HideCooldownCooldownSwipe, disabled = DisableCooldownCooldownSwipe,
+      order = 120.4, width = 0.55, hidden = HideCooldownCooldownSwipe, disabled = DisableCooldownCooldownSwipe,
+    },
+    edgeWaitForNoCharges = {
+      type = "toggle", name = "Edge Wait",
+      desc = "For charge spells: Only show edge when ALL charges are consumed. Only affects custom cooldown frames (Arc Auras).",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.edgeWaitForNoCharges end, function() local c = GetCooldownCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.edgeWaitForNoCharges or false end) end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.edgeWaitForNoCharges = v end) end,
+      order = 120.5, width = 0.55, hidden = HideCooldownCooldownSwipe, disabled = DisableCooldownCooldownSwipe,
     },
     
     -- ═══════════════════════════════════════════════════════════════════
@@ -6767,6 +7025,13 @@ function ns.GetCDMCooldownIconsOptionsTable()
     end
   end
   
+  -- Merge Spell Usability options from external module
+  if ns.SpellUsabilityOptions and ns.SpellUsabilityOptions.GetCooldownArgs then
+    for k, v in pairs(ns.SpellUsabilityOptions.GetCooldownArgs()) do
+      args[k] = v
+    end
+  end
+  
   return {
     type = "group",
     name = "CDM Cooldown Icons",
@@ -6790,6 +7055,7 @@ local collapsedGlobalAuraSections = {
   cooldownText = false,
   procGlow = false,
   rangeIndicator = true,
+  spellUsability = true,
   border = true,
 }
 
@@ -6803,6 +7069,7 @@ local collapsedGlobalCooldownSections = {
   cooldownText = false,
   procGlow = false,
   rangeIndicator = true,
+  spellUsability = true,
   border = true,
 }
 
@@ -7526,15 +7793,26 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         -- NOT disabled when Masque controls cooldowns - hiding GCD doesn't conflict with Masque
       },
       swipeWaitForNoCharges = {
-        type = "toggle", name = "Wait No Charges",
-        desc = "For charge spells: Only show swipe when ALL charges are consumed",
+        type = "toggle", name = "Wait for No Charges",
+        desc = "For charge spells: Hides the full cooldown animation during recharge. Only shows the cooldown when ALL charges are consumed.",
         get = function() 
           local g = GetAuraGlobalCfg()
           if not g.cooldownSwipe then return false end
           return g.cooldownSwipe.swipeWaitForNoCharges or false
         end,
         set = function(_, v) ApplyAuraGlobalSetting("cooldownSwipe.swipeWaitForNoCharges", v); RefreshGlobalAuras() end,
-        order = 22.5, width = 0.8, hidden = function() return collapsedGlobalAuraSections.cooldownSwipe end, disabled = IsMasqueCooldownsActive,
+        order = 22.5, width = 0.55, hidden = function() return collapsedGlobalAuraSections.cooldownSwipe end, disabled = IsMasqueCooldownsActive,
+      },
+      edgeWaitForNoCharges = {
+        type = "toggle", name = "Edge Wait",
+        desc = "For charge spells: Only show edge when ALL charges are consumed",
+        get = function() 
+          local g = GetAuraGlobalCfg()
+          if not g.cooldownSwipe then return false end
+          return g.cooldownSwipe.edgeWaitForNoCharges or false
+        end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownSwipe.edgeWaitForNoCharges", v); RefreshGlobalAuras() end,
+        order = 22.6, width = 0.55, hidden = function() return true end, disabled = IsMasqueCooldownsActive,
       },
       showEdge = {
         type = "toggle", name = "Edge",
@@ -8835,7 +9113,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         -- NOT disabled when Masque controls cooldowns - hiding GCD doesn't conflict with Masque
       },
       swipeWaitForNoCharges = {
-        type = "toggle", name = "Wait No Charges",
+        type = "toggle", name = "Swipe Wait",
         desc = "For charge spells: Only show swipe when ALL charges are consumed",
         get = function() 
           local g = GetCooldownGlobalCfg()
@@ -8843,7 +9121,18 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           return g.cooldownSwipe.swipeWaitForNoCharges or false
         end,
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownSwipe.swipeWaitForNoCharges", v); RefreshGlobalCooldowns() end,
-        order = 22.5, width = 0.8, hidden = function() return collapsedGlobalCooldownSections.cooldownSwipe end, disabled = IsMasqueCooldownsActive,
+        order = 22.5, width = 0.55, hidden = function() return collapsedGlobalCooldownSections.cooldownSwipe end, disabled = IsMasqueCooldownsActive,
+      },
+      edgeWaitForNoCharges = {
+        type = "toggle", name = "Edge Wait",
+        desc = "For charge spells: Only show edge when ALL charges are consumed",
+        get = function() 
+          local g = GetCooldownGlobalCfg()
+          if not g.cooldownSwipe then return false end
+          return g.cooldownSwipe.edgeWaitForNoCharges or false
+        end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownSwipe.edgeWaitForNoCharges", v); RefreshGlobalCooldowns() end,
+        order = 22.6, width = 0.55, hidden = function() return collapsedGlobalCooldownSections.cooldownSwipe end, disabled = IsMasqueCooldownsActive,
       },
       showEdge = {
         type = "toggle", name = "Edge",
@@ -10472,6 +10761,7 @@ end
 
 -- Proc glow preview (separate from ready/active state glow)
 local procGlowPreviewActive = {}  -- cdID -> true/false
+local usableGlowPreviewActive = {}  -- cdID -> true/false
 
 -- Set proc glow preview state for an icon
 function ns.CDMEnhanceOptions.SetProcGlowPreview(cdID, enabled)
@@ -10574,6 +10864,83 @@ function ns.CDMEnhanceOptions.GetProcGlowPreviewState(isAura)
   return false
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- USABLE GLOW PREVIEW
+-- Shows usable glow on selected icons regardless of actual usability state.
+-- Used by SpellUsabilityOptions Preview toggle.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+function ns.CDMEnhanceOptions.SetUsableGlowPreview(cdID, enabled)
+  usableGlowPreviewActive[cdID] = enabled or nil
+  -- Trigger refresh so ArcAurasCooldown picks up the preview state
+  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
+    ns.CDMEnhance.InvalidateCache()
+  end
+  -- Refresh ArcAuras spell frame visuals
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals then
+    ns.ArcAurasCooldown.RefreshSpellVisuals(cdID)
+  end
+  -- Refresh CDM frame usable glow
+  if ns.CDMSpellUsability and ns.CDMSpellUsability.RefreshFrame then
+    ns.CDMSpellUsability.RefreshFrame(cdID)
+  end
+end
+
+function ns.CDMEnhanceOptions.IsUsableGlowPreviewActive(cdID)
+  return usableGlowPreviewActive[cdID] == true
+end
+
+function ns.CDMEnhanceOptions.ClearAllUsableGlowPreviews()
+  local cdIDs = {}
+  for cdID in pairs(usableGlowPreviewActive) do
+    table.insert(cdIDs, cdID)
+  end
+  usableGlowPreviewActive = {}
+  -- Refresh all affected spell frames
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals then
+    for _, cdID in ipairs(cdIDs) do
+      ns.ArcAurasCooldown.RefreshSpellVisuals(cdID)
+    end
+  end
+  -- Refresh all affected CDM frames
+  if ns.CDMSpellUsability and ns.CDMSpellUsability.RefreshFrame then
+    for _, cdID in ipairs(cdIDs) do
+      ns.CDMSpellUsability.RefreshFrame(cdID)
+    end
+  end
+end
+
+function ns.CDMEnhanceOptions.ToggleUsableGlowPreviewForSelection(isAura)
+  local icons = isAura and GetAuraIconsToUpdate() or GetCooldownIconsToUpdate()
+  if #icons == 0 then return false end
+
+  local anyActive = false
+  for _, cdID in ipairs(icons) do
+    if usableGlowPreviewActive[cdID] then
+      anyActive = true
+      break
+    end
+  end
+
+  local newState = not anyActive
+  for _, cdID in ipairs(icons) do
+    ns.CDMEnhanceOptions.SetUsableGlowPreview(cdID, newState)
+  end
+  return newState
+end
+
+function ns.CDMEnhanceOptions.GetUsableGlowPreviewState(isAura)
+  local icons = isAura and GetAuraIconsToUpdate() or GetCooldownIconsToUpdate()
+  if #icons == 0 then return false end
+
+  for _, cdID in ipairs(icons) do
+    if usableGlowPreviewActive[cdID] then
+      return true
+    end
+  end
+  return false
+end
+
 -- Called periodically to check if options panel state changed
 local function CheckOptionsStateChange()
   local isOpen = ns.CDMEnhanceOptions.IsOptionsOpen()
@@ -10597,6 +10964,7 @@ local function CheckOptionsStateChange()
       collapsedSections.auraActiveState = true
       collapsedSections.rangeIndicator = true
       collapsedSections.procGlow = true
+      collapsedSections.spellUsability = true
       collapsedSections.alertEvents = true
       collapsedSections.border = true
       collapsedSections.cooldownSwipe = true
@@ -10612,6 +10980,7 @@ local function CheckOptionsStateChange()
       collapsedGlobalAuraSections.cooldownText = true
       collapsedGlobalAuraSections.procGlow = true
       collapsedGlobalAuraSections.rangeIndicator = true
+      collapsedGlobalAuraSections.spellUsability = true
       collapsedGlobalAuraSections.border = true
       
       -- Reset global cooldown defaults sections to collapsed state
@@ -10624,6 +10993,7 @@ local function CheckOptionsStateChange()
       collapsedGlobalCooldownSections.cooldownText = true
       collapsedGlobalCooldownSections.procGlow = true
       collapsedGlobalCooldownSections.rangeIndicator = true
+      collapsedGlobalCooldownSections.spellUsability = true
       collapsedGlobalCooldownSections.border = true
       
       if ns.CDMEnhance and ns.CDMEnhance.ScanCDM then
@@ -10644,6 +11014,9 @@ local function CheckOptionsStateChange()
       end
       if ns.CDMEnhanceOptions.ClearAllProcGlowPreviews then
         ns.CDMEnhanceOptions.ClearAllProcGlowPreviews()
+      end
+      if ns.CDMEnhanceOptions.ClearAllUsableGlowPreviews then
+        ns.CDMEnhanceOptions.ClearAllUsableGlowPreviews()
       end
       -- Turn off cooldown animation preview
       if ns.CDMEnhance and ns.CDMEnhance.SetCooldownPreviewMode then

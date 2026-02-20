@@ -1,5 +1,5 @@
 -- ArcUI_EditModeContainers.lua
--- v1.0.0 - LibEQOL-based Edit Mode integration
+-- v2.0.0 - LibEQOL-based Edit Mode integration + per-group drag toggle
 --
 -- Creates wrapper containers registered with LibEQOL for Edit Mode.
 -- Bidirectional sync between wrappers and ArcUI group containers.
@@ -42,6 +42,21 @@ local initialized = false
 
 -- Blizzard CDM viewer size override for Edit Mode (makes selection easier)
 local cdmViewerOriginalSizes = {}  -- [viewerName] = {width, height} stored when Edit Mode opens
+
+-- NOTE: IsGroupCDMSynced guard removed in v8.0 — wrappers now show for ALL groups
+-- including base CDM groups (Essential, Utility, Buffs) so users can drag them.
+
+-- Base CDM groups have native Blizzard Edit Mode selection via their viewers.
+-- We skip showing our drag overlay for these during Blizzard Edit Mode (redundant).
+-- Our overlay only shows for base groups when the user enables the drag toggle.
+local BASE_CDM_GROUPS = {
+    ["Essential"] = true,
+    ["Utility"]   = true,
+    ["Buffs"]     = true,
+}
+local function IsBaseCDMGroup(groupName)
+    return BASE_CDM_GROUPS[groupName] == true
+end
 
 -- Forward declarations for functions used before they're defined
 local ShowSingleWrapper, HideSingleWrapper, HideSingleWrapperForce, SyncGroupToWrapper
@@ -357,11 +372,11 @@ local function CreateWrapper(groupName)
     wrapper:SetScript("OnMouseDown", function(self, button)
         if button ~= "LeftButton" then return end
         
-        -- Allow dragging when:
+        -- Wrapper is only visible + mouse-enabled when drag is authorized:
         -- 1. Drag Groups toggle is ON (overlaysEnabled)
         -- 2. Edit Mode toggle is ON (ns.CDMGroups.dragModeEnabled)
-        local editModeOn = ns.CDMGroups and ns.CDMGroups.dragModeEnabled
-        if not overlaysEnabled and not editModeOn then return end
+        -- 3. Per-group drag button clicked (ShowSingleWrapper)
+        -- If user can click, they can drag.
         
         local group = ns.CDMGroups and ns.CDMGroups.groups and ns.CDMGroups.groups[groupName]
         if not group or not group.container then return end
@@ -459,6 +474,16 @@ local function CreateWrapper(groupName)
         -- Trigger auto-save
         if ns.CDMGroups and ns.CDMGroups.TriggerTemplateAutoSave then
             ns.CDMGroups.TriggerTemplateAutoSave()
+        end
+        
+        -- Push position to CDM viewer if this group is synced
+        if ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled
+            and ns.CDMContainerSync.IsEnabled(groupName) then
+            C_Timer.After(0.05, function()
+                if ns.CDMContainerSync.SyncAll then
+                    ns.CDMContainerSync.SyncAll()
+                end
+            end)
         end
     end)
     
@@ -573,11 +598,13 @@ local function SetupGroupHooks(groupName)
         end
     end)
     
-    -- SetPoint hook - detect drag bar movement
+    -- SetPoint hook - detect container movement (drag bar, edit mode, etc.)
     hooksecurefunc(group.container, "SetPoint", function()
         if not enabled[groupName] then return end
         if pushing then return end
-        if not IsInEditMode() then return end
+        
+        -- Sync wrapper when: edit mode active OR drag overlays enabled (options panel drag)
+        if not IsInEditMode() and not overlaysEnabled then return end
         
         -- Only sync if mouse is down (user dragging)
         if IsMouseButtonDown("LeftButton") then
@@ -617,22 +644,25 @@ end
 -- EDIT MODE HOOKS
 -- ═══════════════════════════════════════════════════════════════════
 local function ShowAllWrappers()
-    -- Use cached Blizzard Edit Mode state (no function call overhead)
     local blizzEditModeOn = IsBlizzEditModeActive()
     
     for groupName, isGroupEnabled in pairs(enabled) do
         if isGroupEnabled then
-            local wrapper = wrappers[groupName]
-            if wrapper then
-                -- Sync position/size from group before showing
-                SyncGroupToWrapper(groupName)
-                -- If Blizzard Edit Mode is active, don't enable mouse (LibEQOL handles it)
-                if blizzEditModeOn then
-                    wrapper:EnableMouse(false)
-                else
-                    wrapper:EnableMouse(true)
+            -- Base CDM groups (Essential/Utility/Buffs) have native Blizzard Edit Mode
+            -- selection via their viewers — skip our overlay during Blizzard Edit Mode
+            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
+                -- Don't show our overlay — Blizzard's own Edit Mode handles these
+            else
+                local wrapper = wrappers[groupName]
+                if wrapper then
+                    SyncGroupToWrapper(groupName)
+                    if blizzEditModeOn then
+                        wrapper:EnableMouse(false)
+                    else
+                        wrapper:EnableMouse(true)
+                    end
+                    wrapper:Show()
                 end
-                wrapper:Show()
             end
         end
     end
@@ -666,6 +696,7 @@ local function OnEditModeEnter()
     SetBlizzEditModeActive(true)
     
     -- Resize Blizzard CDM viewers to 200x50 for easier selection (out of combat only)
+    -- Skip viewers whose groups are managed by CDMContainerSync (it owns their size)
     if not InCombatLockdown() then
         local viewers = {
             "EssentialCooldownViewer",
@@ -673,26 +704,36 @@ local function OnEditModeEnter()
             "BuffIconCooldownViewer",
         }
         for _, viewerName in ipairs(viewers) do
-            local viewer = _G[viewerName]
-            if viewer then
-                local w, h = viewer:GetSize()
-                if w and h and (w < 200 or h < 50) then
-                    cdmViewerOriginalSizes[viewerName] = {width = w, height = h}
-                    viewer:SetSize(200, 50)
+            -- Check if CDMContainerSync owns this viewer
+            local syncOwned = false
+            if ns.CDMContainerSync and ns.CDMContainerSync.GetGroupForViewer then
+                local syncGroup = ns.CDMContainerSync.GetGroupForViewer(viewerName)
+                if syncGroup and ns.CDMContainerSync.IsEnabled(syncGroup) then
+                    syncOwned = true
+                end
+            end
+            
+            if not syncOwned then
+                local viewer = _G[viewerName]
+                if viewer then
+                    local w, h = viewer:GetSize()
+                    if w and h and (w < 200 or h < 50) then
+                        cdmViewerOriginalSizes[viewerName] = {width = w, height = h}
+                        viewer:SetSize(200, 50)
+                    end
                 end
             end
         end
     end
     
-    -- Blizzard Edit Mode enter - show wrappers but DON'T enable mouse
-    -- LibEQOL's selection overlay (child of wrapper) will handle all interactions
+    -- Blizzard Edit Mode enter - show wrappers for NON-base groups only
+    -- Base CDM groups (Essential/Utility/Buffs) use native Blizzard Edit Mode selection
     C_Timer.After(0.1, function()
         for groupName, isGroupEnabled in pairs(enabled) do
-            if isGroupEnabled then
+            if isGroupEnabled and not IsBaseCDMGroup(groupName) then
                 local wrapper = wrappers[groupName]
                 if wrapper then
                     SyncGroupToWrapper(groupName)
-                    -- DON'T enable mouse - let LibEQOL selection handle clicks
                     wrapper:EnableMouse(false)
                     wrapper:Show()
                 end
@@ -705,7 +746,8 @@ local function OnEditModeExit()
     -- Update cached state immediately (performance optimization)
     SetBlizzEditModeActive(false)
     
-    -- Restore all Blizzard CDM viewers to original sizes (out of combat only)
+    -- Restore Blizzard CDM viewers to original sizes (out of combat only)
+    -- Only restores viewers that were saved during enter (synced viewers were skipped)
     if not InCombatLockdown() then
         for viewerName, originalSize in pairs(cdmViewerOriginalSizes) do
             local viewer = _G[viewerName]
@@ -823,9 +865,10 @@ function ns.EditModeContainers.SetEnabled(groupName, isGroupEnabled)
             local blizzEditModeOn = IsBlizzEditModeActive()
             
             -- Show wrapper only if Drag Groups toggle is ON or Blizzard Edit Mode is active
-            -- ArcUI Edit Mode alone does NOT auto-show overlays
-            if overlaysEnabled or blizzEditModeOn then
-                -- If Blizzard Edit Mode is active, don't enable mouse (LibEQOL handles it)
+            -- But skip base CDM groups during Blizzard Edit Mode (they have native selection)
+            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
+                -- Don't show — Blizzard Edit Mode handles base CDM groups natively
+            elseif (overlaysEnabled or blizzEditModeOn) then
                 if blizzEditModeOn then
                     wrapper:EnableMouse(false)
                 else
@@ -902,10 +945,10 @@ function ns.EditModeContainers.EnableAllGroups()
     
     if overlaysEnabled or blizzEditModeOn then
         C_Timer.After(0.1, function()
-            -- If Blizzard Edit Mode is on, show wrappers but don't enable mouse
             if blizzEditModeOn then
                 for groupName, isGroupEnabled in pairs(enabled) do
-                    if isGroupEnabled then
+                    -- Skip base CDM groups in Blizzard Edit Mode
+                    if isGroupEnabled and not IsBaseCDMGroup(groupName) then
                         local wrapper = wrappers[groupName]
                         if wrapper then
                             SyncGroupToWrapper(groupName)
@@ -915,7 +958,6 @@ function ns.EditModeContainers.EnableAllGroups()
                     end
                 end
             else
-                -- Drag Groups toggle is on - show with mouse enabled
                 ShowAllWrappers()
             end
         end)
@@ -977,16 +1019,20 @@ function ns.EditModeContainers.ShowAllWrappersForEditMode()
     
     for groupName, isGroupEnabled in pairs(enabled) do
         if isGroupEnabled then
-            local wrapper = wrappers[groupName]
-            if wrapper then
-                SyncGroupToWrapper(groupName)
-                -- If Blizzard Edit Mode is active, don't enable mouse (LibEQOL handles it)
-                if blizzEditModeOn then
-                    wrapper:EnableMouse(false)
-                else
-                    wrapper:EnableMouse(true)
+            -- Skip base CDM groups during Blizzard Edit Mode
+            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
+                -- Skip — native Blizzard selection handles these
+            else
+                local wrapper = wrappers[groupName]
+                if wrapper then
+                    SyncGroupToWrapper(groupName)
+                    if blizzEditModeOn then
+                        wrapper:EnableMouse(false)
+                    else
+                        wrapper:EnableMouse(true)
+                    end
+                    wrapper:Show()
                 end
-                wrapper:Show()
             end
         end
     end
@@ -1215,17 +1261,15 @@ function ns.EditModeContainers.Initialize()
     local lib = GetLibEQOL()
     if lib and lib.RegisterCallback then
         lib:RegisterCallback("enter", function()
-            -- Update cached state FIRST (performance optimization)
             SetBlizzEditModeActive(true)
             
-            -- Blizzard Edit Mode entered - show wrappers but DON'T enable mouse
-            -- LibEQOL's selection overlay handles all interactions in Blizzard Edit Mode
+            -- Show wrappers for non-base groups only during Blizzard Edit Mode
             for groupName, isGroupEnabled in pairs(enabled) do
-                if isGroupEnabled then
+                if isGroupEnabled and not IsBaseCDMGroup(groupName) then
                     local wrapper = wrappers[groupName]
                     if wrapper then
                         SyncGroupToWrapper(groupName)
-                        wrapper:EnableMouse(false)  -- Let LibEQOL selection handle clicks
+                        wrapper:EnableMouse(false)
                         wrapper:Show()
                     end
                 end
@@ -1269,10 +1313,9 @@ function ns.EditModeContainers.Initialize()
     C_Timer.After(0.1, function()
         -- Use cached state (already set by callback registration above)
         if IsBlizzEditModeActive() then
-            -- Blizzard Edit Mode is on - show wrappers but DON'T enable mouse
-            -- LibEQOL selection handles everything
+            -- Blizzard Edit Mode is on - show non-base wrappers only
             for groupName, isGroupEnabled in pairs(enabled) do
-                if isGroupEnabled then
+                if isGroupEnabled and not IsBaseCDMGroup(groupName) then
                     local wrapper = wrappers[groupName]
                     if wrapper then
                         SyncGroupToWrapper(groupName)

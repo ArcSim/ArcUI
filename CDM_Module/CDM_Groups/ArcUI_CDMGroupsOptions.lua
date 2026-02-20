@@ -1405,7 +1405,7 @@ local function GetOptionsTable()
             },
             containerSyncHeader = {
                 type = "description",
-                name = "\n|cff88ffffContainer Sync|r - Sync CDM viewers to ArcUI group positions",
+                name = "\n|cff88ffffContainer Sync|r - Anchor CDM viewers to ArcUI group positions",
                 order = 16.4,
                 width = "full",
                 fontSize = "medium",
@@ -1413,7 +1413,9 @@ local function GetOptionsTable()
             },
             containerSyncDesc = {
                 type = "description",
-                name = "|cffaaaaaaContainer sync is currently disabled. This feature will return in a future update.|r",
+                name = "|cffaaaaaaAnchors the base CDM viewer to the matching ArcUI group proxy. "
+                    .. "The viewer auto-tracks position and size. Blizzard's Layout resize is suppressed while synced. "
+                    .. "Detaches automatically in Edit Mode so you can still drag viewers.|r",
                 order = 16.41,
                 width = "full",
                 fontSize = "small",
@@ -1422,46 +1424,49 @@ local function GetOptionsTable()
             syncBuffs = {
                 type = "toggle",
                 name = "Sync Buffs",
-                desc = "Sync the BuffIcon CDM viewer to the Buffs group position. (Currently disabled)",
+                desc = "Anchor the BuffIcon CDM viewer to the Buffs group proxy.",
                 order = 16.5,
                 width = 0.6,
-                disabled = true,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
-                    return false
+                    return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Buffs") or false
                 end,
                 set = function(_, val)
-                    -- Disabled for now
+                    if ns.CDMContainerSync then
+                        ns.CDMContainerSync.SetEnabled("Buffs", val)
+                    end
                 end,
             },
             syncEssential = {
                 type = "toggle",
                 name = "Sync Essential",
-                desc = "Sync the Essential CDM viewer to the Essential group position. (Currently disabled)",
+                desc = "Anchor the Essential CDM viewer to the Essential group proxy.",
                 order = 16.6,
                 width = 0.7,
-                disabled = true,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
-                    return false
+                    return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Essential") or false
                 end,
                 set = function(_, val)
-                    -- Disabled for now
+                    if ns.CDMContainerSync then
+                        ns.CDMContainerSync.SetEnabled("Essential", val)
+                    end
                 end,
             },
             syncUtility = {
                 type = "toggle",
                 name = "Sync Utility",
-                desc = "Sync the Utility CDM viewer to the Utility group position. (Currently disabled)",
+                desc = "Anchor the Utility CDM viewer to the Utility group proxy.",
                 order = 16.7,
                 width = 0.6,
-                disabled = true,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
-                    return false
+                    return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Utility") or false
                 end,
                 set = function(_, val)
-                    -- Disabled for now
+                    if ns.CDMContainerSync then
+                        ns.CDMContainerSync.SetEnabled("Utility", val)
+                    end
                 end,
             },
             globalOptionsSpacer = {
@@ -1757,10 +1762,10 @@ local function GetOptionsTable()
             containerPadding = {
                 type = "range",
                 name = "Container Padding",
-                desc = "Space around icons inside the container. 0 = icons touch border, 4 = compact, 8 = classic with border room.",
+                desc = "Space around icons inside the container.\n\n|cffffd700-6|r = Tight (Masque-friendly)\n|cffffd7000|r = Compact\n|cffffd7004|r = Default\n|cffffd7008+|r = Spacious",
                 order = 35,
                 width = 1.0,
-                min = 0,
+                min = -6,
                 max = 12,
                 step = 1,
                 hidden = function() return HideIfNoGroup() or collapsedSections.grid end,
@@ -1787,7 +1792,7 @@ local function GetOptionsTable()
                 name = "Dynamic Layout",
                 desc = "Automatically compacts icons together with no gaps. Uses alignment setting to control positioning direction. When disabled, icons stay at their assigned grid positions.",
                 order = 36,
-                width = 0.7,
+                width = 1.0,
                 hidden = function() return HideIfNoGroup() or collapsedSections.grid end,
                 get = function()
                     local g = GetSelectedGroup()
@@ -1911,7 +1916,7 @@ local function GetOptionsTable()
                 name = "Dynamic Auras",
                 desc = "When enabled, aura icons without an active buff/debuff/totem don't occupy space in the group. The remaining icons (cooldowns + active auras) compact together. Only affects aura icons - cooldowns always take space. Requires Dynamic Layout enabled.",
                 order = 36.7,
-                width = 0.7,
+                width = 1.0,
                 hidden = function() 
                     local g = GetSelectedGroup()
                     return HideIfNoGroup() or collapsedSections.grid or not (g and g.autoReflow)
@@ -2001,6 +2006,38 @@ local function GetOptionsTable()
                         else
                             -- Disabling: just turn it off
                             ApplyDynamicAuras(false)
+                        end
+                    end
+                end,
+            },
+            dynamicContainerSize = {
+                type = "toggle",
+                name = "Dynamic Container",
+                desc = "When enabled, the group container shrinks to fit only the visible icons. When disabled, container stays at full grid size. Only applies when Dynamic Layout is enabled and options panel is closed.",
+                order = 36.8,
+                width = 1.0,
+                hidden = function() 
+                    local g = GetSelectedGroup()
+                    return HideIfNoGroup() or collapsedSections.grid or not (g and g.autoReflow)
+                end,
+                get = function()
+                    local g = GetSelectedGroup()
+                    if not g then return false end
+                    return g.dynamicContainerSize or false
+                end,
+                set = function(_, val)
+                    local g = GetSelectedGroup()
+                    if g then
+                        g.dynamicContainerSize = val
+                        local db = g.getDB and g.getDB()
+                        if db then
+                            db.dynamicContainerSize = val
+                        end
+                        -- Trigger layout refresh
+                        g:Layout()
+                        -- Trigger auto-save to linked template
+                        if ns.CDMGroups.TriggerTemplateAutoSave then
+                            ns.CDMGroups.TriggerTemplateAutoSave()
                         end
                     end
                 end,
@@ -2491,6 +2528,17 @@ local function GetOptionsTable()
                     ["hideOOC"] = "Out of Combat",
                     ["hideInCombat"] = "In Combat",
                     ["hideMounted"] = "Mounted",
+                    ["hideInVehicle"] = "In Vehicle / Taxi",
+                    ["hideDead"] = "Dead / Ghost",
+                    ["hideResting"] = "Resting (City/Inn)",
+                    ["hideSolo"] = "Solo (Not in Group)",
+                    ["hideInGroup"] = "In Group",
+                    ["hideInRaid"] = "In Raid",
+                    ["hideInInstance"] = "In Instance",
+                    ["hideInEncounter"] = "Boss Encounter",
+                    ["hideInPetBattle"] = "In Pet Battle",
+                    ["hidePvP"] = "PvP Flagged",
+                    ["hideDragonriding"] = "Skyriding",
                     ["hideAlways"] = "Always (Disabled)",
                 },
                 get = function(_, key)
@@ -2540,6 +2588,17 @@ local function GetOptionsTable()
                             g.visibility.hideOOC = nil
                             g.visibility.hideInCombat = nil
                             g.visibility.hideMounted = nil
+                            g.visibility.hideInVehicle = nil
+                            g.visibility.hideInPetBattle = nil
+                            g.visibility.hideDead = nil
+                            g.visibility.hideSolo = nil
+                            g.visibility.hideInGroup = nil
+                            g.visibility.hideInRaid = nil
+                            g.visibility.hideInInstance = nil
+                            g.visibility.hideResting = nil
+                            g.visibility.hideInEncounter = nil
+                            g.visibility.hidePvP = nil
+                            g.visibility.hideDragonriding = nil
                         elseif val and g.visibility.hideAlways then
                             -- If setting another option, clear hideAlways
                             g.visibility.hideAlways = nil

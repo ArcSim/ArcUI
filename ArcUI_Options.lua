@@ -12,6 +12,35 @@ local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
 -- ===================================================================
+-- RELIABLE PANEL OPEN/CLOSE DETECTION
+-- Hook AceConfigDialog:Open and :Close directly - much more reliable
+-- than trying to hook frame OnShow/OnHide
+-- ===================================================================
+if not AceConfigDialog._arcUIHooked then
+    AceConfigDialog._arcUIHooked = true
+    
+    -- Hook Close
+    hooksecurefunc(AceConfigDialog, "Close", function(self, appName)
+        if appName == "ArcUI" then
+            ns._arcUIOptionsOpen = false
+            if ns.CDMGroups and ns.CDMGroups.DynamicLayout and ns.CDMGroups.DynamicLayout.OnOptionsPanelClosed then
+                ns.CDMGroups.DynamicLayout.OnOptionsPanelClosed()
+            end
+        end
+    end)
+    
+    -- Hook Open (backup - we also call directly in OpenOptions)
+    hooksecurefunc(AceConfigDialog, "Open", function(self, appName)
+        if appName == "ArcUI" then
+            ns._arcUIOptionsOpen = true
+            if ns.CDMGroups and ns.CDMGroups.DynamicLayout and ns.CDMGroups.DynamicLayout.OnOptionsPanelOpened then
+                ns.CDMGroups.DynamicLayout.OnOptionsPanelOpened()
+            end
+        end
+    end)
+end
+
+-- ===================================================================
 -- ADDON INFO
 -- ===================================================================
 -- Get version from TOC file (auto-updates when TOC changes)
@@ -111,6 +140,7 @@ ns.API.OpenOptions = function()
   ns._arcPendingOptionsOpen = nil
   ns._arcUIOptionsOpen = true  -- Flag for Resources module to detect options are open
   AceConfigDialog:Open("ArcUI")
+  -- NOTE: OnOptionsPanelOpened is called automatically via AceConfigDialog:Open hook above
   
   -- Refresh resource bars immediately so they show despite talent/spec/combat conditions
   if ns.Resources and ns.Resources.RefreshAllBars then
@@ -152,14 +182,15 @@ ns.API.OpenOptions = function()
         actualFrame._arcUIDiscordLink:Show()
       end
       
-      -- Hook OnHide
+      -- Hook OnHide for cleanup (visual elements, drag mode, etc)
+      -- NOTE: OnOptionsPanelClosed is called via AceConfigDialog:Close hook, not here
       if not actualFrame._arcUIOnHideHooked then
         actualFrame._arcUIOnHideHooked = true
         local originalOnHide = actualFrame:GetScript("OnHide")
         actualFrame:SetScript("OnHide", function(self, ...)
           if originalOnHide then originalOnHide(self, ...) end
           
-          -- Clear options open flag
+          -- Clear options open flag (backup - hook also sets this)
           ns._arcUIOptionsOpen = false
           
           -- Hide "Hidden by Bar" overlays
@@ -734,52 +765,11 @@ initFrame:SetScript("OnEvent", function(self, event)
     end
     
     -- ═══════════════════════════════════════════════════════════════════
-    -- FIX SPARSE ARRAYS: Fill holes in resourceBars/cooldownBars after DB load
-    -- Prevents ipairs() from stopping early due to nil at index 1
+    -- CLEANUP: Remove empty/unconfigured bar configs to reduce memory
+    -- Replaces old sparse array hole-filling which was adding bloat
     -- ═══════════════════════════════════════════════════════════════════
-    if ns.db and ns.db.char then
-      -- Fix resourceBars
-      if ns.db.char.resourceBars then
-        local resourceBars = ns.db.char.resourceBars
-        local maxIndex = 0
-        for k, v in pairs(resourceBars) do
-          if type(k) == "number" and k >= 1 and math.floor(k) == k then
-            if k > maxIndex then maxIndex = k end
-          end
-        end
-        for i = 1, maxIndex do
-          if resourceBars[i] == nil then
-            resourceBars[i] = CopyTable(ns.DB_DEFAULTS.char.resourceBars[1])
-            resourceBars[i].tracking.enabled = false
-            resourceBars[i].display.enabled = false
-            local yOffset = -100 - ((i - 1) * 35)
-            resourceBars[i].display.barPosition.y = yOffset
-            resourceBars[i].display.textPosition.y = yOffset + 30
-          end
-        end
-      end
-      
-      -- Fix cooldownBars
-      if ns.db.char.cooldownBars then
-        local cooldownBars = ns.db.char.cooldownBars
-        local maxIndex = 0
-        for k, v in pairs(cooldownBars) do
-          if type(k) == "number" and k >= 1 and math.floor(k) == k then
-            if k > maxIndex then maxIndex = k end
-          end
-        end
-        for i = 1, maxIndex do
-          if cooldownBars[i] == nil then
-            cooldownBars[i] = CopyTable(ns.DB_DEFAULTS.char.cooldownBars[1])
-            cooldownBars[i].tracking.enabled = false
-            cooldownBars[i].display.enabled = false
-            local yOffset = -200 - ((i - 1) * 30)
-            cooldownBars[i].display.barPosition.y = yOffset
-            cooldownBars[i].display.textPosition.y = yOffset + 30
-            cooldownBars[i].display.iconPosition.y = yOffset
-          end
-        end
-      end
+    if ns.DataRepair and ns.DataRepair.RunAutoCleanup then
+      ns.DataRepair.RunAutoCleanup()
     end
     
     C_Timer.After(0.1, function()

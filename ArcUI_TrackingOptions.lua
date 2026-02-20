@@ -25,6 +25,36 @@ local expandedBars = {}  -- expandedBars["buff_1"] = true means bar 1 is expande
 local expandedResources = {}  -- expandedResources["resource_1"] = true means resource bar 1 is expanded
 
 -- ===================================================================
+-- SPEC TOGGLE HELPER
+-- Fixes "stuck toggle" when showOnSpecs is nil/{} (means "all specs")
+-- Unchecking from empty table must first populate all specs, then remove
+-- ===================================================================
+local function ToggleSpecInList(showOnSpecs, specNum, value)
+  if value then
+    -- Checking: add spec if not present
+    local found = false
+    for _, s in ipairs(showOnSpecs) do
+      if s == specNum then found = true break end
+    end
+    if not found then table.insert(showOnSpecs, specNum) end
+  else
+    -- Unchecking: if table is empty (means "all specs"), populate first
+    if #showOnSpecs == 0 then
+      local numSpecs = GetNumSpecializations() or 4
+      for i = 1, numSpecs do
+        table.insert(showOnSpecs, i)
+      end
+    end
+    -- Now remove the target spec
+    for i = #showOnSpecs, 1, -1 do
+      if showOnSpecs[i] == specNum then
+        table.remove(showOnSpecs, i)
+      end
+    end
+  end
+end
+
+-- ===================================================================
 -- POWER TYPES BY CLASS
 -- ===================================================================
 local ALL_POWER_TYPES = {
@@ -1164,19 +1194,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-            if value then
-              local found = false
-              for _, spec in ipairs(cfg.behavior.showOnSpecs) do
-                if spec == 1 then found = true break end
-              end
-              if not found then table.insert(cfg.behavior.showOnSpecs, 1) end
-            else
-              for i = #cfg.behavior.showOnSpecs, 1, -1 do
-                if cfg.behavior.showOnSpecs[i] == 1 then
-                  table.remove(cfg.behavior.showOnSpecs, i)
-                end
-              end
-            end
+            ToggleSpecInList(cfg.behavior.showOnSpecs, 1, value)
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
@@ -1211,19 +1229,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-            if value then
-              local found = false
-              for _, spec in ipairs(cfg.behavior.showOnSpecs) do
-                if spec == 2 then found = true break end
-              end
-              if not found then table.insert(cfg.behavior.showOnSpecs, 2) end
-            else
-              for i = #cfg.behavior.showOnSpecs, 1, -1 do
-                if cfg.behavior.showOnSpecs[i] == 2 then
-                  table.remove(cfg.behavior.showOnSpecs, i)
-                end
-              end
-            end
+            ToggleSpecInList(cfg.behavior.showOnSpecs, 2, value)
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
@@ -1258,19 +1264,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-            if value then
-              local found = false
-              for _, spec in ipairs(cfg.behavior.showOnSpecs) do
-                if spec == 3 then found = true break end
-              end
-              if not found then table.insert(cfg.behavior.showOnSpecs, 3) end
-            else
-              for i = #cfg.behavior.showOnSpecs, 1, -1 do
-                if cfg.behavior.showOnSpecs[i] == 3 then
-                  table.remove(cfg.behavior.showOnSpecs, i)
-                end
-              end
-            end
+            ToggleSpecInList(cfg.behavior.showOnSpecs, 3, value)
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
@@ -1308,19 +1302,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-            if value then
-              local found = false
-              for _, spec in ipairs(cfg.behavior.showOnSpecs) do
-                if spec == 4 then found = true break end
-              end
-              if not found then table.insert(cfg.behavior.showOnSpecs, 4) end
-            else
-              for i = #cfg.behavior.showOnSpecs, 1, -1 do
-                if cfg.behavior.showOnSpecs[i] == 4 then
-                  table.remove(cfg.behavior.showOnSpecs, i)
-                end
-              end
-            end
+            ToggleSpecInList(cfg.behavior.showOnSpecs, 4, value)
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
@@ -2683,13 +2665,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
             if cfg then
               if not cfg.behavior then cfg.behavior = {} end
               if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-              if value then
-                table.insert(cfg.behavior.showOnSpecs, 1)
-              else
-                for i, s in ipairs(cfg.behavior.showOnSpecs) do
-                  if s == 1 then table.remove(cfg.behavior.showOnSpecs, i) break end
-                end
-              end
+              ToggleSpecInList(cfg.behavior.showOnSpecs, 1, value)
               if ns.Resources and ns.Resources.RefreshAllBars then
                 ns.Resources.RefreshAllBars()
               end
@@ -2726,13 +2702,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
             if cfg then
               if not cfg.behavior then cfg.behavior = {} end
               if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-              if value then
-                table.insert(cfg.behavior.showOnSpecs, 2)
-              else
-                for i, s in ipairs(cfg.behavior.showOnSpecs) do
-                  if s == 2 then table.remove(cfg.behavior.showOnSpecs, i) break end
-                end
-              end
+              ToggleSpecInList(cfg.behavior.showOnSpecs, 2, value)
               if ns.Resources and ns.Resources.RefreshAllBars then
                 ns.Resources.RefreshAllBars()
               end
@@ -2769,13 +2739,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
             if cfg then
               if not cfg.behavior then cfg.behavior = {} end
               if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-              if value then
-                table.insert(cfg.behavior.showOnSpecs, 3)
-              else
-                for i, s in ipairs(cfg.behavior.showOnSpecs) do
-                  if s == 3 then table.remove(cfg.behavior.showOnSpecs, i) break end
-                end
-              end
+              ToggleSpecInList(cfg.behavior.showOnSpecs, 3, value)
               if ns.Resources and ns.Resources.RefreshAllBars then
                 ns.Resources.RefreshAllBars()
               end
@@ -2813,13 +2777,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
             if cfg then
               if not cfg.behavior then cfg.behavior = {} end
               if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
-              if value then
-                table.insert(cfg.behavior.showOnSpecs, 4)
-              else
-                for i, s in ipairs(cfg.behavior.showOnSpecs) do
-                  if s == 4 then table.remove(cfg.behavior.showOnSpecs, i) break end
-                end
-              end
+              ToggleSpecInList(cfg.behavior.showOnSpecs, 4, value)
               if ns.Resources and ns.Resources.RefreshAllBars then
                 ns.Resources.RefreshAllBars()
               end

@@ -1,6 +1,9 @@
 -- ===================================================================
 -- ArcUI_Core.lua
 -- Core tracking system supporting multiple bar slots
+-- v2.11.0: Secret-safe auraInstanceID protection
+--   - Uses issecretvalue() to detect aura presence without comparison
+--   - Protects against potential future Blizzard secret value change
 -- v2.10.0: Hook-based stack updates (replaces polling)
 --   - Hooks CDM frame RefreshData for instant stack updates
 --   - No more polling delays for high-haste builds
@@ -28,6 +31,30 @@ if MemDebug then
   P, TrackThis = MemDebug:DropIn(ns.API)
 end
 ns.API._TrackThis = TrackThis
+
+-- ===================================================================
+-- SECRET-SAFE AURAINSTANCEID HELPERS
+-- v2.11.0: Protects against future Blizzard change making auraInstanceID secret
+-- Uses issecretvalue() to test presence without direct comparison
+-- ===================================================================
+
+-- Check if an auraInstanceID is present (handles potential secret values)
+-- Returns: true if aura is active, false if nil/0/absent
+local function HasAuraInstanceID(value)
+  if value == nil then return false end
+  -- issecretvalue returns true if the value is a secret value
+  -- A secret auraInstanceID means the aura IS present (just can't compare it)
+  if issecretvalue and issecretvalue(value) then
+    return true
+  end
+  -- Non-secret: treat 0 as "no aura" (default value in saved variables)
+  if type(value) == "number" and value == 0 then return false end
+  -- Non-nil, non-zero, non-secret = valid auraInstanceID
+  return true
+end
+
+-- Expose for other modules
+ns.API.HasAuraInstanceID = HasAuraInstanceID
 
 -- Spec change grace period - don't hide bars due to trackingOK=false for a few seconds after spec change
 local specChangeGraceUntil = 0
@@ -672,6 +699,50 @@ ns.API.InvalidateSpellToCooldownIDCache = InvalidateSpellToCooldownIDCache
 local hiddenCDMFrames = {}  -- [frame] = expectedCooldownID
 local hiddenByBarOverlays = {}  -- [frame] = overlayFrame
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CDM HIDE REQUEST REGISTRY
+-- Tracks which bars are actively requesting each cooldownID to be hidden.
+-- Prevents flickering when multiple bars track the same CDM icon with
+-- different hideBuffIcon settings: "hide" wins if ANY bar requests it.
+-- ═══════════════════════════════════════════════════════════════════════════
+local cdmHideRequestsByCD = {}  -- [cooldownID] = { [barNumber] = true, ... }
+
+-- Register a bar's request to hide a specific cooldownID
+local function RegisterCDMHideRequest(barNumber, cooldownID)
+  if not cooldownID then return end
+  if not cdmHideRequestsByCD[cooldownID] then
+    cdmHideRequestsByCD[cooldownID] = {}
+  end
+  cdmHideRequestsByCD[cooldownID][barNumber] = true
+end
+
+-- Unregister a bar's hide request (bar disabled, spec filtered, cleared, etc.)
+-- Returns the cooldownID that was unregistered (or nil if none)
+local function UnregisterCDMHideRequest(barNumber)
+  for cooldownID, bars in pairs(cdmHideRequestsByCD) do
+    if bars[barNumber] then
+      bars[barNumber] = nil
+      -- Clean up empty tables
+      if not next(bars) then
+        cdmHideRequestsByCD[cooldownID] = nil
+      end
+      return cooldownID
+    end
+  end
+  return nil
+end
+
+-- Check if ANY bar (other than excludeBar) is still requesting a cooldownID be hidden
+local function AnyCDMHideRequestForCD(cooldownID, excludeBar)
+  if not cooldownID then return false end
+  local bars = cdmHideRequestsByCD[cooldownID]
+  if not bars then return false end
+  for barNum, _ in pairs(bars) do
+    if barNum ~= excludeBar then return true end
+  end
+  return false
+end
+
 -- Helper to get frame's current cooldownID
 local function GetFrameCooldownID(frame)
   if not frame then return nil end
@@ -942,12 +1013,21 @@ ns.API._FindCDMFrameForCooldownID = FindCDMFrameForCooldownID
 ClearBarState = function(barNumber)
   local state = barStates[barNumber]
   if state then
-    -- Restore visibility of any CDM frames that were hidden by this bar
+    -- Unregister this bar's CDM hide request
+    local wasHidingCD = UnregisterCDMHideRequest(barNumber)
+    
+    -- Only restore CDM frame visibility if no other bar is still hiding that cooldownID
     if state.cachedFrame then
-      AllowCDMFrameVisible(state.cachedFrame)
+      local cdID = wasHidingCD or GetFrameCooldownID(state.cachedFrame)
+      if not AnyCDMHideRequestForCD(cdID, barNumber) then
+        AllowCDMFrameVisible(state.cachedFrame)
+      end
     end
     if state.cachedBarFrame then
-      AllowCDMFrameVisible(state.cachedBarFrame)
+      local cdID = wasHidingCD or GetFrameCooldownID(state.cachedBarFrame)
+      if not AnyCDMHideRequestForCD(cdID, barNumber) then
+        AllowCDMFrameVisible(state.cachedBarFrame)
+      end
     end
   end
   barStates[barNumber] = nil
@@ -1565,7 +1645,7 @@ local function FindCooldownFrameByCooldownID(cooldownID)
 end
 
 local function GetBuffStacks(frame, unit)
-  if not frame or not frame.auraInstanceID then return 0 end
+  if not frame or not HasAuraInstanceID(frame.auraInstanceID) then return 0 end
   unit = unit or "player"
   local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, frame.auraInstanceID)
   if not auraData then return 0 end
@@ -1575,7 +1655,7 @@ end
 -- Auto-detect which unit has the aura and return data + unit
 -- Tries player first (buffs), then target (debuffs)
 local function GetAuraDataAutoUnit(auraInstanceID)
-  if not auraInstanceID then return nil, nil end
+  if not HasAuraInstanceID(auraInstanceID) then return nil, nil end
   
   -- Try player first (most common for buffs)
   local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("player", auraInstanceID)
@@ -1657,7 +1737,7 @@ function ns.API.ScanAvailableBuffs()
             iconTextureID = iconTextureID or 134400,
             cooldownID = cdID,
             maxStacks = 10,
-            isActive = frame.auraInstanceID ~= nil
+            isActive = HasAuraInstanceID(frame.auraInstanceID)
           })
         end
       end
@@ -2087,7 +2167,7 @@ function ns.API.ScanAvailableBarsWithDuration()
           iconTextureID = iconTextureID or 134400,
           cooldownID = cdID,
           maxDuration = maxDuration,
-          isActive = frame.auraInstanceID ~= nil,
+          isActive = HasAuraInstanceID(frame.auraInstanceID),
           sourceType = "bar"
         })
       end
@@ -2131,7 +2211,15 @@ end
 -- ===================================================================
 UpdateBarBuffInfo = function(barNumber)
   local barConfig = ns.API.GetBarConfig(barNumber)
-  if not barConfig or not barConfig.tracking.enabled then return end
+  if not barConfig or not barConfig.tracking.enabled then
+    -- Clean up CDM hide request: disabled bar shouldn't control CDM visibility
+    local wasHidingCD = UnregisterCDMHideRequest(barNumber)
+    if wasHidingCD and not AnyCDMHideRequestForCD(wasHidingCD, barNumber) then
+      local cdmFrame = FindCDMFrameForCooldownID(wasHidingCD)
+      if cdmFrame then AllowCDMFrameVisible(cdmFrame) end
+    end
+    return
+  end
   
   local currentSpec = GetSpecialization() or 0
   local showOnSpecs = barConfig.behavior.showOnSpecs
@@ -2148,6 +2236,13 @@ UpdateBarBuffInfo = function(barNumber)
   
   if not specAllowed then
     if ns.Display and ns.Display.HideBar then ns.Display.HideBar(barNumber) end
+    -- Clean up CDM hide request: bar is not shown, shouldn't control CDM visibility
+    local wasHidingCD = UnregisterCDMHideRequest(barNumber)
+    if wasHidingCD and not AnyCDMHideRequestForCD(wasHidingCD, barNumber) then
+      -- No other bar wants this cdID hidden - restore CDM frame
+      local cdmFrame = FindCDMFrameForCooldownID(wasHidingCD)
+      if cdmFrame then AllowCDMFrameVisible(cdmFrame) end
+    end
     return
   end
   
@@ -2579,38 +2674,16 @@ UpdateBarBuffInfo = function(barNumber)
   elseif trackType == "pet" or trackType == "totem" or trackType == "ground" then
     local cdmFrame = sourceType == "bar" and barFrame or frame or barFrame
     
-    -- PRIMARY: Use preferredTotemUpdateSlot (Beta) or totemData.slot (Live)
-    -- Beta: preferredTotemUpdateSlot is non-secret, totemData is secret table
-    -- Live: preferredTotemUpdateSlot may not exist, totemData.slot is accessible
-    local slot = cdmFrame and (cdmFrame.preferredTotemUpdateSlot or (cdmFrame.totemData and cdmFrame.totemData.slot))
-    if slot and type(slot) == "number" and slot > 0 then
-      -- Verify totem is active using game API
-      -- WoW 12.0: GetTotemInfo returns SECRET values when totem exists
-      local haveTotem, name, startTime, duration = GetTotemInfo(slot)
-      
-      -- Check if totem exists: secret return = data protected = totem active
-      local totemExists = false
-      if issecretvalue(haveTotem) then
-        -- Secret boolean means totem data exists
-        totemExists = true
-      elseif haveTotem then
-        -- Non-secret truthy value
-        totemExists = true
-      end
-      
-      if totemExists then
-        active = true
-        stacks = 0  -- Totems don't have stacks
-        -- Store cdmFrame reference - query slot fresh each time!
-        -- This handles frame recycling where preferredTotemUpdateSlot changes
-        state.totemCdmFrame = cdmFrame
-      else
-        active = false
-        stacks = 0
-        state.totemCdmFrame = nil
-      end
+    -- WoW 12.0: totemData ONLY EXISTS when totem/pet is currently active
+    -- When it expires, totemData becomes nil but preferredTotemUpdateSlot persists
+    -- This matches CDMEnhance.GetTotemState() and CooldownState detection
+    if cdmFrame and cdmFrame.totemData ~= nil then
+      active = true
+      stacks = 0  -- Totems/pets don't have stacks
+      -- Store cdmFrame reference - query slot fresh each time!
+      -- This handles frame recycling where preferredTotemUpdateSlot changes
+      state.totemCdmFrame = cdmFrame
     else
-      -- No preferredTotemUpdateSlot - mark as inactive
       active = false
       stacks = 0
       state.totemCdmFrame = nil
@@ -2647,7 +2720,7 @@ UpdateBarBuffInfo = function(barNumber)
         end
       end
       
-      if isOurSpell and auraInstanceID then
+      if isOurSpell and HasAuraInstanceID(auraInstanceID) then
         -- CDM is showing our tracked spell! Use this auraInstanceID
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(auraDataUnit, auraInstanceID)
         if auraData then
@@ -2660,7 +2733,7 @@ UpdateBarBuffInfo = function(barNumber)
           active = false
           stacks = 0
         end
-      elseif state.trackedAuraInstanceID then
+      elseif HasAuraInstanceID(state.trackedAuraInstanceID) then
         -- CDM is showing a DIFFERENT spell, use our cached auraInstanceID
         local unit = state.trackedAuraUnit or "target"
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, state.trackedAuraInstanceID)
@@ -2685,7 +2758,7 @@ UpdateBarBuffInfo = function(barNumber)
       local auraDataUnit = cdmFrame.auraDataUnit
       local auraInstanceID = cdmFrame.auraInstanceID
       
-      if auraDataUnit == "target" and auraInstanceID then
+      if auraDataUnit == "target" and HasAuraInstanceID(auraInstanceID) then
         state.debuffAuraInstanceID = auraInstanceID
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("target", auraInstanceID)
         if auraData then
@@ -2695,7 +2768,7 @@ UpdateBarBuffInfo = function(barNumber)
           active = false
           stacks = 0
         end
-      elseif state.debuffAuraInstanceID then
+      elseif HasAuraInstanceID(state.debuffAuraInstanceID) then
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("target", state.debuffAuraInstanceID)
         if auraData then
           active = true
@@ -2713,8 +2786,8 @@ UpdateBarBuffInfo = function(barNumber)
     else
       -- Default behavior: use CDM frame's auraInstanceID directly
       if sourceType == "bar" and barFrame then
-        active = (barFrame.auraInstanceID ~= nil)
-        if active and barFrame.auraInstanceID then
+        active = HasAuraInstanceID(barFrame.auraInstanceID)
+        if active then
           local unit = barFrame.auraDataUnit or "target"
           local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, barFrame.auraInstanceID)
           if auraData then 
@@ -2722,7 +2795,7 @@ UpdateBarBuffInfo = function(barNumber)
           end
         end
       elseif frame then
-        active = (frame.auraInstanceID ~= nil)
+        active = HasAuraInstanceID(frame.auraInstanceID)
         if active then
           local unit = frame.auraDataUnit or "target"
           local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, frame.auraInstanceID)
@@ -2764,7 +2837,7 @@ UpdateBarBuffInfo = function(barNumber)
         end
       end
       
-      if isOurSpell and auraInstanceID then
+      if isOurSpell and HasAuraInstanceID(auraInstanceID) then
         -- CDM is showing our tracked spell! Use this auraInstanceID
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(auraDataUnit, auraInstanceID)
         if auraData then
@@ -2778,7 +2851,7 @@ UpdateBarBuffInfo = function(barNumber)
           active = false
           stacks = 0
         end
-      elseif state.trackedAuraInstanceID then
+      elseif HasAuraInstanceID(state.trackedAuraInstanceID) then
         -- CDM is showing a DIFFERENT spell, use our cached auraInstanceID
         local unit = state.trackedAuraUnit or "player"
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, state.trackedAuraInstanceID)
@@ -2804,7 +2877,7 @@ UpdateBarBuffInfo = function(barNumber)
       local auraDataUnit = cdmFrame.auraDataUnit
       local auraInstanceID = cdmFrame.auraInstanceID
       
-      if auraDataUnit == "player" and auraInstanceID then
+      if auraDataUnit == "player" and HasAuraInstanceID(auraInstanceID) then
         state.buffAuraInstanceID = auraInstanceID
         detectedUnit = "player"
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("player", auraInstanceID)
@@ -2815,7 +2888,7 @@ UpdateBarBuffInfo = function(barNumber)
           active = false
           stacks = 0
         end
-      elseif state.buffAuraInstanceID then
+      elseif HasAuraInstanceID(state.buffAuraInstanceID) then
         detectedUnit = "player"
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("player", state.buffAuraInstanceID)
         if auraData then
@@ -2836,7 +2909,7 @@ UpdateBarBuffInfo = function(barNumber)
       local auraInstanceID = cdmFrame and cdmFrame.auraInstanceID
       local auraDataUnit = cdmFrame and cdmFrame.auraDataUnit
       
-      if auraInstanceID then
+      if HasAuraInstanceID(auraInstanceID) then
         active = true
         local auraData = nil
         
@@ -3022,6 +3095,28 @@ UpdateBarBuffInfo = function(barNumber)
     iconTexture = state.cachedIcon
   end
   
+  -- ═══════════════════════════════════════════════════════════════════
+  -- DYNAMIC AURA NAME - mirrors how icon reads frame.Icon:GetTexture()
+  -- Active: auraSpellID exists (secret) → C_Spell.GetSpellName passthrough
+  -- Inactive: no auraSpellID → read base spell from cooldownInfo
+  -- Uses sourceType-resolved frame (same pattern as cdmFrame elsewhere)
+  -- ═══════════════════════════════════════════════════════════════════
+  local auraName = nil
+  local nameFrame_cdm = sourceType == "bar" and barFrame or frame or barFrame
+  if nameFrame_cdm then
+    if nameFrame_cdm.auraSpellID then
+      -- Active aura: secret-safe passthrough (SetText accepts secret strings)
+      auraName = C_Spell.GetSpellName(nameFrame_cdm.auraSpellID)
+    elseif nameFrame_cdm.cooldownInfo then
+      -- Inactive: derive base spell name from cooldownInfo
+      -- Priority: overrideSpellID > spellID (matches how icon texture resolves)
+      local baseID = nameFrame_cdm.cooldownInfo.overrideSpellID or nameFrame_cdm.cooldownInfo.spellID
+      if baseID and baseID > 0 then
+        auraName = C_Spell.GetSpellName(baseID)
+      end
+    end
+  end
+  
   -- Duration bar tracking - create wrapper for stacks/duration from auraInstanceID
   local durationBarRef = nil
   local durationStacksRef = nil
@@ -3059,13 +3154,13 @@ UpdateBarBuffInfo = function(barNumber)
   elseif trackType == "debuff" then
     -- LEGACY: For debuff with useBaseSpell
     local auraInstIDToUse = nil
-    if useBaseSpell and state.debuffAuraInstanceID then
+    if useBaseSpell and HasAuraInstanceID(state.debuffAuraInstanceID) then
       auraInstIDToUse = state.debuffAuraInstanceID
-    elseif not useBaseSpell and cdmFrame and cdmFrame.auraInstanceID then
+    elseif not useBaseSpell and cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
       auraInstIDToUse = cdmFrame.auraInstanceID
     end
     
-    if auraInstIDToUse then
+    if HasAuraInstanceID(auraInstIDToUse) then
       local cachedAuraInstanceID = auraInstIDToUse
       local cachedUnit = cdmFrame and cdmFrame.auraDataUnit or "target"
       durationStacksRef = {
@@ -3091,15 +3186,15 @@ UpdateBarBuffInfo = function(barNumber)
     local auraInstIDToUse = nil
     local unitToUse = state.detectedUnit or "player"
     
-    if useBaseSpell and state.buffAuraInstanceID then
+    if useBaseSpell and HasAuraInstanceID(state.buffAuraInstanceID) then
       auraInstIDToUse = state.buffAuraInstanceID
       unitToUse = "player"
-    elseif not useBaseSpell and cdmFrame and cdmFrame.auraInstanceID then
+    elseif not useBaseSpell and cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
       auraInstIDToUse = cdmFrame.auraInstanceID
       unitToUse = cdmFrame.auraDataUnit or state.detectedUnit or "player"
     end
     
-    if auraInstIDToUse then
+    if HasAuraInstanceID(auraInstIDToUse) then
       local cachedAuraInstanceID = auraInstIDToUse
       local cachedUnit = unitToUse
       durationStacksRef = {
@@ -3141,7 +3236,7 @@ UpdateBarBuffInfo = function(barNumber)
     local cdmFrame = sourceType == "bar" and barFrame or frame or barFrame
     
     -- NEW: trackedSpellID approach - use state.trackedAuraInstanceID/Unit
-    if trackedSpellID and trackedSpellID > 0 and state.trackedAuraInstanceID then
+    if trackedSpellID and trackedSpellID > 0 and HasAuraInstanceID(state.trackedAuraInstanceID) then
       local cachedAuraInstanceID = state.trackedAuraInstanceID
       local cachedUnit = state.trackedAuraUnit or "player"
       effectiveDurationRef = {
@@ -3175,15 +3270,15 @@ UpdateBarBuffInfo = function(barNumber)
       local auraInstIDToUse = nil
       local unitToUse = "target"
       
-      if useBaseSpell and state.debuffAuraInstanceID then
+      if useBaseSpell and HasAuraInstanceID(state.debuffAuraInstanceID) then
         auraInstIDToUse = state.debuffAuraInstanceID
-      elseif not useBaseSpell and cdmFrame and cdmFrame.auraInstanceID then
+      elseif not useBaseSpell and cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
         -- Default: use CDM's current ID
         auraInstIDToUse = cdmFrame.auraInstanceID
         unitToUse = cdmFrame.auraDataUnit or "target"
       end
       
-      if auraInstIDToUse then
+      if HasAuraInstanceID(auraInstIDToUse) then
         local cachedAuraInstanceID = auraInstIDToUse
         local cachedUnit = unitToUse
         effectiveDurationRef = {
@@ -3218,16 +3313,16 @@ UpdateBarBuffInfo = function(barNumber)
       local auraInstIDToUse = nil
       local unitToUse = state.detectedUnit or "player"
       
-      if useBaseSpell and state.buffAuraInstanceID then
+      if useBaseSpell and HasAuraInstanceID(state.buffAuraInstanceID) then
         auraInstIDToUse = state.buffAuraInstanceID
         unitToUse = "player"
-      elseif not useBaseSpell and cdmFrame and cdmFrame.auraInstanceID then
+      elseif not useBaseSpell and cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
         -- Default: use CDM's current ID
         auraInstIDToUse = cdmFrame.auraInstanceID
         unitToUse = cdmFrame.auraDataUnit or state.detectedUnit or "player"
       end
       
-      if auraInstIDToUse then
+      if HasAuraInstanceID(auraInstIDToUse) then
         local cachedAuraInstanceID = auraInstIDToUse
         local cachedUnit = unitToUse
         effectiveDurationRef = {
@@ -3270,19 +3365,19 @@ UpdateBarBuffInfo = function(barNumber)
             -- Check if frame is still tracking OUR cooldown (non-secret check)
             if totemCdmFrame.cooldownID ~= originalCooldownID then return 0 end
             
-            -- Check if frame is still active
-            local isActive = totemCdmFrame.isActive
-            local frameActive = false
-            if issecretvalue(isActive) then
-              frameActive = true  -- Secret = combat state = still tracking
-            elseif isActive then
-              frameActive = true
-            end
-            if not frameActive then return 0 end
+            -- WoW 12.0: totemData ONLY EXISTS when totem/pet is active
+            if totemCdmFrame.totemData == nil then return 0 end
             
-            -- Query slot FRESH from frame each time (Beta: preferredTotemUpdateSlot, Live: totemData.slot)
-            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot or (totemCdmFrame.totemData and totemCdmFrame.totemData.slot)
-            if not currentSlot or currentSlot <= 0 then return 0 end
+            -- Query slot FRESH from frame each time
+            -- WoW 12.0: preferredTotemUpdateSlot may be secret - pass directly to APIs
+            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot
+            if not currentSlot and totemCdmFrame.totemData then
+              local ok, val = pcall(function() return totemCdmFrame.totemData.slot end)
+              if ok then currentSlot = val end
+            end
+            if not currentSlot then return 0 end
+            -- Skip numeric check - slot may be secret; GetTotemTimeLeft accepts secrets
+            if not issecretvalue(currentSlot) and currentSlot <= 0 then return 0 end
             
             -- Use GetTotemTimeLeft - returns secret in combat but SetValue accepts it
             if GetTotemTimeLeft then
@@ -3295,11 +3390,22 @@ UpdateBarBuffInfo = function(barNumber)
           end,
           GetMinMaxValues = function()
             -- WoW 12.0: Get duration from GetTotemInfo - it's SECRET but SetMinMaxValues accepts secrets!
-            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot or (totemCdmFrame.totemData and totemCdmFrame.totemData.slot)
-            if currentSlot and currentSlot > 0 then
-              local haveTotem, name, startTime, duration = GetTotemInfo(currentSlot)
-              if duration then
-                return 0, duration  -- Pass secret duration directly - SetMinMaxValues is AllowedWhenTainted!
+            if totemCdmFrame.totemData == nil then
+              local maxDur = barConfig.tracking.maxDuration or 30
+              return 0, maxDur
+            end
+            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot
+            if not currentSlot and totemCdmFrame.totemData then
+              local ok, val = pcall(function() return totemCdmFrame.totemData.slot end)
+              if ok then currentSlot = val end
+            end
+            if currentSlot then
+              -- Skip numeric check - slot may be secret; GetTotemInfo accepts secrets
+              if issecretvalue(currentSlot) or currentSlot > 0 then
+                local haveTotem, name, startTime, duration = GetTotemInfo(currentSlot)
+                if duration then
+                  return 0, duration  -- Pass secret duration directly - SetMinMaxValues is AllowedWhenTainted!
+                end
               end
             end
             -- Fallback to config if no totem data available
@@ -3310,16 +3416,14 @@ UpdateBarBuffInfo = function(barNumber)
             -- Check if frame is still tracking OUR cooldown
             if totemCdmFrame.cooldownID ~= originalCooldownID then return nil, nil end
             
-            local isActive = totemCdmFrame.isActive
-            local frameActive = false
-            if issecretvalue(isActive) then
-              frameActive = true
-            elseif isActive then
-              frameActive = true
-            end
-            if not frameActive then return nil, nil end
+            -- WoW 12.0: totemData ONLY EXISTS when totem/pet is active
+            if totemCdmFrame.totemData == nil then return nil, nil end
             
-            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot or (totemCdmFrame.totemData and totemCdmFrame.totemData.slot)
+            local currentSlot = totemCdmFrame.preferredTotemUpdateSlot
+            if not currentSlot and totemCdmFrame.totemData then
+              local ok, val = pcall(function() return totemCdmFrame.totemData.slot end)
+              if ok then currentSlot = val end
+            end
             return currentSlot, nil
           end,
           -- No DurationObject - use polling
@@ -3340,6 +3444,11 @@ UpdateBarBuffInfo = function(barNumber)
     -- Don't fall back to CDM duration if we're tracking a specific spell
     local preventCDMFallback = (trackedSpellID and trackedSpellID > 0) or useBaseSpell
     
+    -- Store dynamic aura name on state so Display.lua can read it directly
+    -- (bypasses profiler wrapper P:Def that may drop extra function parameters)
+    -- Only store when active - auraSpellID persists as stale secret on CDM frame after aura fades
+    state.dynamicAuraName = active and auraName or nil
+    
     if useDurationBar then
       -- Duration bar mode - ALWAYS use UpdateDurationBar
       local durationSource = effectiveDurationRef
@@ -3352,33 +3461,36 @@ UpdateBarBuffInfo = function(barNumber)
           barNumber, tostring(active), tostring(stacks), tostring(barConfig.behavior and barConfig.behavior.hideWhenInactive)))
       end
       ns.Display.UpdateDurationBar(barNumber, stacks, barConfig.tracking.maxStacks, active, 
-                                    durationSource, durationStacksRef, iconTexture)
+                                    durationSource, durationStacksRef, iconTexture, auraName)
     elseif trackType == "cooldownCharge" and cooldownDurationRef then
       -- Cooldown charge bar - pass cooldown duration wrapper for duration TEXT display
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, cooldownDurationRef, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, cooldownDurationRef, iconTexture, auraName)
     elseif trackType == "cooldownCharge" then
       -- Cooldown charge bar WITHOUT CDM frame (using spell API fallback)
       -- No duration text available, but stacks are from C_Spell.GetSpellCharges
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, nil, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, nil, iconTexture, auraName)
     elseif effectiveDurationRef then
       -- We have an auraInstanceID wrapper - use it for duration display
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, effectiveDurationRef, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, effectiveDurationRef, iconTexture, auraName)
     elseif preventCDMFallback then
       -- Tracking specific spell but don't have effectiveDurationRef - DON'T use CDM's duration
       -- (CDM might be showing a different spell's duration)
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, nil, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, nil, iconTexture, auraName)
     elseif durationBarRef then
       -- Fallback to CDM bar reference
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, durationBarRef, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, durationBarRef, iconTexture, auraName)
     else
       -- Stack bar from icon source - pass fontstring for duration text
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, durationFontString, iconTexture)
+      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, durationFontString, iconTexture, auraName)
     end
   end
   
   -- Hide CDM icon if enabled (ForceHideCDMFrame verifies cooldownID matches before hiding)
   if barConfig.behavior.hideBuffIcon then
     local expectedCdID = state.cooldownID or barConfig.tracking.cooldownID
+    -- Register this bar's hide request for the cooldownID
+    RegisterCDMHideRequest(barNumber, expectedCdID)
+    
     if frame then ForceHideCDMFrame(frame, expectedCdID) end
     if barFrame then ForceHideCDMFrame(barFrame, expectedCdID) end
     
@@ -3421,8 +3533,17 @@ UpdateBarBuffInfo = function(barNumber)
       end
     end
   else
-    if frame then AllowCDMFrameVisible(frame) end
-    if barFrame then AllowCDMFrameVisible(barFrame) end
+    -- This bar does NOT want to hide the CDM icon.
+    -- Unregister any previous hide request from this bar.
+    local wasHidingCD = UnregisterCDMHideRequest(barNumber)
+    
+    -- Only allow CDM frame visible if NO other bar is still requesting it hidden.
+    -- This prevents Bar B (hideBuffIcon=false) from undoing Bar A's (hideBuffIcon=true) hide.
+    local checkCdID = wasHidingCD or (state and state.cooldownID) or (barConfig.tracking and barConfig.tracking.cooldownID)
+    if not AnyCDMHideRequestForCD(checkCdID, barNumber) then
+      if frame then AllowCDMFrameVisible(frame) end
+      if barFrame then AllowCDMFrameVisible(barFrame) end
+    end
   end
 end
 

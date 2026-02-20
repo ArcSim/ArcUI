@@ -1,13 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 -- ArcUI Custom Label  (up to 3 per icon)
 -- Per-icon custom text overlays for CDM icons
+-- v2.11.0: Secret-safe auraInstanceID protection
 --
 -- Each label has its own: text, size, color, anchor, xOffset, yOffset,
 --   AND its own state visibility toggles
 -- Shared across all labels: font, outline, frameStrata, frameLevel
 --
 -- STATE VISIBILITY (secret-safe, PER-LABEL):
---   Auras:     auraInstanceID is NON-SECRET → direct Show/Hide per label
+--   Auras:     Uses HasAuraInstanceID() for secret-safe detection
 --     showWhenActive  / showWhenInactive  (+ suffix 2/3)
 --
 --   Cooldowns (non-charge): Two-state using durationObj curve
@@ -20,12 +21,12 @@
 --     showInCooldownState = all charges spent (uncastable)
 --     chargeDurObj is GCD-safe; durationObj needs GCD filter on charge spells
 --
---   Cooldown Aura Filter (non-secret gate):
+--   Cooldown Aura Filter (secret-safe gate):
 --     showWhenAuraActive  / showWhenAuraInactive (+ suffix 2/3)
 --     Some cooldown frames also track auras (auraInstanceID on the frame).
 --     This filter gates the cooldown visibility result: if the aura state
 --     doesn't match, alpha is forced to 0 regardless of cooldown state.
---     auraInstanceID is NON-SECRET so this is a simple boolean check.
+--     Uses HasAuraInstanceID() for secret-safe boolean check.
 --
 -- DATA STORAGE: All settings live inside cfg.customLabel which is part of
 -- iconSettings[cooldownID] in the AceDB profile → exported by CDM export.
@@ -40,6 +41,22 @@ local CL = ns.CustomLabel
 local SUFFIXES = { "", "2", "3" }
 -- Frame keys for each label's container
 local FRAME_KEYS = { "_arcCL1", "_arcCL2", "_arcCL3" }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SECRET-SAFE AURAINSTANCEID HELPER
+-- Uses ns.API.HasAuraInstanceID from Core.lua (handles secret values)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function HasAuraInstanceID(value)
+  -- Use Core's implementation if available
+  if ns.API and ns.API.HasAuraInstanceID then
+    return ns.API.HasAuraInstanceID(value)
+  end
+  -- Fallback (shouldn't happen - Core loads first)
+  if value == nil then return false end
+  if issecretvalue and issecretvalue(value) then return true end
+  if type(value) == "number" and value == 0 then return false end
+  return value ~= nil
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- HELPERS
@@ -194,10 +211,9 @@ function CL.UpdateVisibility(frame)
   -- Use ONLY cfg._isAura to determine path, NOT frame.wasSetFromAura.
   local isAura = (cfg and cfg._isAura == true)
 
-  -- ── AURA PATH: auraInstanceID is NON-SECRET ──
+  -- ── AURA PATH: secret-safe via HasAuraInstanceID() ──
   if isAura then
-    local isActive = (frame.auraInstanceID and type(frame.auraInstanceID) == "number" and frame.auraInstanceID > 0)
-                     or (frame.totemData ~= nil)
+    local isActive = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
 
     for i = 1, 3 do
       local container = frame[FRAME_KEYS[i]]
@@ -232,9 +248,8 @@ function CL.UpdateVisibility(frame)
     end
   end
 
-  -- Pre-compute aura state once for all labels (non-secret)
-  local hasFrameAura = (frame.auraInstanceID and type(frame.auraInstanceID) == "number" and frame.auraInstanceID > 0)
-                       or (frame.totemData ~= nil)
+  -- Pre-compute aura state once for all labels (secret-safe)
+  local hasFrameAura = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
 
   for i = 1, 3 do
     local container = frame[FRAME_KEYS[i]]
@@ -244,118 +259,113 @@ function CL.UpdateVisibility(frame)
       -- Reset text alpha (may have been set by charge F,T,F multiply case)
       if label then label:SetAlpha(1) end
 
+      -- ════════════════════════════════════════════════════════════════
+      -- TWO INDEPENDENT VISIBILITY SYSTEMS:
+      --   1. COOLDOWN SYSTEM: showInReadyState / showInCooldownState
+      --   2. AURA SYSTEM: showWhenAuraActive / showWhenAuraInactive
+      --
+      -- Each system is "configured" if at least one toggle is false.
+      -- Both true = "show always" = system not filtering.
+      --
+      -- Final visibility:
+      --   - Neither configured → show
+      --   - Only cooldown configured → use cooldown result
+      --   - Only aura configured → use aura result
+      --   - Both configured → both must pass (AND)
+      -- ════════════════════════════════════════════════════════════════
+
+      -- COOLDOWN TOGGLES
       local showReady    = not labelCfg or labelCfg["showInReadyState" .. s] ~= false
       local showCooldown = not labelCfg or labelCfg["showInCooldownState" .. s] ~= false
 
-      -- ════════════════════════════════════════════════════════════════
-      -- CHARGE SPELL: Three-state visibility
-      --   chargeDurObj is GCD-safe (no phantom CD)
-      --   durationObj needs GCD filter on charge spells (phantom CD)
-      -- ════════════════════════════════════════════════════════════════
-      if isChargeSpell and chargeDurObj and CooldownCurves then
-        local showRecharging = not labelCfg or labelCfg["showWhileRecharging" .. s] ~= false
-        -- durationObj is unreliable during GCD on charge spells (phantom CD)
-        local gcdActive = (isOnGCD == true)
-
-        if showReady and showRecharging and showCooldown then
-          -- T,T,T → always visible
-          container:SetAlpha(1)
-
-        elseif not showReady and not showRecharging and not showCooldown then
-          -- F,F,F → always hidden
-          container:SetAlpha(0)
-
-        elseif showReady and showRecharging then
-          -- T,T,F → show when NOT all-spent: durationObj BinaryInv
-          -- GCD: durationObj unreliable → assume not all-spent → show
-          if gcdActive or not durationObj then
-            container:SetAlpha(1)
-          else
-            ApplyCurveAlpha(container, durationObj, CooldownCurves.BinaryInv)
-          end
-
-        elseif showRecharging and showCooldown then
-          -- F,T,T → show when any recharging: chargeDurObj Binary (GCD-safe)
-          ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.Binary)
-
-        elseif showReady and not showRecharging and not showCooldown then
-          -- T,F,F → show when all charges full: chargeDurObj BinaryInv (GCD-safe)
-          ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.BinaryInv)
-
-        elseif not showReady and not showRecharging and showCooldown then
-          -- F,F,T → show when all-spent: durationObj Binary
-          -- GCD: durationObj unreliable → assume not all-spent → hide
-          if gcdActive or not durationObj then
-            container:SetAlpha(0)
-          else
-            ApplyCurveAlpha(container, durationObj, CooldownCurves.Binary)
-          end
-
-        elseif showRecharging then
-          -- F,T,F → recharging-only (has charges but not all full)
-          -- Alpha multiplication trick: container × text
-          --   container = chargeDurObj Binary (1 when recharging, GCD-safe)
-          --   text = durationObj BinaryInv (1 when has charges, 0 when all-spent)
-          --   Effective: recharging+has charges=1×1, all-spent=1×0, ready=0×1
-          ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.Binary)
-          if label then
-            if gcdActive or not durationObj then
-              label:SetAlpha(1)  -- GCD: assume has charges → container handles it
-            else
-              ApplyCurveAlpha(label, durationObj, CooldownCurves.BinaryInv)
-            end
-          end
-
-        else
-          -- T,F,T → ready + on-CD but NOT recharging
-          -- Cannot combine two OR states with secret curves
-          -- Approximate as always visible (recharging window is brief)
-          container:SetAlpha(1)
-        end
-
-      -- ════════════════════════════════════════════════════════════════
-      -- NON-CHARGE SPELL: Two-state visibility
-      --   showWhileRecharging is ignored (no recharge concept)
-      --   GCD filter: isOnGCD → treat as ready
-      -- ════════════════════════════════════════════════════════════════
-      else
-        if showReady and showCooldown then
-          container:SetAlpha(1)
-        elseif not showReady and not showCooldown then
-          container:SetAlpha(0)
-        elseif not spellID or isOnGCD or not durationObj or not CooldownCurves then
-          container:SetAlpha(showReady and 1 or 0)
-        else
-          local curve = showReady and CooldownCurves.BinaryInv or CooldownCurves.Binary
-          if curve then
-            ApplyCurveAlpha(container, durationObj, curve)
-          end
-        end
-      end
-
-      -- ════════════════════════════════════════════════════════════════
-      -- AURA FILTER (for cooldown frames that also track auras)
-      -- When user has configured aura toggles (at least one is off),
-      -- this becomes the AUTHORITATIVE visibility control — it sets
-      -- the final alpha directly, overriding cooldown state.
-      -- This lets users show labels purely based on aura presence
-      -- (e.g. "show only when aura inactive") regardless of CD state.
-      -- ════════════════════════════════════════════════════════════════
+      -- AURA TOGGLES
       local showAuraActive   = not labelCfg or labelCfg["showWhenAuraActive" .. s] ~= false
       local showAuraInactive = not labelCfg or labelCfg["showWhenAuraInactive" .. s] ~= false
+      -- "Configured" = user intentionally wants to filter by aura state
+      -- Both true = "show always" = not filtering
+      -- Both false = "hide always" = likely stale/unintended data, ignore
+      -- One true, one false = intentional filtering
+      local auraConfigured = (showAuraActive ~= showAuraInactive)
 
-      if not (showAuraActive and showAuraInactive) then
-        -- User explicitly configured aura visibility → aura state controls alpha
-        local auraPass = (hasFrameAura and showAuraActive) or (not hasFrameAura and showAuraInactive)
-        if auraPass then
-          container:SetAlpha(1)
-          if label then label:SetAlpha(1) end
-        else
-          container:SetAlpha(0)
-          if label then label:SetAlpha(1) end
-        end
+      -- COMPUTE AURA RESULT FIRST (if configured)
+      local auraPass = true
+      if auraConfigured then
+        auraPass = (hasFrameAura and showAuraActive) or (not hasFrameAura and showAuraInactive)
       end
 
+      -- If aura check fails, hide immediately - don't compute cooldown
+      if not auraPass then
+        container:SetAlpha(0)
+        if label then label:SetAlpha(1) end
+      else
+        -- ════════════════════════════════════════════════════════════════
+        -- CHARGE SPELL: Three-state
+        -- ════════════════════════════════════════════════════════════════
+        if isChargeSpell and chargeDurObj and CooldownCurves then
+          local showRecharging = not labelCfg or labelCfg["showWhileRecharging" .. s] ~= false
+          local gcdActive = (isOnGCD == true)
+          
+          -- Check if cooldown filtering is configured (3 toggles)
+          -- All ON = not filtering, All OFF = disabled, Mixed = filtering
+          local allOn = showReady and showRecharging and showCooldown
+          local allOff = not showReady and not showRecharging and not showCooldown
+          local chargeConfigured = not allOn and not allOff
+          
+          if not chargeConfigured then
+            -- All toggles same state - not filtering, show the label
+            container:SetAlpha(1)
+          elseif showReady and showRecharging then
+            if gcdActive or not durationObj then
+              container:SetAlpha(1)
+            else
+              ApplyCurveAlpha(container, durationObj, CooldownCurves.BinaryInv)
+            end
+          elseif showRecharging and showCooldown then
+            ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.Binary)
+          elseif showReady and not showRecharging and not showCooldown then
+            ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.BinaryInv)
+          elseif not showReady and not showRecharging and showCooldown then
+            if gcdActive or not durationObj then
+              container:SetAlpha(0)
+            else
+              ApplyCurveAlpha(container, durationObj, CooldownCurves.Binary)
+            end
+          elseif showRecharging then
+            ApplyCurveAlpha(container, chargeDurObj, CooldownCurves.Binary)
+            if label then
+              if gcdActive or not durationObj then
+                label:SetAlpha(1)
+              else
+                ApplyCurveAlpha(label, durationObj, CooldownCurves.BinaryInv)
+              end
+            end
+          else
+            container:SetAlpha(1)
+          end
+        -- ════════════════════════════════════════════════════════════════
+        -- NON-CHARGE SPELL: Two-state
+        -- ════════════════════════════════════════════════════════════════
+        else
+          -- Check if cooldown filtering is configured (2 toggles)
+          local allOn = showReady and showCooldown
+          local allOff = not showReady and not showCooldown
+          local cdConfigured = not allOn and not allOff
+          
+          if not cdConfigured then
+            -- All toggles same state - not filtering, show the label
+            container:SetAlpha(1)
+          elseif not spellID or isOnGCD or not durationObj or not CooldownCurves then
+            -- Fallback: use boolean result
+            container:SetAlpha(showReady and 1 or 0)
+          else
+            -- Use curve for smooth transition
+            local curve = showReady and CooldownCurves.BinaryInv or CooldownCurves.Binary
+            if curve then
+              ApplyCurveAlpha(container, durationObj, curve)
+            end
+          end
+        end
+      end
     end
   end
 end

@@ -37,6 +37,23 @@ local DL = ns.CDMGroups.DynamicLayout
 local Shared = ns.CDMShared
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- SECRET-SAFE AURA INSTANCE ID CHECK
+-- auraInstanceID may become secret in future WoW versions
+-- Uses ns.API.HasAuraInstanceID from Core.lua (handles secret values)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function HasAuraInstanceID(value)
+    -- Use Core's implementation if available
+    if ns.API and ns.API.HasAuraInstanceID then
+        return ns.API.HasAuraInstanceID(value)
+    end
+    -- Fallback (shouldn't happen - Core loads first)
+    if value == nil then return false end
+    if issecretvalue and issecretvalue(value) then return true end
+    if type(value) == "number" and value == 0 then return false end
+    return value ~= nil
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- MODULE-LEVEL CACHED ENABLED STATE
 -- Direct boolean check - NO function call overhead in OnUpdate
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -56,7 +73,9 @@ DL.RefreshCachedEnabledState = RefreshCachedEnabledState
 
 local CONFIG = {
     -- How often to check for visibility changes (seconds)
-    CHECK_INTERVAL = 0.5,  -- 2Hz (was 0.25 = 4Hz) - cut in half
+    -- How often to check for visibility changes (controls responsiveness vs CPU)
+    -- PERFORMANCE: Increased from 0.5 to 1.0 - user won't notice 1 second delay
+    CHECK_INTERVAL = 1.0,  -- 1Hz (was 2Hz)
     
     -- How often to check for grid mismatches (more expensive, do less often)
     MISMATCH_CHECK_INTERVAL = 2.0,  -- 0.5Hz (was 1Hz) - cut in half
@@ -100,9 +119,87 @@ local state = {
     -- Cleared at start of each tick, avoids duplicate API calls
     tickInvisibleCache = {},  -- [cdID] = result (true/false/nil)
     
+    -- PERFORMANCE: Per-tick cache for IsAuraFrame results
+    tickAuraFrameCache = {},  -- [cdID] = result (true/false)
+    
     -- PERFORMANCE: Throttle HasGridMismatch checks (expensive)
     lastMismatchCheckTime = 0,  -- GetTime() of last mismatch check
+    
+    -- PERFORMANCE: Module-level cached panel state (updated once per tick)
+    -- All functions should use this instead of calling IsOptionsPanelOpen()
+    cachedPanelOpenThisTick = false,
 }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TABLE POOLING - Reuse tables to avoid garbage collection pressure
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local tablePool = {
+    iconData = {},      -- Pool of iconData tables
+    results = {},       -- Pool of result tables for CollectMembersForReflow
+}
+
+local function GetPooledIconData()
+    local t = table.remove(tablePool.iconData)
+    if t then
+        -- Clear existing data
+        t.cdID = nil
+        t.member = nil
+        t.isAura = nil
+        t.isActive = nil
+        t.isTrulyHidden = nil
+        t.sortIndex = nil
+        t.row = nil
+        t.col = nil
+        return t
+    end
+    return {}
+end
+
+local function ReleasePooledIconData(t)
+    if #tablePool.iconData < 200 then  -- Max pool size
+        table.insert(tablePool.iconData, t)
+    end
+end
+
+local function GetPooledResult()
+    local t = table.remove(tablePool.results)
+    if t then
+        wipe(t.toReflow)
+        wipe(t.toSkip)
+        wipe(t.toRemove)
+        return t
+    end
+    return {
+        toReflow = {},
+        toSkip = {},
+        toRemove = {},
+    }
+end
+
+local function ReleasePooledResult(result)
+    -- Release all iconData tables back to pool
+    for _, iconData in ipairs(result.toReflow) do
+        ReleasePooledIconData(iconData)
+    end
+    for _, iconData in ipairs(result.toSkip) do
+        ReleasePooledIconData(iconData)
+    end
+    for _, iconData in ipairs(result.toRemove) do
+        ReleasePooledIconData(iconData)
+    end
+    
+    wipe(result.toReflow)
+    wipe(result.toSkip)
+    wipe(result.toRemove)
+    
+    if #tablePool.results < 20 then
+        table.insert(tablePool.results, result)
+    end
+end
+
+-- Export for cleanup
+DL.ReleasePooledResult = ReleasePooledResult
 
 -- Add event to log
 local function LogEvent(eventType, groupName, details)
@@ -128,13 +225,37 @@ end
 -- Track which frames we've hooked for center alignment
 local dynamicLayoutHookedFrames = {}
 
--- Check if options panel is open (defined here so it's available for TriggerDynamicLayout)
+-- Check if options panel is open
+-- PERFORMANCE: Returns cached value from current tick if available
+-- The maintainer updates state.cachedPanelOpenThisTick once per tick
 local function IsOptionsPanelOpen()
-    if ns.CDMGroups.IsOptionsPanelOpen then
-        return ns.CDMGroups.IsOptionsPanelOpen()
+    -- Use tick-cached value (set by maintainer OnUpdate)
+    return state.cachedPanelOpenThisTick
+end
+
+-- Cache for AceConfigDialog reference (avoid LibStub calls)
+local _cachedACD = nil
+
+-- Force-update the panel cache (called by maintainer and when fresh value needed)
+-- PERFORMANCE: Inlined logic to avoid calling profiled ns.CDMGroups.IsOptionsPanelOpen
+local function UpdatePanelCache()
+    -- Check ArcUI AceConfig panel (cached ACD reference)
+    if not _cachedACD then
+        _cachedACD = LibStub("AceConfigDialog-3.0", true)
     end
-    local ACD = LibStub("AceConfigDialog-3.0", true)
-    return ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+    local arcUIOpen = _cachedACD and _cachedACD.OpenFrames and _cachedACD.OpenFrames["ArcUI"] and true or false
+    
+    -- Check CDM options panel (cached flag from CDMGroups)
+    local cdmOpen = ns.CDMGroups and ns.CDMGroups.cdmOptionsPanelOpen or false
+    
+    -- Check Blizzard Edit Mode (skip if already open)
+    local blizzEditMode = false
+    if not arcUIOpen and not cdmOpen then
+        blizzEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() or false
+    end
+    
+    state.cachedPanelOpenThisTick = arcUIOpen or cdmOpen or blizzEditMode
+    return state.cachedPanelOpenThisTick
 end
 
 -- Trigger immediate layout for a center-aligned group
@@ -190,11 +311,9 @@ local function TriggerDynamicLayout(group, reason, triggerFrame)
     end
     
     if triggerFrame and reason ~= "SetAuraInstanceInfo" then
-        local auraInstanceID = triggerFrame.auraInstanceID
         if reason == "OnUnitAuraAddedEvent" then
-            -- For aura added, check if frame has aura data yet
-            -- NOTE: We only check auraInstanceID (non-secret), NOT isActive (secret in combat)
-            if not auraInstanceID then
+            -- For aura added, check if frame has aura data yet (secret-safe)
+            if not HasAuraInstanceID(triggerFrame.auraInstanceID) then
                 Trace("LAYOUT_SKIP", cdID, "aura not yet active (no auraInstanceID)", groupName)
                 return
             end
@@ -482,7 +601,7 @@ function DL.IsIconInvisible(member)
     -- preferredTotemUpdateSlot persists even after totem expires, so don't use it!
     if frame.totemData ~= nil then
         result = false  -- totemData exists = totem active = visible
-    elseif frame.auraInstanceID and frame.auraInstanceID > 0 then
+    elseif HasAuraInstanceID(frame.auraInstanceID) then
         result = false  -- has aura = visible
     else
         -- Aura is inactive — check if CDMEnhance would actually hide this frame
@@ -557,8 +676,8 @@ function DL.IsAuraActive(member)
         return true, "totem_active"
     end
     
-    -- Regular aura - check auraInstanceID
-    if frame.auraInstanceID and frame.auraInstanceID > 0 then
+    -- Regular aura - check auraInstanceID (secret-safe)
+    if HasAuraInstanceID(frame.auraInstanceID) then
         return true, "has_auraInstanceID"
     end
     
@@ -577,24 +696,35 @@ end
 function DL.IsAuraFrame(member)
     if not member then return false end
     
-    -- FIRST: Use cached viewerType (fast path - no API call)
+    -- FIRST: Use cached viewerType on member (fast path - no API call)
     if member.viewerType then
         return member.viewerType == "aura"
     end
     
-    -- SECOND: Try CDM category lookup only if cache is missing
-    local Shared = ns.CDMShared
+    -- SECOND: Check per-tick cache (avoid redundant lookups same tick)
     local cdID = member.cdID or (member.frame and member.frame.cooldownID)
+    if cdID then
+        local cached = state.tickAuraFrameCache[cdID]
+        if cached ~= nil then
+            return cached
+        end
+    end
+    
+    -- THIRD: Try CDM category lookup only if cache is missing
+    local Shared = ns.CDMShared
     if cdID and Shared and Shared.GetViewerTypeFromCooldownID then
         local viewerType = Shared.GetViewerTypeFromCooldownID(cdID)
         if viewerType then
             -- Cache for future calls
             member.viewerType = viewerType
-            return viewerType == "aura"
+            local result = viewerType == "aura"
+            state.tickAuraFrameCache[cdID] = result
+            return result
         end
     end
     
     -- Default: assume NOT an aura (safer - treats as wall)
+    if cdID then state.tickAuraFrameCache[cdID] = false end
     return false
 end
 
@@ -674,6 +804,143 @@ function DL.BuildAvailableSlots(rows, cols, alignment, blockedSlots)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- SAVED POSITION DEDUPLICATION
+-- Detects and auto-repairs duplicate saved positions within a group.
+-- When two cdIDs share the same (row, col), the one with the higher cdID
+-- (or the one processed second) gets moved to the next available slot.
+-- This fixes corrupted save data that causes ACTIVE_NO_SLOT issues.
+-- ═══════════════════════════════════════════════════════════════════════════
+function DL.DeduplicateGroupPositions(group)
+    if not group or not group.name then return false end
+    
+    -- Throttle: Only check once every 5 seconds per group
+    -- Duplicates are a saved-data issue, not a per-frame issue
+    local now = GetTime()
+    local lastCheck = state.lastDedupCheck and state.lastDedupCheck[group.name]
+    if lastCheck and (now - lastCheck) < 5 then return false end
+    if not state.lastDedupCheck then state.lastDedupCheck = {} end
+    state.lastDedupCheck[group.name] = now
+    
+    local savedPositions = ns.CDMGroups and ns.CDMGroups.savedPositions
+    if not savedPositions then return false end
+    
+    local groupName = group.name
+    local maxCols = group.layout and group.layout.gridCols or 4
+    local maxRows = group.layout and group.layout.gridRows or 2
+    local maxSlots = maxRows * maxCols
+    
+    -- Pass 1: Collect all saved positions for this group, sorted by cdID for determinism
+    local groupEntries = {}  -- { cdID, row, col, sortIndex }
+    for cdID, saved in pairs(savedPositions) do
+        if saved.type == "group" and saved.target == groupName then
+            table.insert(groupEntries, {
+                cdID = cdID,
+                row = saved.row or 0,
+                col = saved.col or 0,
+                sortIndex = saved.sortIndex,
+            })
+        end
+    end
+    
+    -- Sort by (row*cols+col) then cdID for stable ordering
+    -- The first entry at each position "wins" and keeps it
+    table.sort(groupEntries, function(a, b)
+        local aLinear = a.row * maxCols + a.col
+        local bLinear = b.row * maxCols + b.col
+        if aLinear ~= bLinear then return aLinear < bLinear end
+        -- Tiebreaker: numeric cdIDs before string, then by value
+        local aType, bType = type(a.cdID), type(b.cdID)
+        if aType ~= bType then return aType == "number" end
+        return a.cdID < b.cdID
+    end)
+    
+    -- Pass 2: Detect duplicates
+    local occupiedSlots = {}  -- linearIdx -> cdID (first occupant wins)
+    local duplicates = {}     -- list of entries that need new positions
+    
+    for _, entry in ipairs(groupEntries) do
+        local linearIdx = entry.row * maxCols + entry.col
+        if occupiedSlots[linearIdx] then
+            -- DUPLICATE - this entry shares a slot with another cdID
+            table.insert(duplicates, entry)
+        else
+            occupiedSlots[linearIdx] = entry.cdID
+        end
+    end
+    
+    if #duplicates == 0 then return false end
+    
+    -- Pass 3: Assign duplicates to next available slots
+    local fixed = 0
+    for _, dup in ipairs(duplicates) do
+        -- Find next empty slot (linear scan from 0)
+        for slot = 0, maxSlots - 1 do
+            if not occupiedSlots[slot] then
+                local newRow = math.floor(slot / maxCols)
+                local newCol = slot % maxCols
+                local newSortIndex = newRow * maxCols + newCol
+                
+                -- Preserve existing viewerType from the saved entry
+                local existing = savedPositions[dup.cdID]
+                local viewerType = existing and existing.viewerType
+                
+                -- Update saved position
+                savedPositions[dup.cdID] = {
+                    type = "group",
+                    target = groupName,
+                    row = newRow,
+                    col = newCol,
+                    sortIndex = newSortIndex,
+                    viewerType = viewerType,
+                }
+                
+                -- Mark slot as occupied
+                occupiedSlots[slot] = dup.cdID
+                
+                -- Update member position if they exist in the group
+                if group.members and group.members[dup.cdID] then
+                    local member = group.members[dup.cdID]
+                    member.row = newRow
+                    member.col = newCol
+                end
+                
+                -- Update grid if it exists
+                if group.grid then
+                    -- Clear old grid position if it pointed to this cdID
+                    if group.grid[dup.row] and group.grid[dup.row][dup.col] == dup.cdID then
+                        group.grid[dup.row][dup.col] = nil
+                    end
+                    -- Set new grid position
+                    if not group.grid[newRow] then group.grid[newRow] = {} end
+                    if not group.grid[newRow][newCol] then
+                        group.grid[newRow][newCol] = dup.cdID
+                    end
+                end
+                
+                fixed = fixed + 1
+                LogEvent("DEDUP_FIX", groupName, string.format(
+                    "cdID %s moved from r%d,c%d to r%d,c%d (was duplicate)",
+                    tostring(dup.cdID), dup.row, dup.col, newRow, newCol
+                ))
+                break
+            end
+        end
+    end
+    
+    if fixed > 0 then
+        LogEvent("DEDUP_COMPLETE", groupName, string.format(
+            "Fixed %d duplicate saved positions", fixed
+        ))
+        -- Mark grid dirty so Layout re-reads positions
+        if group.MarkGridDirty then
+            group:MarkGridDirty()
+        end
+    end
+    
+    return fixed > 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- UNIFIED PIXEL POSITIONING (v2.0)
 -- Computes pixel {x,y} offsets from container CENTER for ALL alignments.
 -- Replaces the old grid-slot system (Fill Gaps) and the center-only pixel system.
@@ -718,6 +985,14 @@ function DL.CalculateDynamicSlots(group, rows, cols, excludeInactiveAuras)
         
         return dynamicPositions, activeAuras
     end
+    
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- AUTO-FIX: Detect and repair duplicate saved positions
+    -- Two cdIDs at the same (row,col) causes ACTIVE_NO_SLOT issues.
+    -- This is a cheap check (one pass through saved positions) that only
+    -- does work when duplicates actually exist.
+    -- ═══════════════════════════════════════════════════════════════════════
+    DL.DeduplicateGroupPositions(group)
     
     -- ═══════════════════════════════════════════════════════════════════════
     -- COLLECT ACTIVE ITEMS
@@ -1135,6 +1410,30 @@ function DL.CalculateDynamicSlots(group, rows, cols, excludeInactiveAuras)
         end -- else (non center_v alignments)
     end
     
+    -- Store content center for container position adjustment
+    -- Icons are positioned relative to container CENTER at their gravity positions.
+    -- CDMGroups.lua will use this to move container and adjust icon positions
+    -- so icons stay at their screen positions when container shrinks.
+    if group._pixelOffsets and next(group._pixelOffsets) then
+        local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
+        for cdID, offset in pairs(group._pixelOffsets) do
+            if offset.x < minX then minX = offset.x end
+            if offset.x > maxX then maxX = offset.x end
+            if offset.y < minY then minY = offset.y end
+            if offset.y > maxY then maxY = offset.y end
+        end
+        if minX ~= math.huge then
+            group._contentCenterX = (minX + maxX) / 2
+            group._contentCenterY = (minY + maxY) / 2
+        else
+            group._contentCenterX = 0
+            group._contentCenterY = 0
+        end
+    else
+        group._contentCenterX = 0
+        group._contentCenterY = 0
+    end
+    
     return dynamicPositions, activeAuras
 end
 
@@ -1328,18 +1627,36 @@ local function CheckGroupForChanges(group, shouldCheckMismatch)
     
     for cdID, member in pairs(group.members) do
         if not member.isPlaceholder and member.frame then
-            local isVisible = not DL.IsIconInvisible(member)
-            local wasVisible = state.iconVisibility[cdID]
+            -- PERFORMANCE: Only check aura frames for visibility changes
+            -- Cooldowns and utilities don't change visibility based on aura state
+            -- Use cached viewerType when available (fast path)
+            local isAura = member.viewerType == "aura"
+            if not isAura and not member.viewerType then
+                -- Cache miss - do the lookup once
+                isAura = DL.IsAuraFrame(member)
+            end
             
-            -- First check - just record state
-            if wasVisible == nil then
-                state.iconVisibility[cdID] = isVisible
-                LogEvent("INIT", groupName, string.format("cdID %d initial state: %s", cdID, isVisible and "visible" or "hidden"))
-            elseif wasVisible ~= isVisible then
-                -- Visibility changed!
-                state.iconVisibility[cdID] = isVisible
-                anyChanged = true
-                table.insert(changedIcons, string.format("%d: %s->%s", cdID, wasVisible and "V" or "H", isVisible and "V" or "H"))
+            -- Skip non-aura frames - they're always "visible" for dynamic layout purposes
+            if not isAura then
+                -- Just ensure they're tracked as visible
+                if state.iconVisibility[cdID] == nil then
+                    state.iconVisibility[cdID] = true
+                end
+            else
+                -- Aura frame - check visibility
+                local isVisible = not DL.IsIconInvisible(member)
+                local wasVisible = state.iconVisibility[cdID]
+                
+                -- First check - just record state
+                if wasVisible == nil then
+                    state.iconVisibility[cdID] = isVisible
+                    LogEvent("INIT", groupName, string.format("cdID %d initial state: %s", cdID, isVisible and "visible" or "hidden"))
+                elseif wasVisible ~= isVisible then
+                    -- Visibility changed!
+                    state.iconVisibility[cdID] = isVisible
+                    anyChanged = true
+                    table.insert(changedIcons, string.format("%d: %s->%s", cdID, wasVisible and "V" or "H", isVisible and "V" or "H"))
+                end
             end
         end
     end
@@ -1460,66 +1777,129 @@ end
 local DynamicMaintainer = CreateFrame("Frame")
 local elapsed = 0
 
+-- PERFORMANCE: Separate throttle for options panel check
+-- ArcUI and CDM panels use direct hooks - polling only needed for Blizzard Edit Mode
+local panelCheckElapsed = 0
+local PANEL_CHECK_INTERVAL = 0.1  -- 100ms = 10 checks/second
+
+-- Called directly by ArcUI_Options.lua when panel opens
+function DL.OnOptionsPanelOpened()
+    -- Update cache immediately
+    state.cachedPanelOpenThisTick = true
+    state.optionsPanelWasOpen = true
+    
+    -- Invalidate CDMGroups panel cache so Layout() sees fresh state
+    if ns.CDMGroups.InvalidateOptionsPanelCache then
+        ns.CDMGroups.InvalidateOptionsPanelCache()
+    end
+    
+    -- Reset ALL groups to grid positions
+    -- Pixel positioning is cleared so users can freely edit icon positions
+    if ns.CDMGroups.groups then
+        local savedPositions = ns.CDMGroups.savedPositions or {}
+        for groupName, group in pairs(ns.CDMGroups.groups) do
+            -- FIRST: Restore container to base position if dynamic layout offset it.
+            -- Must happen BEFORE clearing _appliedOffset, because Layout()'s restore
+            -- path checks _appliedOffsetX — if nil, it skips restore → container stays
+            -- at base+offset while icons go to grid → visible position jump.
+            if (group._appliedOffsetX and group._appliedOffsetX ~= 0)
+                or (group._appliedOffsetY and group._appliedOffsetY ~= 0) then
+                if not InCombatLockdown() and group.container then
+                    local baseX = group.position and group.position.x or 0
+                    local baseY = group.position and group.position.y or 0
+                    group.container:ClearAllPoints()
+                    group.container:SetPoint("CENTER", UIParent, "CENTER", baseX, baseY)
+                end
+            end
+            
+            -- NOW clear pixel positioning flags (after container is restored)
+            group._usePixelPositioning = nil
+            group._pixelOffsets = nil
+            group._activeOrder = nil
+            group._appliedOffsetX = nil
+            group._appliedOffsetY = nil
+            
+            -- Restore member.row/col to saved positions for grid editing
+            if group.members then
+                for cdID, member in pairs(group.members) do
+                    local saved = savedPositions[cdID]
+                    if saved and saved.type == "group" and saved.target == groupName then
+                        if saved.row ~= nil and saved.col ~= nil then
+                            member.row = saved.row
+                            member.col = saved.col
+                        end
+                    end
+                end
+            end
+            
+            -- Trigger layout to reposition icons to grid
+            if group.Layout then
+                group:Layout()
+            end
+        end
+    end
+end
+
+-- Called directly by ArcUI_Options.lua when panel closes
+-- No polling needed - immediate response
+function DL.OnOptionsPanelClosed()
+    -- Update cache immediately
+    state.cachedPanelOpenThisTick = false
+    state.optionsPanelWasOpen = false
+    
+    -- Invalidate CDMGroups panel cache so Layout() sees panel as CLOSED.
+    -- Without this, the 100ms cache returns stale "true" → usePixelLayout = false
+    -- → CalculateDynamicSlots skipped → no compact container size → no sync to
+    -- CDMContainerSync → Sensei width bars never update.
+    if ns.CDMGroups.InvalidateOptionsPanelCache then
+        ns.CDMGroups.InvalidateOptionsPanelCache()
+    end
+    
+    -- Clear any applied container offsets so positions reset properly
+    if ns.CDMGroups.groups then
+        for groupName, group in pairs(ns.CDMGroups.groups) do
+            group._appliedOffsetX = nil
+            group._appliedOffsetY = nil
+        end
+    end
+    
+    -- Trigger layout for all groups
+    if ns.CDMGroups.groups then
+        for groupName, group in pairs(ns.CDMGroups.groups) do
+            if group.Layout then
+                if group.autoReflow and group.ReflowIcons then
+                    group:ReflowIcons()
+                else
+                    group:Layout()
+                end
+            end
+        end
+    end
+end
+
 DynamicMaintainer:SetScript("OnUpdate", function(self, dt)
     -- Skip if CDMGroups not enabled (direct boolean check - no function call)
     if not _cdmGroupsEnabled then
         return
     end
     
-    -- Track options panel state BEFORE throttle (so we don't miss open/close)
-    local optionsPanelOpen = IsOptionsPanelOpen()
-    local wasOpen = state.optionsPanelWasOpen
-    state.optionsPanelWasOpen = optionsPanelOpen
+    -- PERFORMANCE: Throttle the options panel check
+    -- ArcUI and CDM panels use direct hooks - this only catches Blizzard Edit Mode
+    panelCheckElapsed = panelCheckElapsed + dt
+    local optionsPanelOpen = state.cachedPanelOpenThisTick  -- Use cached value by default
     
-    -- When options panel JUST OPENED, reset ALL groups to grid positions
-    -- Pixel positioning is cleared so users can freely edit icon positions
-    if optionsPanelOpen and not wasOpen then
-        if ns.CDMGroups.groups then
-            local savedPositions = ns.CDMGroups.savedPositions or {}
-            for groupName, group in pairs(ns.CDMGroups.groups) do
-                if group._usePixelPositioning then
-                    -- Clear pixel positioning flags
-                    group._usePixelPositioning = nil
-                    group._pixelOffsets = nil
-                    group._activeOrder = nil
-                    
-                    -- Restore member.row/col to saved positions for grid editing
-                    if group.members then
-                        for cdID, member in pairs(group.members) do
-                            local saved = savedPositions[cdID]
-                            if saved and saved.type == "group" and saved.target == groupName then
-                                if saved.row ~= nil and saved.col ~= nil then
-                                    member.row = saved.row
-                                    member.col = saved.col
-                                end
-                            end
-                        end
-                    end
-                    
-                    -- Trigger layout to reposition icons to grid
-                    if group.Layout then
-                        group:Layout()
-                    end
-                end
-            end
+    if panelCheckElapsed >= PANEL_CHECK_INTERVAL then
+        panelCheckElapsed = 0
+        optionsPanelOpen = UpdatePanelCache()  -- Updates state.cachedPanelOpenThisTick
+        
+        -- FALLBACK: If polling detects panel just closed but direct hook didn't fire
+        local wasOpen = state.optionsPanelWasOpen
+        if wasOpen and not optionsPanelOpen then
+            DL.OnOptionsPanelClosed()
+        elseif not wasOpen and optionsPanelOpen then
+            DL.OnOptionsPanelOpened()
         end
-    end
-    
-    -- When options panel JUST CLOSED, trigger layout to restore pixel positioning
-    if not optionsPanelOpen and wasOpen then
-        if ns.CDMGroups.groups then
-            for groupName, group in pairs(ns.CDMGroups.groups) do
-                -- All groups get Layout() to re-enable pixel positioning
-                -- For groups with Dynamic Auras, this also handles aura compaction
-                if group.Layout then
-                    if group.autoReflow and group.ReflowIcons then
-                        group:ReflowIcons()
-                    else
-                        group:Layout()
-                    end
-                end
-            end
-        end
+        state.optionsPanelWasOpen = optionsPanelOpen
     end
     
     -- Skip all processing when options panel is open
@@ -1530,8 +1910,9 @@ DynamicMaintainer:SetScript("OnUpdate", function(self, dt)
     if elapsed < CONFIG.CHECK_INTERVAL then return end
     elapsed = 0
     
-    -- PERFORMANCE: Clear per-tick cache at start of each check cycle
+    -- PERFORMANCE: Clear per-tick caches at start of each check cycle (not every frame!)
     wipe(state.tickInvisibleCache)
+    wipe(state.tickAuraFrameCache)
     
     -- Skip during spec changes
     if ns.CDMGroups.specChangeInProgress then return end
@@ -1716,11 +2097,8 @@ end
 -- Note: "Walls" concept only applies in Layout's CalculateDynamicSlots,
 -- where CDs stay at their REFLOWED position while auras animate around them.
 function DL.CollectMembersForReflow(group)
-    local result = {
-        toReflow = {},   -- Icons that will be reflowed (cooldowns + active auras)
-        toSkip = {},     -- Icons to skip (inactive auras when dynamic ON)
-        toRemove = {},   -- Members without valid frames (cleanup)
-    }
+    -- PERFORMANCE: Use pooled result table instead of creating new one
+    local result = GetPooledResult()
     
     if not group or not group.members then
         return result
@@ -1738,10 +2116,11 @@ function DL.CollectMembersForReflow(group)
             -- Placeholders don't participate in reflow
         elseif not HasValidFrame(member, cdID) then
             -- No valid frame - mark for removal (but save position first)
-            table.insert(result.toRemove, {
-                cdID = cdID,
-                member = member,
-            })
+            -- PERFORMANCE: Use pooled iconData
+            local iconData = GetPooledIconData()
+            iconData.cdID = cdID
+            iconData.member = member
+            table.insert(result.toRemove, iconData)
         else
             -- Has valid frame - categorize
             local isAura = DL.IsAuraFrame(member)
@@ -1774,16 +2153,16 @@ function DL.CollectMembersForReflow(group)
                 sortIndex = 9999
             end
             
-            local iconData = {
-                cdID = cdID,
-                member = member,
-                isAura = isAura,
-                isActive = isActive,
-                isTrulyHidden = isTrulyHidden,
-                sortIndex = sortIndex,
-                row = member.row,
-                col = member.col,
-            }
+            -- PERFORMANCE: Use pooled iconData instead of creating new table
+            local iconData = GetPooledIconData()
+            iconData.cdID = cdID
+            iconData.member = member
+            iconData.isAura = isAura
+            iconData.isActive = isActive
+            iconData.isTrulyHidden = isTrulyHidden
+            iconData.sortIndex = sortIndex
+            iconData.row = member.row
+            iconData.col = member.col
             
             -- When dynamic is ON: inactive auras, bar-hidden, and truly hidden frames are gaps
             -- When dynamic is OFF: everything reflows (except bar-hidden and truly hidden)
@@ -1954,6 +2333,9 @@ function DL.ReflowGroup(group)
     local maxRows = group.layout and group.layout.gridRows or 2
     local maxCols = group.layout and group.layout.gridCols or 4
     
+    -- AUTO-FIX: Repair duplicate saved positions before reflow
+    DL.DeduplicateGroupPositions(group)
+    
     -- Collect and categorize members
     local members = DL.CollectMembersForReflow(group)
     
@@ -2020,6 +2402,10 @@ function DL.ReflowGroup(group)
             member.row = slot.row
             member.col = slot.col
             
+            -- CRITICAL: Set _dynamicSlot for proper tracking
+            -- This is the compacted slot index (0-based)
+            member._dynamicSlot = i - 1
+            
             -- Update grid
             group.grid[slot.row][slot.col] = cdID
         end
@@ -2034,7 +2420,11 @@ function DL.ReflowGroup(group)
     state.lastReflowTime[group.name] = GetTime()
     state.reflowCount[group.name] = (state.reflowCount[group.name] or 0) + 1
     
-    return #members.toReflow, #members.toSkip, #members.toRemove
+    -- PERFORMANCE: Release pooled tables back to pool
+    local reflowCount, skipCount, removeCount = #members.toReflow, #members.toSkip, #members.toRemove
+    ReleasePooledResult(members)
+    
+    return reflowCount, skipCount, removeCount
 end
 
 -- Clear all visibility tracking (call on spec change, profile switch, etc.)
@@ -2045,8 +2435,12 @@ function DL.ClearTracking()
     wipe(state.reflowCount)
     wipe(state.lastMismatchDetected)
     wipe(state.eventLog)
+    wipe(state.tickInvisibleCache)
+    wipe(state.tickAuraFrameCache)
     state.talentChangeTime = 0
     state.pendingPostTalentRefresh = false
+    -- Reset dedup throttle so positions are re-checked after spec/talent changes
+    if state.lastDedupCheck then wipe(state.lastDedupCheck) end
 end
 
 -- Force refresh all dynamic groups
@@ -2095,9 +2489,11 @@ function DL.OnPlaceholderResolved(cdID, groupName)
     -- If we know the group, queue it for potential reflow
     if groupName and ns.CDMGroups.groups then
         local group = ns.CDMGroups.groups[groupName]
-        -- CRITICAL: Check BOTH autoReflow (master toggle) AND dynamicLayout (aura behavior)
-        -- dynamicLayout is meaningless without autoReflow - it's a sub-feature
-        if group and group.autoReflow and group.dynamicLayout then
+        -- CRITICAL FIX: Only require autoReflow to be ON
+        -- When a placeholder resolves (real frame appears), we MUST reflow to put
+        -- the icon at its correct sorted position. dynamicLayout only controls
+        -- how AURAS behave (animate vs stay), not whether compaction happens.
+        if group and group.autoReflow then
             state.pendingReflows[groupName] = group
             LogEvent("PLACEHOLDER_RESOLVED", groupName, string.format("cdID %s resolved, queued reflow", tostring(cdID)))
         end

@@ -36,6 +36,7 @@ local collapsedSections = {
   nameText = true,
   barIcon = true,
   position = true,
+  groupAnchor = true,
   behavior = true,
 }
 
@@ -363,6 +364,22 @@ end
 local function IsResourceBar()
   local barType, _ = GetSelectedBarType()
   return barType == "resource"
+end
+
+-- Check if selected bar supports CDM Group anchoring
+-- Includes: resource bars, cooldown bars (cd_cooldown, cd_charge, cd_resource), timer bars
+local function SupportsCDMGroupAnchor()
+  local barType, _ = GetSelectedBarType()
+  if not barType then return false end
+  -- Aura bars (buff/debuff tracking)
+  if barType == "buff" then return true end
+  -- Resource bars
+  if barType == "resource" then return true end
+  -- CooldownBars system bars
+  if barType:find("^cd_") then return true end
+  -- Timer bars
+  if barType == "timer" then return true end
+  return false
 end
 
 -- Check if selected bar is a cooldown bar (from CooldownBars system)
@@ -1374,6 +1391,28 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
         end
       },
+      iconStackLocked = {
+        type = "toggle",
+        name = "Lock",
+        desc = "Lock stack text position (prevents accidental dragging)",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconStackLocked
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconStackLocked = value
+            RefreshBar()
+          end
+        end,
+        order = 9.221,
+        width = 0.4,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
+        end
+      },
       iconStackFont = {
         type = "select",
         name = "Font",
@@ -2267,7 +2306,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       enableSmoothing = {
         type = "toggle",
         name = "Smooth Fill",
-        desc = "Smoothly animate bar fill changes",
+        desc = "Smoothly animate bar fill changes.\n\n|cff00ff00Duration bars:|r Applies to Manual Max mode. Auto mode always uses smooth interpolation via SetTimerDuration.",
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.enableSmoothing
@@ -2283,7 +2322,6 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = 0.7,
         hidden = function()
           if IsIconMode() or collapsedSections.fill then return true end
-          if IsDurationBar() then return true end  -- Hide for duration bars
           if IsCooldownBar() then return true end  -- Hide for cooldown charge bars
           return GetSelectedConfig() == nil
         end
@@ -2292,7 +2330,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       useGradient = {
         type = "toggle",
         name = "Gradient",
-        desc = "Apply a gradient effect to bar fill (darker/lighter edges)",
+        desc = "Apply a gradient effect to bar fill (darker/lighter edges).\n\n|cffff9900Note:|r Gradient is disabled when Conditional Color thresholds are active (WoW API limitation).",
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.useGradient
@@ -2965,7 +3003,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.91,
-        width = 0.8,
+        width = 1.0,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.colorOptions end
       },
       
@@ -3011,6 +3049,11 @@ function ns.AppearanceOptions.GetOptionsTable()
           local cfg = GetSelectedConfig()
           if cfg then
             cfg.display.enableMaxColor = value
+            -- Clear curve cache so max color step gets rebuilt
+            local _, barNum = GetSelectedBarType()
+            if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+              ns.Resources.ClearResourceColorCurve(barNum)
+            end
             RefreshBar()
           end
         end,
@@ -3038,6 +3081,11 @@ function ns.AppearanceOptions.GetOptionsTable()
           local cfg = GetSelectedConfig()
           if cfg then
             cfg.display.maxColor = {r=r, g=g, b=b, a=a}
+            -- Clear curve cache so max color step gets rebuilt
+            local _, barNum = GetSelectedBarType()
+            if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+              ns.Resources.ClearResourceColorCurve(barNum)
+            end
             RefreshBar()
           end
         end,
@@ -4211,7 +4259,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       durationColorCurveEnabled = {
         type = "toggle",
         name = "Conditional Color",
-        desc = "Change bar color based on remaining time. 100% uses Base Bar Color.",
+        desc = "Change bar color based on remaining time. 100% uses Base Bar Color.\n\n|cffff9900Note:|r Enabling this disables gradient effect (WoW API limitation).",
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.durationColorCurveEnabled
@@ -4225,7 +4273,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.72,
-        width = 0.75,
+        width = 0.9,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -5471,10 +5519,10 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() end
       },
       
-      -- FRAME BORDER
+      -- FRAME BORDER (4-texture pixel-perfect border for all bar types)
       showBorder = {
         type = "toggle",
-        name = "Show Frame Border",
+        name = "Show Border",
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.showBorder
@@ -5490,8 +5538,6 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = "full",
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
-          -- Hide for cooldown duration bars (they use bar border instead)
-          if IsCooldownDurationBar() then return true end
           return GetSelectedConfig() == nil
         end
       },
@@ -5511,10 +5557,9 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 51.1,
-        width = 0.55,
+        width = 0.7,
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
-          if IsCooldownDurationBar() then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showBorder)
         end
@@ -5542,9 +5587,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
-          if IsCooldownDurationBar() then return true end
           local cfg = GetSelectedConfig()
-          -- Hide if border not shown OR if class color is enabled
           return not (cfg and cfg.display.showBorder) or (cfg and cfg.display.useClassColorBorder)
         end
       },
@@ -5567,87 +5610,65 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = 0.7,
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
-          if IsCooldownDurationBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showBorder)
+        end
+      },
+      barPadding = {
+        type = "range",
+        name = "Bar Inset",
+        desc = "Padding between the border and the bar fill texture. 0 = fill touches border edge.",
+        min = 0, max = 10, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPadding or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPadding = value
+            RefreshBar()
+          end
+        end,
+        order = 51.4,
+        width = 0.7,
+        hidden = function()
+          if IsIconMode() or collapsedSections.border then return true end
+          if IsChargeBar() then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showBorder)
         end
       },
       
-      -- BAR BORDER (border around the actual bar fill, not the frame)
+      -- BAR BORDER (deprecated - showBorder now handles all bar types via 4-texture system)
       showBarBorder = {
         type = "toggle",
         name = "Show Bar Border",
-        desc = "Draw a border around the actual bar (not the frame)",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.showBarBorder
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.showBarBorder = value
-            RefreshBar()
-          end
-        end,
         order = 52,
         width = "full",
-        hidden = function()
-          if IsIconMode() or collapsedSections.border then return true end
-          -- Only show for cooldown duration bars
-          return not IsCooldownDurationBar()
-        end
+        hidden = function() return true end,
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.showBarBorder end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.showBarBorder = value; RefreshBar() end end,
       },
       barBorderColor = {
         type = "color",
         name = "Color",
         hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.barBorderColor then
-            local c = cfg.display.barBorderColor
-            return c.r, c.g, c.b, c.a or 1
-          end
-          return 0, 0, 0, 1  -- Default black
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.barBorderColor = {r=r, g=g, b=b, a=a}
-            RefreshBar()
-          end
-        end,
         order = 52.1,
         width = 0.5,
-        hidden = function()
-          if IsIconMode() or collapsedSections.border then return true end
-          if not IsCooldownDurationBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showBarBorder)
-        end
+        hidden = function() return true end,
+        get = function() return 0, 0, 0, 1 end,
+        set = function() end,
       },
       barBorderThickness = {
         type = "range",
         name = "Thickness",
         min = 1, max = 10, step = 1,
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.barBorderThickness or 1
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.barBorderThickness = value
-            RefreshBar()
-          end
-        end,
         order = 52.2,
         width = 0.5,
-        hidden = function()
-          if IsIconMode() or collapsedSections.border then return true end
-          if not IsCooldownDurationBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showBarBorder)
-        end
+        hidden = function() return true end,
+        get = function() return 1 end,
+        set = function() end,
       },
       
       -- SLOT BORDER (Charge bars only)
@@ -5825,7 +5846,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 61,
-        width = 0.9,
+        width = 1.0,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsChargeBar() or collapsedSections.tickMarks end  -- Hide for charge bars
       },
       maxTicksInput = {
@@ -6276,7 +6297,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       textAnchor = {
         type = "select",
         name = "Text Anchor",
-        desc = "Anchor text to bar position",
+        desc = "Anchor text to bar position (FREE allows drag positioning)",
         values = {
           ["CENTER"] = "Center",
           ["CENTERLEFT"] = "Center Left",
@@ -6298,7 +6319,8 @@ function ns.AppearanceOptions.GetOptionsTable()
           ["OUTERTOPLEFT"] = "Outer Top Left",
           ["OUTERTOPRIGHT"] = "Outer Top Right",
           ["OUTERBOTTOMLEFT"] = "Outer Bottom Left",
-          ["OUTERBOTTOMRIGHT"] = "Outer Bottom Right"
+          ["OUTERBOTTOMRIGHT"] = "Outer Bottom Right",
+          ["FREE"] = "Free (Drag)"
         },
         sorting = {
           "CENTER", "CENTERLEFT", "CENTERRIGHT",
@@ -6306,7 +6328,8 @@ function ns.AppearanceOptions.GetOptionsTable()
           "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT",
           "OUTERTOP", "OUTERBOTTOM", "OUTERLEFT", "OUTERRIGHT",
           "OUTERCENTERLEFT", "OUTERCENTERRIGHT",
-          "OUTERTOPLEFT", "OUTERTOPRIGHT", "OUTERBOTTOMLEFT", "OUTERBOTTOMRIGHT"
+          "OUTERTOPLEFT", "OUTERTOPRIGHT", "OUTERBOTTOMLEFT", "OUTERBOTTOMRIGHT",
+          "FREE"
         },
         get = function()
           local cfg = GetSelectedConfig()
@@ -6329,6 +6352,30 @@ function ns.AppearanceOptions.GetOptionsTable()
           if IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for charge/duration bars (use Charge Text Anchor)
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showText)
+        end
+      },
+      textLocked = {
+        type = "toggle",
+        name = "Lock",
+        desc = "Lock stack text position (prevents accidental dragging)",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.textLocked
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.textLocked = value
+            RefreshBar()
+          end
+        end,
+        order = 74.51,
+        width = 0.4,
+        hidden = function()
+          if IsIconMode() or collapsedSections.stackText then return true end
+          if IsChargeBar() or IsCooldownDurationBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showText and cfg.display.textAnchor == "FREE")
         end
       },
       textAnchorOffsetX = {
@@ -6607,7 +6654,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.15,
-        width = 0.8,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() then return true end
@@ -6934,7 +6981,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.69,
-        width = 0.85,
+        width = 0.95,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -7933,6 +7980,191 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 80.3,
         width = 0.7,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.position end
+      },
+      
+      -- ============================================================
+      -- CDM GROUP ANCHOR (Resource bars only)
+      -- ============================================================
+      groupAnchorHeader = {
+        type = "toggle",
+        name = "CDM Group Anchor",
+        desc = "Click to expand/collapse. Anchor this bar to a CDM Group container.",
+        dialogControl = "CollapsibleHeader",
+        get = function() return not collapsedSections.groupAnchor end,
+        set = function(info, value) collapsedSections.groupAnchor = not value end,
+        order = 85,
+        width = "full",
+        hidden = function() return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() end
+      },
+      anchorToGroup = {
+        type = "toggle",
+        name = "Anchor to Group",
+        desc = "Attach this resource bar to a CDM Group container. The bar will follow the group's position.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.anchorToGroup
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.anchorToGroup = value
+            RefreshBar()
+          end
+        end,
+        order = 85.1,
+        width = 0.7,
+        hidden = function() return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor end
+      },
+      anchorGroupName = {
+        type = "select",
+        name = "Target Group",
+        desc = "Select which CDM Group to anchor to",
+        values = function()
+          local groups = {}
+          if ns.CDMGroups and ns.CDMGroups.groups then
+            for name, _ in pairs(ns.CDMGroups.groups) do
+              groups[name] = name
+            end
+          end
+          return groups
+        end,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.anchorGroupName
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.anchorGroupName = value
+            RefreshBar()
+          end
+        end,
+        order = 85.2,
+        width = 0.8,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
+        end
+      },
+      anchorPoint = {
+        type = "select",
+        name = "Anchor Position",
+        desc = "Where to attach the bar relative to the group",
+        values = {
+          ["TOP"] = "Above",
+          ["BOTTOM"] = "Below",
+          ["LEFT"] = "Left",
+          ["RIGHT"] = "Right",
+        },
+        sorting = {"TOP", "BOTTOM", "LEFT", "RIGHT"},
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.anchorPoint or "BOTTOM"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.anchorPoint = value
+            RefreshBar()
+          end
+        end,
+        order = 85.3,
+        width = 0.6,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
+        end
+      },
+      matchGroupWidth = {
+        type = "toggle",
+        name = "Match Size",
+        desc = "Automatically resize the bar to match the group container.\n\nTop/Bottom: matches container WIDTH\nLeft/Right: matches container HEIGHT",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.matchGroupWidth
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.matchGroupWidth = value
+            RefreshBar()
+          end
+        end,
+        order = 85.4,
+        width = 0.6,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
+        end
+      },
+      matchWidthAdjust = {
+        type = "range",
+        name = "Size Adjust",
+        desc = "Fine-tune the matched size by adding or subtracting pixels.",
+        min = -50, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.matchWidthAdjust or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.matchWidthAdjust = value
+            RefreshBar()
+          end
+        end,
+        order = 85.45,
+        width = 0.6,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup and cfg.display.matchGroupWidth)
+        end
+      },
+      anchorOffsetX = {
+        type = "range",
+        name = "X Offset",
+        desc = "Horizontal offset from anchor point",
+        min = -200, max = 200, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.anchorOffsetX or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.anchorOffsetX = value
+            RefreshBar()
+          end
+        end,
+        order = 85.7,
+        width = 0.5,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
+        end
+      },
+      anchorOffsetY = {
+        type = "range",
+        name = "Y Offset",
+        desc = "Vertical offset from anchor point",
+        min = -200, max = 200, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.anchorOffsetY or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.anchorOffsetY = value
+            RefreshBar()
+          end
+        end,
+        order = 85.8,
+        width = 0.5,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
+        end
       },
       
       -- ============================================================

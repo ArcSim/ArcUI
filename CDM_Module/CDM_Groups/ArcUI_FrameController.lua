@@ -26,6 +26,23 @@ local Shared = ns.CDMShared
 local Registry = ns.FrameRegistry
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- SECRET-SAFE AURA INSTANCE ID CHECK
+-- auraInstanceID may become secret in future WoW versions
+-- Uses ns.API.HasAuraInstanceID from Core.lua (handles secret values)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function HasAuraInstanceID(value)
+    -- Use Core's implementation if available
+    if ns.API and ns.API.HasAuraInstanceID then
+        return ns.API.HasAuraInstanceID(value)
+    end
+    -- Fallback (shouldn't happen - Core loads first)
+    if value == nil then return false end
+    if issecretvalue and issecretvalue(value) then return true end
+    if type(value) == "number" and value == 0 then return false end
+    return value ~= nil
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- CONFIGURATION
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -407,13 +424,12 @@ local function ShouldHideFromDynamicGrid(group, frame, viewerType)
         end
     end
     
-    -- Second check: Regular aura with auraInstanceID
-    local auraID = frame.auraInstanceID
-    if auraID and type(auraID) == "number" and auraID > 0 then
+    -- Second check: Regular aura with auraInstanceID (secret-safe)
+    if HasAuraInstanceID(frame.auraInstanceID) then
         -- Has auraInstanceID - check if still active
         local CS = ArcUI and ArcUI.CooldownState
         if CS and CS.IsAuraActive then
-            local isActive = CS.IsAuraActive(auraID)
+            local isActive = CS.IsAuraActive(frame.auraInstanceID)
             return not isActive  -- Hide from grid if inactive
         end
         return false  -- Can't verify, assume active
@@ -468,9 +484,10 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         
         -- PUSH LOGIC: Push any real frame at this position to make room
         -- This prevents position conflicts when placeholder becomes real
+        -- Pass cdID so slot-sharing (mutually exclusive talents) is detected
         if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.PushFramesFromSlot then
             Debug("AssignFrameToGroup: Placeholder->real, pushing frames from [%d,%d]", targetRow, targetCol)
-            ns.CDMGroups.Placeholders.PushFramesFromSlot(group, targetRow, targetCol)
+            ns.CDMGroups.Placeholders.PushFramesFromSlot(group, targetRow, targetCol, cdID)
         end
         
         if group.autoReflow and group.RestoreToSavedPositions then
@@ -1622,6 +1639,14 @@ local function Reconcile()
                         TimelineAdd("FRAME", "FOLLOWUP_FIX", string.format("cdID=%d frame swapped in %s", cdID, groupName))
                         member.frame = frame
                         
+                        -- CRITICAL: Clear placeholder flags since we now have a real frame
+                        -- This fixes the STALE_PH_FLAG bug where isPlaceholder wasn't cleared
+                        member.isPlaceholder = nil
+                        member.placeholderInfo = nil
+                        if ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID] then
+                            ns.CDMGroups.savedPositions[cdID].isPlaceholder = nil
+                        end
+                        
                         -- Update cooldownCatalog too
                         if ns.CDMGroups.cooldownCatalog and ns.CDMGroups.cooldownCatalog[cdID] then
                             ns.CDMGroups.cooldownCatalog[cdID].frame = frame
@@ -1819,8 +1844,19 @@ local function Reconcile()
                 for groupName, group in pairs(ns.CDMGroups.groups or {}) do
                     if group.members and group.members[cdID] then
                         local member = group.members[cdID]
-                        if member.frame ~= cdmFrame and not member.isPlaceholder then
-                            TimelineAdd("FRAME", "MEMBER_SYNC", string.format("cdID=%d member frame updated in %s", cdID, groupName))
+                        -- Update frame ref if different (skip placeholders - they shouldn't have frames)
+                        if member.frame ~= cdmFrame then
+                            -- If this was a placeholder, clear the flag now that we have a real frame
+                            if member.isPlaceholder then
+                                TimelineAdd("FRAME", "PLACEHOLDER_RESOLVED", string.format("cdID=%d placeholder->real in %s", cdID, groupName))
+                                member.isPlaceholder = nil
+                                member.placeholderInfo = nil
+                                if ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID] then
+                                    ns.CDMGroups.savedPositions[cdID].isPlaceholder = nil
+                                end
+                            else
+                                TimelineAdd("FRAME", "MEMBER_SYNC", string.format("cdID=%d member frame updated in %s", cdID, groupName))
+                            end
                             member.frame = cdmFrame
                             
                             -- Re-setup in container with correct frame
@@ -1994,7 +2030,7 @@ local function Reconcile()
             if freeData.frame and freeData.x and freeData.y then
                 -- Skip frames hidden due to hideWhenUnequipped setting
                 -- Skip frames hidden due to hideWhenUnequipped or bar tracking settings
-                if not freeData.frame._arcHiddenUnequipped and not IsFrameHiddenByBar(freeData.frame) then
+                if not freeData.frame._arcHiddenUnequipped and not freeData.frame._arcHiddenNotInSpec and not IsFrameHiddenByBar(freeData.frame) then
                     freeData.frame:ClearAllPoints()
                     freeData.frame:SetPoint("CENTER", UIParent, "CENTER", freeData.x, freeData.y)
                     freeData.frame:SetParent(UIParent)

@@ -456,9 +456,17 @@ lib.stopList["Autocast Shine"] = lib.AutoCastGlow_Stop
 local function ButtonGlowResetter(framePool,frame)
     frame:SetScript("OnUpdate",nil)
     local parent = frame:GetParent()
-    if parent._ButtonGlow then
-        parent._ButtonGlow = nil
+    if parent then
+        local key = frame._glowKey or ""
+        if parent["_ButtonGlow"..key] == frame then
+            parent["_ButtonGlow"..key] = nil
+        end
+        -- Backward compat: also clear legacy _ButtonGlow if it's us (key "")
+        if key == "" and parent._ButtonGlow == frame then
+            parent._ButtonGlow = nil
+        end
     end
+    frame._glowKey = nil
     frame:Hide()
     frame:ClearAllPoints()
 end
@@ -648,19 +656,21 @@ local function noZero(num)
     end
 end
 
-function lib.ButtonGlow_Start(r,color,frequency,frameLevel)
+function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key)
     if not r then
         return
     end
 	frameLevel = frameLevel or 8;
+    key = key or ""
     local throttle
     if frequency and frequency > 0 then
         throttle = 0.25/frequency*0.01
     else
         throttle = 0.01
     end
-    if r._ButtonGlow then
-        local f = r._ButtonGlow
+    local glowRef = r["_ButtonGlow"..key]
+    if glowRef then
+        local f = glowRef
         local width,height = r:GetSize()
         f:SetFrameLevel(r:GetFrameLevel()+frameLevel)
         f:SetSize(width*1.4 , height*1.4)
@@ -700,7 +710,12 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel)
         else
             updateAlphaAnim(f,color and color[4] or 1)
         end
-        r._ButtonGlow = f
+        f._glowKey = key
+        r["_ButtonGlow"..key] = f
+        -- Backward compat: also set legacy _ButtonGlow for default key
+        if key == "" then
+            r._ButtonGlow = f
+        end
         local width,height = r:GetSize()
         f:SetParent(r)
         f:SetFrameLevel(r:GetFrameLevel()+frameLevel)
@@ -734,17 +749,22 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel)
     end
 end
 
-function lib.ButtonGlow_Stop(r)
-    if r._ButtonGlow then
-        if r._ButtonGlow.animOut:IsPlaying() then
+function lib.ButtonGlow_Stop(r,key)
+    if not r then
+        return
+    end
+    key = key or ""
+    local f = r["_ButtonGlow"..key]
+    if f then
+        if f.animOut:IsPlaying() then
             -- Do nothing the animOut finishing will release
-        elseif r._ButtonGlow.animIn:IsPlaying() then
-            r._ButtonGlow.animIn:Stop()
-            ButtonGlowPool:Release(r._ButtonGlow)
+        elseif f.animIn:IsPlaying() then
+            f.animIn:Stop()
+            ButtonGlowPool:Release(f)
         elseif r:IsVisible() then
-            r._ButtonGlow.animOut:Play()
+            f.animOut:Play()
         else
-            ButtonGlowPool:Release(r._ButtonGlow)
+            ButtonGlowPool:Release(f)
         end
     end
 end

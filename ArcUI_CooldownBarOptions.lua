@@ -214,9 +214,13 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         name = function()
           local cfg = GetBarConfig(spellID, barType)
           local presetLabel = (cfg and cfg.tracking and cfg.tracking.preset == "simple") and "|cff888888Simple|r" or "|cffffd700ArcUI|r"
+          local displayIcon = spellTexture
+          if cfg and cfg.tracking and cfg.tracking.iconOverride and cfg.tracking.iconOverride > 0 then
+            displayIcon = C_Spell.GetSpellTexture(cfg.tracking.iconOverride) or cfg.tracking.iconOverride
+          end
           
           return string.format("|T%d:16:16:0:0|t |cff%s%s|r: %s [%s]",
-            spellTexture, typeInfo.color, typeInfo.label, spellName, presetLabel)
+            displayIcon, typeInfo.color, typeInfo.label, spellName, presetLabel)
         end,
         desc = "Click to expand/collapse settings",
         dialogControl = "CollapsibleHeader",
@@ -345,7 +349,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           end
         end,
         order = 3.1,
-        width = 0.85,
+        width = 0.75,
         hidden = function() return not expandedBars[barKey] end,
       },
       
@@ -403,7 +407,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           end
         end,
         order = 3.2,
-        width = 0.85,
+        width = 0.75,
         hidden = function() return not expandedBars[barKey] end,
       },
       
@@ -461,7 +465,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           end
         end,
         order = 3.3,
-        width = 0.85,
+        width = 0.75,
         hidden = function()
           if not expandedBars[barKey] then return true end
           -- Hide if class has less than 3 specs
@@ -524,7 +528,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           end
         end,
         order = 3.4,
-        width = 0.85,
+        width = 0.75,
         hidden = function()
           if not expandedBars[barKey] then return true end
           -- Hide if class has less than 4 specs (only Druid has 4)
@@ -610,6 +614,37 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           local cfg = GetBarConfig(spellID, barType)
           return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
         end,
+      },
+      
+      -- Icon override
+      iconOverride = {
+        type = "input",
+        name = "Icon ID",
+        desc = "Override the bar icon with a spell ID or texture ID. Leave empty to use the spell's default icon.",
+        dialogControl = "ArcUI_EditBox",
+        get = function()
+          local cfg = GetBarConfig(spellID, barType)
+          local id = cfg and cfg.tracking and cfg.tracking.iconOverride
+          return id and id > 0 and tostring(id) or ""
+        end,
+        set = function(info, value)
+          local cfg = GetBarConfig(spellID, barType)
+          if cfg and cfg.tracking then
+            local num = tonumber(value)
+            if num and num > 0 then
+              cfg.tracking.iconOverride = num
+            else
+              cfg.tracking.iconOverride = nil
+            end
+            if ns.CooldownBars and ns.CooldownBars.ApplyAppearance then
+              ns.CooldownBars.ApplyAppearance(spellID, barType)
+            end
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 9.5,
+        width = 0.5,
+        hidden = function() return not expandedBars[barKey] end,
       },
       
       -- Delete button

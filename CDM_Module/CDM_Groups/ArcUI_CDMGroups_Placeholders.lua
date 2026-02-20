@@ -1906,7 +1906,7 @@ end
 -- Helper: Push all real frames starting from a slot to make room
 -- This cascades: if slot has frame, push it to next, recursively
 -- Tracks original position so frame can be pulled back when slot becomes available
-PushFramesFromSlot = function(group, row, col)
+PushFramesFromSlot = function(group, row, col, claimingCdID)
     if not group or not group.members then return end
     
     -- Find any real frame member at this SAVED position
@@ -1932,6 +1932,31 @@ PushFramesFromSlot = function(group, row, col)
     end
     
     if not cdIDAtSlot or not memberAtSlot then return end  -- No real frame saved at this slot
+    
+    -- SLOT-SHARING CHECK: If the occupant's saved position matches the claiming icon's
+    -- saved position, they are mutually exclusive talents sharing a slot.
+    -- Convert the occupant to a placeholder instead of pushing it to a new slot
+    -- (which would permanently change its saved position).
+    if claimingCdID and claimingCdID ~= cdIDAtSlot then
+        local claimerSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[claimingCdID]
+        local occupantSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdIDAtSlot]
+        if claimerSaved and occupantSaved
+           and claimerSaved.type == "group" and occupantSaved.type == "group"
+           and claimerSaved.target == occupantSaved.target
+           and (claimerSaved.row or 0) == (occupantSaved.row or 0)
+           and (claimerSaved.col or 0) == (occupantSaved.col or 0) then
+            -- Slot-sharing pair: convert occupant to placeholder in-place
+            memberAtSlot.isPlaceholder = true
+            memberAtSlot.placeholderInfo = memberAtSlot.placeholderInfo or { cooldownID = cdIDAtSlot }
+            memberAtSlot.frame = nil
+            memberAtSlot.entry = nil
+            -- Clear grid so claimer can take it
+            if group.grid and group.grid[row] then
+                group.grid[row][col] = nil
+            end
+            return  -- Don't push, don't change saved position
+        end
+    end
     
     -- Calculate next slot
     local toRow, toCol = GetNextSlot(group, row, col)
@@ -2109,6 +2134,22 @@ local function DisplaceForReturningIcon(group, row, col, returningCdID)
         if occupantSavedRow ~= row or occupantSavedCol ~= col then
             -- Occupant has DIFFERENT saved position - move it there
             targetRow, targetCol = occupantSavedRow, occupantSavedCol
+        else
+            -- Occupant's saved position IS this slot. Check if the returning icon
+            -- also has this as its saved position = mutually exclusive talent pair.
+            local returnerSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[returningCdID]
+            if returnerSaved and returnerSaved.type == "group"
+               and (returnerSaved.row or 0) == row
+               and (returnerSaved.col or 0) == col then
+                -- Slot-sharing: convert occupant to placeholder in-place.
+                -- Saved position stays unchanged — that's the whole point.
+                occupantMember.isPlaceholder = true
+                occupantMember.placeholderInfo = occupantMember.placeholderInfo or { cooldownID = gridOccupant }
+                occupantMember.frame = nil
+                occupantMember.entry = nil
+                group.grid[row][col] = nil
+                return true  -- Slot cleared successfully
+            end
         end
     end
     
@@ -2166,8 +2207,9 @@ local function ResolvePlaceholder(cdID, frame, entry)
             local col = member.col or saved.col or 0
             
             -- PUSH LOGIC: Push any real frame at this position to make room
-            -- Use grid-based approach - cascade push from this slot
-            PushFramesFromSlot(group, row, col)
+            -- Pass cdID so slot-sharing (mutually exclusive talents) is detected
+            -- and occupant is converted to placeholder instead of being pushed
+            PushFramesFromSlot(group, row, col, cdID)
             
             -- Convert from placeholder to real
             member.isPlaceholder = false

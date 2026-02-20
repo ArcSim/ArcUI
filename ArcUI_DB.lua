@@ -561,10 +561,26 @@ function ns.API.GetBarConfig(barNumber)
   
   local barConfig = db.bars[barNumber]
   
-  -- Skip migration if already done this session (major performance optimization)
-  if barConfig._migrated then
+  -- Migration versioning: _migrated was originally a boolean (true).
+  -- Now uses a version number to allow incremental migrations.
+  -- Old _migrated = true is treated as version 1.
+  local CURRENT_MIGRATION_VERSION = 2
+  local currentVersion = 0
+  if barConfig._migrated == true then
+    currentVersion = 1  -- Old boolean flag = version 1
+  elseif type(barConfig._migrated) == "number" then
+    currentVersion = barConfig._migrated
+  end
+  
+  -- Skip if already at current version
+  if currentVersion >= CURRENT_MIGRATION_VERSION then
     return barConfig
   end
+  
+  -- ═══════════════════════════════════════════════════════════════════
+  -- VERSION 1 MIGRATIONS (original)
+  -- All use == nil checks so they're idempotent / safe to re-run
+  -- ═══════════════════════════════════════════════════════════════════
   
   -- Migration: ensure events table exists
   if not barConfig.events then
@@ -581,7 +597,7 @@ function ns.API.GetBarConfig(barNumber)
   if display.iconDesaturateWhenInactive == nil then display.iconDesaturateWhenInactive = false end
   if display.iconZoom == nil then display.iconZoom = 0 end
   if display.durationShowWhenReady == nil then display.durationShowWhenReady = false end
-  -- v2.8.0: Migration for ColorCurve duration bar settings
+  -- v2.8.0: Migration for ColorCurve duration bar settings (legacy keys)
   if display.durationColorCurveEnabled == nil then display.durationColorCurveEnabled = false end
   if display.durationColorCurveMode == nil then display.durationColorCurveMode = "step" end
   if display.durationColorCurveThreshold == nil then display.durationColorCurveThreshold = 0.30 end
@@ -622,8 +638,69 @@ function ns.API.GetBarConfig(barNumber)
     }
   end
   
-  -- Mark as migrated for this session
-  barConfig._migrated = true
+  -- ═══════════════════════════════════════════════════════════════════
+  -- VERSION 2 MIGRATIONS (conditional color thresholds + spec fix)
+  -- Fixes old bars created before multi-threshold system existed
+  -- ═══════════════════════════════════════════════════════════════════
+  
+  -- Migration: ensure new multi-threshold keys exist
+  -- Old system used: durationColorCurveLowColor/HighColor/MidColor + single threshold
+  -- New system uses: durationThreshold2-5 Enabled/Value/Color
+  if display.durationThreshold2Enabled == nil then
+    -- Check if old-style settings had actual customization we should convert
+    local hadOldSettings = display.durationColorCurveEnabled and display.durationColorCurveThreshold
+    
+    if hadOldSettings then
+      -- Convert old single-threshold to new multi-threshold format
+      -- Old: one threshold at durationColorCurveThreshold % with lowColor below it
+      local oldPct = (display.durationColorCurveThreshold or 0.30) * 100  -- Convert 0-1 to 0-100
+      local oldLowColor = display.durationColorCurveLowColor or {r=1, g=0, b=0, a=1}
+      
+      -- Enable threshold 2 with the old settings
+      display.durationThreshold2Enabled = true
+      display.durationThreshold2Value = oldPct
+      display.durationThreshold2Color = {
+        r = oldLowColor.r, g = oldLowColor.g, b = oldLowColor.b, a = oldLowColor.a or 1
+      }
+    else
+      -- No old settings - just set defaults (disabled)
+      display.durationThreshold2Enabled = false
+      display.durationThreshold2Value = 75
+      display.durationThreshold2Color = {r=0.8, g=0.8, b=0, a=1}
+    end
+  end
+  
+  -- Ensure thresholds 3-5 have defaults
+  if display.durationThreshold3Enabled == nil then display.durationThreshold3Enabled = false end
+  if display.durationThreshold3Value == nil then display.durationThreshold3Value = 50 end
+  if display.durationThreshold3Color == nil then display.durationThreshold3Color = {r=1, g=0.5, b=0, a=1} end
+  if display.durationThreshold4Enabled == nil then display.durationThreshold4Enabled = false end
+  if display.durationThreshold4Value == nil then display.durationThreshold4Value = 25 end
+  if display.durationThreshold4Color == nil then display.durationThreshold4Color = {r=1, g=0.3, b=0, a=1} end
+  if display.durationThreshold5Enabled == nil then display.durationThreshold5Enabled = false end
+  if display.durationThreshold5Value == nil then display.durationThreshold5Value = 10 end
+  if display.durationThreshold5Color == nil then display.durationThreshold5Color = {r=1, g=0, b=0, a=1} end
+  -- Ensure threshold mode settings exist
+  if display.durationThresholdAsSeconds == nil then display.durationThresholdAsSeconds = false end
+  if display.durationThresholdMaxDuration == nil then display.durationThresholdMaxDuration = 30 end
+  
+  -- Migration: convert old showOnSpec (single number) to showOnSpecs (table)
+  -- Old system: showOnSpec = 2 means "only show on spec 2"
+  -- New system: showOnSpecs = {2} means "only show on spec 2"
+  if barConfig.behavior then
+    -- Ensure showOnSpecs table exists
+    if not barConfig.behavior.showOnSpecs then
+      barConfig.behavior.showOnSpecs = {}
+    end
+    -- Convert old single-spec to new multi-spec format
+    local oldSpec = barConfig.behavior.showOnSpec
+    if oldSpec and oldSpec > 0 and #barConfig.behavior.showOnSpecs == 0 then
+      barConfig.behavior.showOnSpecs = { oldSpec }
+    end
+  end
+  
+  -- Mark as migrated with version number
+  barConfig._migrated = CURRENT_MIGRATION_VERSION
   
   return barConfig
 end
