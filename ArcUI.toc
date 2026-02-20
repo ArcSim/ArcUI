@@ -2,7 +2,7 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.4.8
+## Version: 3.5.1.a
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
 
 
@@ -38,7 +38,7 @@ ArcUI_Minimap.lua
 ArcUI_CooldownBars.lua
 ArcUI_CustomTracking.lua
 ArcUI_TalentPicker.lua
-
+ArcUI_DataRepair.lua
 # Main Options (creates AceDB)
 ArcUI_Options.lua
 
@@ -66,6 +66,7 @@ CDM_Module\CDM_Enhance\ArcUI_CooldownState.lua
 CDM_Module\CDM_Enhance\ArcUI_Keybinds.lua
 CDM_Module\CDM_Enhance\ArcUI_CustomLabel.lua
 CDM_Module\CDM_Enhance\ArcUI_Masque.lua
+CDM_Module\CDM_Enhance\ArcUI_CDMSpellUsability.lua
 
 # CDM Groups Registry (frame tracking - must load before CDMGroups)
 CDM_Module\CDM_Groups\ArcUI_CDMGroups_Registry.lua
@@ -83,11 +84,14 @@ CDM_Module\CDM_Groups\ArcUI_CDMGroups_Integration.lua
 
 # Arc Auras - Custom Item/Spell Tracking (uses Integration API)
 CDM_Module\Arc_Auras\ArcUI_ArcAuras.lua
-#CDM_Module\Arc_Auras\ArcUI_ArcAurasCooldown.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasCooldown.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAuras_Options.lua
 
 # Edit Mode Containers - LibEQOL-based positioning (replaces CDMContainerSync)
 CDM_Module\ArcUI_EditModeContainers.lua
+
+# CDM Container Sync - Anchors base CDM viewers to group proxies
+CDM_Module\ArcUI_CDMContainerSync.lua
 
 CDM_Module\ArcUI_CDMSetup.lua
 CDM_Module\ArcUI_CDM_ImportExport.lua
@@ -96,3 +100,4 @@ CDM_Module\ArcUI_CDM_ImportExport.lua
 CDM_Module\CDM_Groups\ArcUI_CDMGroupsOptions.lua
 CDM_Module\CDM_Enhance\ArcUI_CDMEnhanceOptions.lua
 CDM_Module\CDM_Enhance\ArcUI_CustomLabelOptions.lua
+CDM_Module\CDM_Enhance\ArcUI_SpellUsabilityOptions.lua
