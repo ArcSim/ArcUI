@@ -358,6 +358,8 @@ end
 local ShowSlotSelector, HideSlotSelector
 local UpdatePlaceholderPosition, RemovePlaceholder
 local RefreshAllPlaceholders, RefreshBadgesForGroup, PushFramesFromSlot
+local ClearWrongSpecPlaceholders
+local BuildCurrentSpecCooldownCatalog
 
 -- Helper to calculate what size a placeholder should be
 local function GetEffectivePlaceholderSize(cdID, groupLayout)
@@ -1210,6 +1212,14 @@ local function CreatePlaceholder(cdID, positionType, targetGroup, row, col, x, y
     -- Don't create if real frame exists
     if HasRealFrame(cdID) then return false end
     
+    -- Don't create placeholders for cooldowns that don't belong to the current spec
+    if type(cdID) == "number" and not IsArcAuraID(cdID) and C_CooldownViewer then
+        local catalog = BuildCurrentSpecCooldownCatalog()
+        if not catalog[cdID] then
+            return false
+        end
+    end
+    
     local info = GetCooldownInfo(cdID)
     if not info then return false end
     
@@ -1747,6 +1757,9 @@ RefreshAllPlaceholders = function()
     -- Clear selection
     selectedPlaceholderCdID = nil
     
+    -- Clean out placeholders from wrong specs before showing anything
+    ClearWrongSpecPlaceholders()
+    
     if not isEditingMode then return end
     
     -- Scan ALL saved positions and show placeholders for those without real frames
@@ -1862,12 +1875,217 @@ local function PositionPlaceholdersInGroup(groupName, group, getSlotPosition, sl
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- EDITING MODE
+-- CLEAR ALL PLACEHOLDERS
+-- Removes ALL placeholder data from savedPositions, group members, and grid
 -- ═══════════════════════════════════════════════════════════════════════════
+
+local function ClearAllPlaceholders()
+    local removedCount = 0
+    
+    -- 1. Hide and release all active placeholder frames
+    for cdID, frame in pairs(activePlaceholders) do
+        ReleasePlaceholderFrame(frame)
+    end
+    wipe(activePlaceholders)
+    selectedPlaceholderCdID = nil
+    HideAllSlotBadges()
+    
+    -- 2. Collect placeholder cdIDs from savedPositions
+    local toRemove = {}
+    local savedPositions = ns.CDMGroups.savedPositions or {}
+    for cdID, saved in pairs(savedPositions) do
+        if saved.isPlaceholder then
+            table.insert(toRemove, cdID)
+        end
+    end
+    
+    -- 3. Remove each placeholder from groups, grid, savedPositions, and spec data
+    for _, cdID in ipairs(toRemove) do
+        local saved = savedPositions[cdID]
+        local groupName = saved and saved.type == "group" and saved.target
+        
+        -- Remove from group members and grid
+        if groupName then
+            local group = ns.CDMGroups.groups and ns.CDMGroups.groups[groupName]
+            if group then
+                if group.members and group.members[cdID] then
+                    local member = group.members[cdID]
+                    if member.row ~= nil and member.col ~= nil and group.grid and group.grid[member.row] then
+                        if group.grid[member.row][member.col] == cdID then
+                            group.grid[member.row][member.col] = nil
+                        end
+                    end
+                    group.members[cdID] = nil
+                end
+                -- Also clear grid at saved position
+                if saved.row ~= nil and saved.col ~= nil and group.grid and group.grid[saved.row] then
+                    if group.grid[saved.row][saved.col] == cdID then
+                        group.grid[saved.row][saved.col] = nil
+                    end
+                end
+            end
+        end
+        
+        -- Remove from runtime savedPositions
+        savedPositions[cdID] = nil
+        
+        -- Remove from profile savedPositions
+        local profileSavedPositions = ns.CDMGroups.GetProfileSavedPositions and ns.CDMGroups.GetProfileSavedPositions()
+        if profileSavedPositions then
+            profileSavedPositions[cdID] = nil
+        end
+        
+        -- Remove from spec data
+        if ns.CDMGroups.ClearPositionFromSpec then
+            ns.CDMGroups.ClearPositionFromSpec(cdID)
+        end
+        
+        removedCount = removedCount + 1
+    end
+    
+    -- 4. Re-layout all affected groups
+    for _, group in pairs(ns.CDMGroups.groups or {}) do
+        if group.Layout then
+            group:Layout()
+        end
+    end
+    
+    print("|cff00ccffArcUI|r: Cleared |cffff8800" .. removedCount .. "|r placeholder(s)")
+    return removedCount
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SPEC VALIDATION - Remove placeholders from wrong spec
+-- Uses CDM category sets which are spec-specific; cooldowns from other
+-- specs simply won't appear in any category.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Build a set of all cooldownIDs valid for the current spec
+BuildCurrentSpecCooldownCatalog = function()
+    local catalog = {}
+    if not C_CooldownViewer then return catalog end
+    
+    local ALLOW_ALL = true
+    for categoryNum = 0, 3 do
+        local cooldownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(categoryNum, ALLOW_ALL)
+        if cooldownIDs then
+            for _, cdID in ipairs(cooldownIDs) do
+                catalog[cdID] = true
+            end
+        end
+    end
+    
+    return catalog
+end
+
+-- Remove placeholders whose cooldownID doesn't belong to the current spec
+-- Returns the number of removed placeholders
+ClearWrongSpecPlaceholders = function()
+    if not C_CooldownViewer then return 0 end
+    
+    local catalog = BuildCurrentSpecCooldownCatalog()
+    local savedPositions = ns.CDMGroups.savedPositions or {}
+    local toRemove = {}
+    
+    for cdID, saved in pairs(savedPositions) do
+        if saved.isPlaceholder and type(cdID) == "number" and not IsArcAuraID(cdID) then
+            -- If this cdID doesn't exist in ANY CDM category, it's from another spec
+            if not catalog[cdID] then
+                table.insert(toRemove, cdID)
+            end
+        end
+    end
+    
+    if #toRemove == 0 then return 0 end
+    
+    local removedCount = 0
+    for _, cdID in ipairs(toRemove) do
+        local saved = savedPositions[cdID]
+        local groupName = saved and saved.type == "group" and saved.target
+        
+        -- Hide active placeholder frame
+        if activePlaceholders[cdID] then
+            ReleasePlaceholderFrame(activePlaceholders[cdID])
+            activePlaceholders[cdID] = nil
+        end
+        
+        -- Remove from group members and grid
+        if groupName then
+            local group = ns.CDMGroups.groups and ns.CDMGroups.groups[groupName]
+            if group then
+                if group.members and group.members[cdID] then
+                    local member = group.members[cdID]
+                    if member.row ~= nil and member.col ~= nil and group.grid and group.grid[member.row] then
+                        if group.grid[member.row][member.col] == cdID then
+                            group.grid[member.row][member.col] = nil
+                        end
+                    end
+                    group.members[cdID] = nil
+                end
+                if saved.row ~= nil and saved.col ~= nil and group.grid and group.grid[saved.row] then
+                    if group.grid[saved.row][saved.col] == cdID then
+                        group.grid[saved.row][saved.col] = nil
+                    end
+                end
+            end
+        end
+        
+        -- Remove from runtime savedPositions
+        savedPositions[cdID] = nil
+        
+        -- Remove from profile savedPositions
+        local profileSavedPositions = ns.CDMGroups.GetProfileSavedPositions and ns.CDMGroups.GetProfileSavedPositions()
+        if profileSavedPositions then
+            profileSavedPositions[cdID] = nil
+        end
+        
+        -- Remove from spec data
+        if ns.CDMGroups.ClearPositionFromSpec then
+            ns.CDMGroups.ClearPositionFromSpec(cdID)
+        end
+        
+        removedCount = removedCount + 1
+    end
+    
+    -- Re-layout affected groups
+    if removedCount > 0 then
+        for _, group in pairs(ns.CDMGroups.groups or {}) do
+            if group.Layout then
+                group:Layout()
+            end
+        end
+        print("|cff00ccffArcUI|r: Cleared |cffff8800" .. removedCount .. "|r wrong-spec placeholder(s)")
+    end
+    
+    return removedCount
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- EDITING MODE (with DB persistence)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Helper: Get/Set persisted show state from DB
+local function GetShowPlaceholdersDB()
+    local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
+    if db then
+        return db.showPlaceholders or false
+    end
+    return false
+end
+
+local function SetShowPlaceholdersDB(val)
+    local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
+    if db then
+        db.showPlaceholders = val and true or false
+    end
+end
 
 local function SetEditingMode(enabled)
     if isEditingMode == enabled then return end
     isEditingMode = enabled
+    
+    -- Persist to DB so state survives reload/panel reopen
+    SetShowPlaceholdersDB(enabled)
     
     if enabled then
         RefreshAllPlaceholders()
@@ -1886,6 +2104,30 @@ local function SetEditingMode(enabled)
         
         -- Hide slot selector
         HideSlotSelector()
+    end
+end
+
+-- Suspend: hide placeholders when panel closes WITHOUT changing DB preference
+local function SuspendEditingMode()
+    if not isEditingMode then return end
+    isEditingMode = false
+    
+    -- Hide all placeholders (visual only - DB stays as-is)
+    for cdID, frame in pairs(activePlaceholders) do
+        ReleasePlaceholderFrame(frame)
+    end
+    wipe(activePlaceholders)
+    selectedPlaceholderCdID = nil
+    HideAllSlotBadges()
+    HideSlotSelector()
+end
+
+-- Restore: re-enable placeholders when panel opens IF the DB says they should be on
+local function RestoreEditingMode()
+    local dbVal = GetShowPlaceholdersDB()
+    if dbVal and not isEditingMode then
+        isEditingMode = true
+        RefreshAllPlaceholders()
     end
 end
 
@@ -1928,6 +2170,15 @@ PushFramesFromSlot = function(group, row, col, claimingCdID)
                 memberAtSlot = member
                 break
             end
+            
+            -- FALLBACK: Also check member position (CDM may have changed saved pos already)
+            -- This catches the case where CDM's internal layout fires POS_CHANGED before
+            -- our Reconcile processes, corrupting the saved position temporarily
+            if not cdIDAtSlot and member.row == row and member.col == col then
+                cdIDAtSlot = cdID
+                memberAtSlot = member
+                -- Don't break - prefer saved position match if found later
+            end
         end
     end
     
@@ -1938,6 +2189,9 @@ PushFramesFromSlot = function(group, row, col, claimingCdID)
     -- Convert the occupant to a placeholder instead of pushing it to a new slot
     -- (which would permanently change its saved position).
     if claimingCdID and claimingCdID ~= cdIDAtSlot then
+        local isSlotSharing = false
+        
+        -- Method 1: Check current saved positions
         local claimerSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[claimingCdID]
         local occupantSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdIDAtSlot]
         if claimerSaved and occupantSaved
@@ -1945,11 +2199,59 @@ PushFramesFromSlot = function(group, row, col, claimingCdID)
            and claimerSaved.target == occupantSaved.target
            and (claimerSaved.row or 0) == (occupantSaved.row or 0)
            and (claimerSaved.col or 0) == (occupantSaved.col or 0) then
+            isSlotSharing = true
+        end
+        
+        -- Method 2: FALLBACK - Check the slot partner map (snapshot from reconcile start)
+        -- This catches cases where CDM changed saved positions before our processing
+        if not isSlotSharing then
+            local partnerMap = ns.CDMGroups._slotPartnerMap
+            if partnerMap and partnerMap[claimingCdID] then
+                for _, partner in ipairs(partnerMap[claimingCdID]) do
+                    if partner.partnerCdID == cdIDAtSlot 
+                       and partner.group == group.name then
+                        isSlotSharing = true
+                        break
+                    end
+                end
+            end
+        end
+        
+        if isSlotSharing then
             -- Slot-sharing pair: convert occupant to placeholder in-place
             memberAtSlot.isPlaceholder = true
             memberAtSlot.placeholderInfo = memberAtSlot.placeholderInfo or { cooldownID = cdIDAtSlot }
+            
+            -- CRITICAL: Return frame to CDM before clearing reference
+            if memberAtSlot.frame then
+                if ns.CDMGroups.ReturnFrameToCDM then
+                    pcall(ns.CDMGroups.ReturnFrameToCDM, memberAtSlot.frame, memberAtSlot.entry)
+                end
+            end
+            
             memberAtSlot.frame = nil
             memberAtSlot.entry = nil
+            
+            -- CRITICAL: Restore occupant's saved position to the shared slot
+            -- CDM may have moved it - ensure the database matches the intended position
+            if occupantSaved and occupantSaved.type == "group" then
+                occupantSaved.row = row
+                occupantSaved.col = col
+                occupantSaved.isPlaceholder = true
+                if ns.CDMGroups.SavePositionToSpec then
+                    ns.CDMGroups.SavePositionToSpec(cdIDAtSlot, occupantSaved, true)
+                end
+            end
+            
+            -- Restore member position to shared slot
+            memberAtSlot.row = row
+            memberAtSlot.col = col
+            
+            -- Notify DynamicLayout that member became placeholder
+            if ns.CDMGroups.DynamicLayout and ns.CDMGroups.DynamicLayout.OnPlaceholderCreated then
+                ns.CDMGroups.DynamicLayout.OnPlaceholderCreated(cdIDAtSlot, group.name)
+            end
+            
             -- Clear grid so claimer can take it
             if group.grid and group.grid[row] then
                 group.grid[row][col] = nil
@@ -2137,16 +2439,59 @@ local function DisplaceForReturningIcon(group, row, col, returningCdID)
         else
             -- Occupant's saved position IS this slot. Check if the returning icon
             -- also has this as its saved position = mutually exclusive talent pair.
+            local isSlotSharing = false
             local returnerSaved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[returningCdID]
             if returnerSaved and returnerSaved.type == "group"
                and (returnerSaved.row or 0) == row
                and (returnerSaved.col or 0) == col then
+                isSlotSharing = true
+            end
+            
+            -- FALLBACK: Check slot partner map (snapshot from reconcile start)
+            if not isSlotSharing then
+                local partnerMap = ns.CDMGroups._slotPartnerMap
+                if partnerMap and partnerMap[returningCdID] then
+                    for _, partner in ipairs(partnerMap[returningCdID]) do
+                        if partner.partnerCdID == gridOccupant
+                           and partner.group == group.name then
+                            isSlotSharing = true
+                            break
+                        end
+                    end
+                end
+            end
+            
+            if isSlotSharing then
                 -- Slot-sharing: convert occupant to placeholder in-place.
                 -- Saved position stays unchanged — that's the whole point.
                 occupantMember.isPlaceholder = true
                 occupantMember.placeholderInfo = occupantMember.placeholderInfo or { cooldownID = gridOccupant }
+                
+                -- Return frame to CDM before clearing reference
+                if occupantMember.frame then
+                    if ns.CDMGroups.ReturnFrameToCDM then
+                        pcall(ns.CDMGroups.ReturnFrameToCDM, occupantMember.frame, occupantMember.entry)
+                    end
+                end
+                
                 occupantMember.frame = nil
                 occupantMember.entry = nil
+                
+                -- Restore saved position to shared slot (CDM may have changed it)
+                if occupantSaved then
+                    occupantSaved.row = row
+                    occupantSaved.col = col
+                    occupantSaved.isPlaceholder = true
+                    if ns.CDMGroups.SavePositionToSpec then
+                        ns.CDMGroups.SavePositionToSpec(gridOccupant, occupantSaved, true)
+                    end
+                end
+                
+                -- Notify DynamicLayout
+                if ns.CDMGroups.DynamicLayout and ns.CDMGroups.DynamicLayout.OnPlaceholderCreated then
+                    ns.CDMGroups.DynamicLayout.OnPlaceholderCreated(gridOccupant, group.name)
+                end
+                
                 group.grid[row][col] = nil
                 return true  -- Slot cleared successfully
             end
@@ -2501,18 +2846,42 @@ local function GetOptionsTable()
                 RefreshAllPlaceholders()
             end,
         },
+        clearAllPlaceholdersBtn = {
+            order = 103.5,
+            type = "execute",
+            name = "|cffff6666Clear All|r",
+            desc = "Remove ALL placeholder data. Use this if you imported the wrong profile and have placeholders from other specs. This permanently deletes all reserved placeholder slots.",
+            width = 0.7,
+            confirm = true,
+            confirmText = "This will permanently remove ALL placeholder reservations.\n\nActive cooldowns with saved positions will NOT be affected.\n\nAre you sure?",
+            func = function()
+                ClearAllPlaceholders()
+                -- Refresh AceConfig to update the info text
+                LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            end,
+        },
         placeholderInfo = {
             order = 104,
             type = "description",
             name = function()
-                local count = 0
+                -- Count active visual placeholders
+                local shownCount = 0
                 for cdID, _ in pairs(activePlaceholders) do
-                    count = count + 1
+                    shownCount = shownCount + 1
                 end
-                if count == 0 then
-                    return "\n|cff888888No placeholders currently shown.|r"
+                -- Count total placeholder entries in savedPositions (the actual stored data)
+                local totalCount = 0
+                for cdID, saved in pairs(ns.CDMGroups.savedPositions or {}) do
+                    if saved.isPlaceholder then
+                        totalCount = totalCount + 1
+                    end
+                end
+                if totalCount == 0 then
+                    return "\n|cff888888No placeholders saved.|r"
+                elseif shownCount > 0 then
+                    return string.format("\n|cff00ff00%d placeholder(s) shown|r  |cff888888(%d total saved)|r", shownCount, totalCount)
                 else
-                    return string.format("\n|cff00ff00%d placeholder(s) currently shown.|r", count)
+                    return string.format("\n|cffcccc00%d placeholder(s) saved|r |cff888888(toggle Show Placeholders to see them)|r", totalCount)
                 end
             end,
         },
@@ -2547,6 +2916,9 @@ ns.CDMGroups.Placeholders = {
     -- Core
     CreatePlaceholder = CreatePlaceholder,
     RemovePlaceholder = RemovePlaceholder,
+    ClearAllPlaceholders = ClearAllPlaceholders,
+    ClearWrongSpecPlaceholders = ClearWrongSpecPlaceholders,
+    BuildCurrentSpecCooldownCatalog = BuildCurrentSpecCooldownCatalog,
     UpdatePlaceholderPosition = UpdatePlaceholderPosition,
     IsPlaceholder = IsPlaceholder,
     IsArcAuraID = IsArcAuraID,  -- Helper to detect Arc Aura string IDs
@@ -2605,8 +2977,12 @@ ns.CDMGroups.Placeholders = {
     -- Options
     GetOptionsTable = GetOptionsTable,
     
-    -- State
+    -- State (with DB persistence)
     IsEditingMode = function() return isEditingMode end,
+    GetShowPlaceholdersDB = GetShowPlaceholdersDB,
+    SetShowPlaceholdersDB = SetShowPlaceholdersDB,
+    SuspendEditingMode = SuspendEditingMode,
+    RestoreEditingMode = RestoreEditingMode,
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -2658,6 +3034,15 @@ SlashCmdList["ARCUIPLACEHOLDER"] = function(msg)
         local resolved = ResolveAllPlaceholders()
         print("|cff00ccffArcUI|r: Resolved", resolved, "placeholders")
         
+    elseif cmd == "clear" then
+        ClearAllPlaceholders()
+        
+    elseif cmd == "specclean" then
+        local removed = ClearWrongSpecPlaceholders()
+        if removed == 0 then
+            print("|cff00ccffArcUI|r: No wrong-spec placeholders found")
+        end
+        
     elseif cmd == "picker" then
         ShowCooldownPicker()
         
@@ -2670,6 +3055,8 @@ SlashCmdList["ARCUIPLACEHOLDER"] = function(msg)
         print("  /arcuiph list - List reserved placeholders")
         print("  /arcuiph inactive - List all inactive saved positions")
         print("  /arcuiph resolve - Resolve placeholders with real frames")
+        print("  /arcuiph clear - Remove ALL placeholder reservations")
+        print("  /arcuiph specclean - Remove placeholders from wrong spec")
         print("  /arcuiph picker - Open cooldown picker")
         print("  /arcuiph edit - Toggle edit mode")
         print(" ")

@@ -524,11 +524,19 @@ function ns.CDMContainerSync.Initialize()
     if initialized then return end
     initialized = true
 
-    if ns.db and ns.db.profile and ns.db.profile.cdmGroups and ns.db.profile.cdmGroups.containerSync then
+    local hasSavedSettings = ns.db and ns.db.profile and ns.db.profile.cdmGroups and ns.db.profile.cdmGroups.containerSync
+    
+    if hasSavedSettings then
+        -- Restore saved per-group settings
         for groupName, isEnabled in pairs(ns.db.profile.cdmGroups.containerSync) do
             if isEnabled and GROUP_TO_VIEWER[groupName] then
                 ns.CDMContainerSync.SetEnabled(groupName, true)
             end
+        end
+    else
+        -- DEFAULT: Enable sync for all 3 base CDM groups on first run
+        for groupName in pairs(GROUP_TO_VIEWER) do
+            ns.CDMContainerSync.SetEnabled(groupName, true)
         end
     end
 

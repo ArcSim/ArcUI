@@ -6,7 +6,7 @@ https://www.wowace.com/projects/libbuttonglow-1-0
 -- luacheck: globals CreateFromMixins ObjectPoolMixin CreateTexturePool CreateFramePool
 
 local MAJOR_VERSION = "LibCustomGlow-1.0"
-local MINOR_VERSION = 21
+local MINOR_VERSION = 25
 if not LibStub then error(MAJOR_VERSION .. " requires LibStub.") end
 local lib, oldversion = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
 if not lib then return end
@@ -34,7 +34,12 @@ lib.startList = {}
 lib.stopList = {}
 
 local GlowParent = UIParent
-local GlowMaskPool = {
+-- Reuse existing pools from previous library version to prevent orphaned frames.
+-- When a newer version loads, frames created by the old version's pools still exist
+-- in the UI. If we create brand new pools, Release() can't find those old frames,
+-- causing "doesn't belong to this pool" errors and stuck glows.
+
+local GlowMaskPool = lib.GlowMaskPool or {
     createFunc = function(self)
         return self.parent:CreateMaskTexture()
     end,
@@ -77,7 +82,10 @@ local GlowMaskPool = {
         self.parent = parent
     end
 }
-GlowMaskPool:Init(GlowParent)
+if not lib.GlowMaskPool then
+    GlowMaskPool:Init(GlowParent)
+end
+lib.GlowMaskPool = GlowMaskPool
 
 local TexPoolResetter = function(pool,tex)
     local maskNum = tex:GetNumMaskTextures()
@@ -87,7 +95,7 @@ local TexPoolResetter = function(pool,tex)
     tex:Hide()
     tex:ClearAllPoints()
 end
-local GlowTexPool = CreateTexturePool(GlowParent ,"ARTWORK",7,nil,TexPoolResetter)
+local GlowTexPool = lib.GlowTexPool or CreateTexturePool(GlowParent ,"ARTWORK",7,nil,TexPoolResetter)
 lib.GlowTexPool = GlowTexPool
 
 local FramePoolResetter = function(framePool,frame)
@@ -118,7 +126,7 @@ local FramePoolResetter = function(framePool,frame)
     frame:Hide()
     frame:ClearAllPoints()
 end
-local GlowFramePool = CreateFramePool("Frame",GlowParent,nil,FramePoolResetter)
+local GlowFramePool = lib.GlowFramePool or CreateFramePool("Frame",GlowParent,nil,FramePoolResetter)
 lib.GlowFramePool = GlowFramePool
 
 local function addFrameAndTex(r,color,name,key,N,xOffset,yOffset,texture,texCoord,desaturated,frameLevel)
@@ -151,7 +159,12 @@ local function addFrameAndTex(r,color,name,key,N,xOffset,yOffset,texture,texCoor
                 f.textures[i]:SetBlendMode("ADD")
             end
         end
-        f.textures[i]:SetVertexColor(color[1],color[2],color[3],color[4])
+        -- Handle both array format {r,g,b,a} and Color objects (for WoW 12.0 secret values)
+        if type(color) == "table" and color.GetRGBA then
+            f.textures[i]:SetVertexColor(color:GetRGBA())
+        else
+            f.textures[i]:SetVertexColor(color[1],color[2],color[3],color[4])
+        end
         f.textures[i]:Show()
     end
     while #f.textures>N do
@@ -470,7 +483,7 @@ local function ButtonGlowResetter(framePool,frame)
     frame:Hide()
     frame:ClearAllPoints()
 end
-local ButtonGlowPool = CreateFramePool("Frame",GlowParent,nil,ButtonGlowResetter)
+local ButtonGlowPool = lib.ButtonGlowPool or CreateFramePool("Frame",GlowParent,nil,ButtonGlowResetter)
 lib.ButtonGlowPool = ButtonGlowPool
 
 local function CreateScaleAnim(group, target, order, duration, x, y, delay)
@@ -550,7 +563,8 @@ end
 local function bgUpdate(self, elapsed)
     AnimateTexCoords(self.ants, 256, 256, 48, 48, 22, elapsed, self.throttle);
     local cooldown = self:GetParent().cooldown;
-    if(cooldown and cooldown:IsShown() and cooldown:GetCooldownDuration() > 3000) then
+    local duration = cooldown and cooldown:IsShown() and cooldown:GetCooldownDuration()
+    if((not issecretvalue or not issecretvalue(duration)) and duration and duration > 3000) then
         self:SetAlpha(0.5);
     else
         self:SetAlpha(1.0);
@@ -695,7 +709,12 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key)
         else
             for texture in pairs(ButtonGlowTextures) do
                 f[texture]:SetDesaturated(1)
-                f[texture]:SetVertexColor(color[1],color[2],color[3])
+                if type(color) == "table" and color.GetRGBA then
+                    local r, g, b = color:GetRGBA()
+                    f[texture]:SetVertexColor(r, g, b)
+                else
+                    f[texture]:SetVertexColor(color[1],color[2],color[3])
+                end
                 local alpha = math.min(f[texture]:GetAlpha()/noZero(f.color and f.color[4] or 1)*color[4], 1)
                 f[texture]:SetAlpha(alpha)
                 updateAlphaAnim(f,color and color[4] or 1)
@@ -732,7 +751,12 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key)
             f.color = color
             for texture in pairs(ButtonGlowTextures) do
                 f[texture]:SetDesaturated(1)
-                f[texture]:SetVertexColor(color[1],color[2],color[3])
+                if type(color) == "table" and color.GetRGBA then
+                    local r, g, b = color:GetRGBA()
+                    f[texture]:SetVertexColor(r, g, b)
+                else
+                    f[texture]:SetVertexColor(color[1],color[2],color[3])
+                end
             end
         end
         f.throttle = throttle
@@ -740,11 +764,8 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key)
 
         f.animIn:Play()
 
-        if Masque and Masque.UpdateSpellAlert and (not r.overlay or not issecurevariable(r, "overlay")) then
-            local old_overlay = r.overlay
-            r.overlay = f
-            Masque:UpdateSpellAlert(r)
-            r.overlay = old_overlay
+        if Masque and Masque.UpdateSpellAlert then
+            Masque:UpdateSpellAlert(r, f)
         end
     end
 end
@@ -787,7 +808,7 @@ local function ProcGlowResetter(framePool, frame)
     end
 end
 
-local ProcGlowPool = CreateFramePool("Frame", GlowParent, nil, ProcGlowResetter)
+local ProcGlowPool = lib.ProcGlowPool or CreateFramePool("Frame", GlowParent, nil, ProcGlowResetter)
 lib.ProcGlowPool = ProcGlowPool
 
 local function InitProcGlow(f)

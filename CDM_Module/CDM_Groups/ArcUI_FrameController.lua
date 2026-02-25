@@ -610,7 +610,7 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
     else
         -- Fallback: basic setup
         frame:SetParent(group.container)
-        frame:SetFrameStrata("MEDIUM")
+        frame:SetFrameStrata(group.container._cdmgFrameStrata or "MEDIUM")
         frame:SetScale(1)
         frame:SetAlpha(1)
     end
@@ -1012,11 +1012,82 @@ local function Reconcile()
     -- We don't want to save those visual positions as authoritative
     ns.CDMGroups._blockPositionSaves = true
     
-    -- 1. Scan CDM viewers to get current state
+    -- 1. Scan CDM viewers to get current state (MUST happen before slot-partner map)
     local cdmState = ScanCDMViewers()
     local cdmCount = 0
     for _ in pairs(cdmState) do cdmCount = cdmCount + 1 end
     TimelineAdd("CDM", "SCAN_COMPLETE", string.format("Found %d cooldownIDs in CDM viewers", cdmCount))
+    
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- SLOT-PARTNER MAP: Snapshot shared positions BEFORE any processing
+    -- Mutually exclusive talents (e.g. Halo/Void Torrent) share the same saved
+    -- position. CDM's internal layout can corrupt these during reconcile, breaking
+    -- the slot-sharing detection in PushFramesFromSlot. This map preserves the
+    -- pairing so it can be used as a fallback.
+    --
+    -- CRITICAL FILTER: If CDM has real frames for BOTH partners, they are NOT
+    -- mutually exclusive in this build. The user may have placed a placeholder
+    -- at a position where a real frame already exists, and a spec/build change
+    -- made both real. These need real conflict resolution, not partner treatment.
+    --
+    -- Format: _slotPartnerMap[cdID] = { {partnerCdID, group, row, col}, ... }
+    -- ═══════════════════════════════════════════════════════════════════════════
+    local slotPartnerMap = {}
+    do
+        local savedPositions_snapshot = ns.CDMGroups.savedPositions or {}
+        -- Build position -> list of cdIDs map
+        local posMap = {}  -- "groupName:row:col" -> { cdID1, cdID2, ... }
+        for cdID, saved in pairs(savedPositions_snapshot) do
+            if saved.type == "group" and saved.target and saved.row ~= nil and saved.col ~= nil then
+                local key = saved.target .. ":" .. saved.row .. ":" .. saved.col
+                posMap[key] = posMap[key] or {}
+                table.insert(posMap[key], cdID)
+            end
+        end
+        -- Find pairs that share positions, but ONLY if they're truly exclusive
+        for key, cdIDs in pairs(posMap) do
+            if #cdIDs >= 2 then
+                -- Count how many of these cdIDs have real CDM frames RIGHT NOW
+                local realCount = 0
+                for _, id in ipairs(cdIDs) do
+                    if cdmState[id] then
+                        realCount = realCount + 1
+                    end
+                end
+                
+                if realCount >= 2 then
+                    -- CDM has frames for 2+ partners = NOT mutually exclusive
+                    -- This is a genuine conflict (e.g. user placed placeholder at occupied slot
+                    -- and a build change made both real). Let normal conflict resolution handle it.
+                    TimelineAdd("ACTION", "SLOT_PARTNERS_CONFLICT", string.format(
+                        "Shared position %s: cdIDs %s — ALL REAL, treating as conflict", 
+                        key, table.concat(cdIDs, ", ")))
+                else
+                    -- Only 0-1 have real frames = mutually exclusive talent pair
+                    -- Link all partners to each other
+                    for i = 1, #cdIDs do
+                        local saved = savedPositions_snapshot[cdIDs[i]]
+                        slotPartnerMap[cdIDs[i]] = slotPartnerMap[cdIDs[i]] or {}
+                        for j = 1, #cdIDs do
+                            if i ~= j then
+                                table.insert(slotPartnerMap[cdIDs[i]], {
+                                    partnerCdID = cdIDs[j],
+                                    group = saved.target,
+                                    row = saved.row,
+                                    col = saved.col,
+                                })
+                            end
+                        end
+                    end
+                    TimelineAdd("ACTION", "SLOT_PARTNERS", string.format(
+                        "Shared position %s: cdIDs %s (real=%d)", 
+                        key, table.concat(cdIDs, ", "), realCount))
+                end
+            end
+        end
+    end
+    -- Store on namespace for PushFramesFromSlot to access
+    ns.CDMGroups._slotPartnerMap = slotPartnerMap
     
     -- 2. Clean up registry
     if Registry then
@@ -1302,6 +1373,24 @@ local function Reconcile()
                     local savedRow = saved.row or member.row or 0
                     local savedCol = saved.col or member.col or 0
                     
+                    -- SLOT-PARTNER FIX: If this cdID has a slot partner, restore saved
+                    -- position to the shared slot. CDM's internal layout may have moved
+                    -- this cdID before our reconcile processed it, corrupting the saved pos.
+                    if slotPartnerMap and slotPartnerMap[cdID] then
+                        local partnerInfo = slotPartnerMap[cdID][1]  -- First partner
+                        if partnerInfo and partnerInfo.group == entry.groupName then
+                            savedRow = partnerInfo.row
+                            savedCol = partnerInfo.col
+                            saved.row = savedRow
+                            saved.col = savedCol
+                            member.row = savedRow
+                            member.col = savedCol
+                            TimelineAdd("FRAME", "SLOT_PARTNER_RESTORE", string.format(
+                                "cdID=%d restored to shared slot [%d,%d] (partner=%d)", 
+                                cdID, savedRow, savedCol, partnerInfo.partnerCdID))
+                        end
+                    end
+                    
                     -- Convert member to placeholder (keep row/col, remove frame)
                     member.frame = nil
                     member.entry = nil
@@ -1436,6 +1525,9 @@ local function Reconcile()
     
     -- CRITICAL: Unblock position saves now that main reconcile processing is done
     ns.CDMGroups._blockPositionSaves = false
+    
+    -- Clear slot partner map (only needed during reconcile)
+    ns.CDMGroups._slotPartnerMap = nil
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- POST-RECONCILE SAVE PASS: Save positions for any icons with real frames
@@ -2152,6 +2244,18 @@ local function Reconcile()
                 ns.CDMEnhance.RefreshAllIcons()
             end
             
+            -- ═══════════════════════════════════════════════════════════════════════════
+            -- CRITICAL: Force-refresh alpha/desat/glow visual states after talent change.
+            -- RefreshIconType only handles borders, textures, and config cache. It does NOT
+            -- call OptimizedApplyIconVisuals (aura alpha) or ApplyCooldownStateVisuals.
+            -- Without this, aura frames with missing-alpha=0 get stuck at alpha=1.0 after
+            -- talent changes until the options panel is opened (which calls this same function).
+            -- ═══════════════════════════════════════════════════════════════════════════
+            if ns.CDMEnhance and ns.CDMEnhance.ForceRefreshAllVisualStates then
+                TimelineAdd("ACTION", "FORCE_REFRESH_VISUALS", "Recalculating alpha/desat/glow after followup sweep")
+                ns.CDMEnhance.ForceRefreshAllVisualStates()
+            end
+            
             -- Notify DynamicLayout that frames are now stable
             -- This triggers fill gaps logic to re-sync after talent changes
             local DL = ns.CDMGroups.DynamicLayout
@@ -2420,20 +2524,25 @@ InstallFrameHooks = function(frame)
         frame._fcSizeHooked = true
     end
     
-    -- Hook SetFrameStrata - force strata to MEDIUM
+    -- Hook SetFrameStrata - force strata to group's configured strata
     -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
     if not frame._fcStrataHooked and not frame._cdmgStrataHooked then
         hooksecurefunc(frame, "SetFrameStrata", function(self, strata)
             if self._cdmgSettingStrata then return end
             
             local parent = self:GetParent()
-            local isManaged = (parent and parent._isCDMGContainer) or self._cdmgIsFreeIcon
+            local isInContainer = parent and parent._isCDMGContainer
+            local isFreeIcon = self._cdmgIsFreeIcon
+            local isManaged = isInContainer or isFreeIcon
             
-            if isManaged and strata ~= "MEDIUM" then
-                self._cdmgSettingStrata = true
-                self:SetFrameStrata("MEDIUM")
-                self._cdmgSettingStrata = false
-                state.stats.hookFights.strata = state.stats.hookFights.strata + 1
+            if isManaged then
+                local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
+                if strata ~= expectedStrata then
+                    self._cdmgSettingStrata = true
+                    self:SetFrameStrata(expectedStrata)
+                    self._cdmgSettingStrata = false
+                    state.stats.hookFights.strata = state.stats.hookFights.strata + 1
+                end
             end
         end)
         frame._fcStrataHooked = true

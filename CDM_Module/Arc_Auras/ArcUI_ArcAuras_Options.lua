@@ -33,6 +33,93 @@ local pendingItemID = ""
 local pendingSpellID = ""
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- CONFIRMATION DIALOG: Passive spell warning (buff/debuff detected)
+-- Simple standalone frame, not anchored to anything
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local confirmFrame = nil
+
+local function ShowPassiveSpellWarning(spellID, displayName)
+    if confirmFrame then
+        confirmFrame:Hide()
+    end
+
+    if not confirmFrame then
+        local f = CreateFrame("Frame", "ArcAurasPassiveWarning", UIParent, "BackdropTemplate")
+        f:SetSize(400, 160)
+        f:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+        f:SetFrameStrata("TOOLTIP")
+        f:SetMovable(true)
+        f:EnableMouse(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        f:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 8, right = 8, top = 8, bottom = 8 },
+        })
+        f:SetBackdropColor(0, 0, 0, 1)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -16)
+        title:SetText("Arc Auras")
+        f.title = title
+
+        local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        text:SetPoint("TOPLEFT", 20, -38)
+        text:SetPoint("TOPRIGHT", -20, -38)
+        text:SetJustifyH("LEFT")
+        text:SetSpacing(2)
+        f.text = text
+
+        local addBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        addBtn:SetSize(120, 24)
+        addBtn:SetPoint("BOTTOMLEFT", 20, 16)
+        addBtn:SetText("Add Anyway")
+        f.addBtn = addBtn
+
+        local cancelBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(120, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -20, 16)
+        cancelBtn:SetText("Cancel")
+        cancelBtn:SetScript("OnClick", function() f:Hide() end)
+
+        confirmFrame = f
+    end
+
+    confirmFrame.text:SetText(
+        displayName .. " (ID: " .. spellID .. ") looks like a buff or debuff, " ..
+        "not a castable cooldown.\n\n" ..
+        "Arc Auras only tracks spell cooldowns. For buff/debuff timers, " ..
+        "use Blizzard's Cooldown Manager (Tracked Buffs) instead."
+    )
+
+    confirmFrame.addBtn:SetScript("OnClick", function()
+        confirmFrame:Hide()
+        local ArcAurasCooldown = ns.ArcAurasCooldown
+        if ArcAurasCooldown and ArcAurasCooldown.AddTrackedSpell then
+            local success = ArcAurasCooldown.AddTrackedSpell(spellID)
+            if success then
+                local name = ArcAurasCooldown.GetSpellNameAndIcon(spellID) or ("Spell " .. spellID)
+                print("|cff00CCFF[Arc Auras]|r Added spell: " .. name)
+                Options.InvalidateCache()
+                if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.InvalidateCache then
+                    ns.CDMEnhanceOptions.InvalidateCache()
+                end
+            else
+                print("|cff00CCFF[Arc Auras]|r Already tracked or invalid spell")
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end
+    end)
+
+    confirmFrame:Show()
+    confirmFrame:Raise()
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- CATALOG DATA (unified items + spells)
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -452,6 +539,11 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 function ns.GetArcAurasOptionsTable()
+    -- Helper: returns true when Arc Auras is disabled (grays out controls)
+    local function IsArcDisabled()
+        return not (ArcAuras and ArcAuras.IsEnabled and ArcAuras.IsEnabled())
+    end
+    
     local args = {
         -- ═══════════════════════════════════════════════════════════════
         -- HEADER
@@ -476,12 +568,20 @@ function ns.GetArcAurasOptionsTable()
                 if val then ArcAuras.Enable() else ArcAuras.Disable() end
             end,
         },
+        disabledNotice = {
+            type = "description",
+            name = "\n|cffFF4444Arc Auras is currently disabled.|r  Toggle the checkbox above to enable tracking.\n",
+            order = 2.5,
+            fontSize = "medium",
+            hidden = function() return not IsArcDisabled() end,
+        },
         refreshBtn = {
             type = "execute",
             name = "Refresh",
             desc = "Show all frames at their saved positions (fixes missing icons after spec change)",
             order = 3,
             width = 0.6,
+            disabled = IsArcDisabled,
             func = function()
                 if ArcAuras and ArcAuras.ForceShowAllFrames then
                     local count = ArcAuras.ForceShowAllFrames()
@@ -495,7 +595,7 @@ function ns.GetArcAurasOptionsTable()
         -- ═══════════════════════════════════════════════════════════════
         addHeader = {
             type = "header",
-            name = "Add Items & Spells",
+            name = "Add Items & Spell Cooldowns",
             order = 10,
         },
         addTrinketsBtn = {
@@ -504,6 +604,7 @@ function ns.GetArcAurasOptionsTable()
             desc = "Add frames for your currently equipped on-use trinkets.\n\n|cff88ff88These frames track the SPECIFIC ITEM|r - they won't change when you swap trinkets.\n\nUse this to add individual trinkets you want to track permanently.",
             order = 11,
             width = 1.1,
+            disabled = IsArcDisabled,
             func = function()
                 if not ArcAuras then return end
                 local added = ArcAuras.AutoAddTrinkets(true)
@@ -521,6 +622,7 @@ function ns.GetArcAurasOptionsTable()
             desc = "Enter an Item ID and press Enter to track it (e.g., 212456)",
             order = 12,
             width = 0.8,
+            disabled = IsArcDisabled,
             get = function() return pendingItemID end,
             set = function(_, val)
                 val = val:gsub("%D", "")
@@ -553,10 +655,11 @@ function ns.GetArcAurasOptionsTable()
         },
         spellIDInput = {
             type = "input",
-            name = "Spell ID",
-            desc = "Enter a Spell ID and press Enter to track it (e.g., 116011)",
+            name = "Spell ID (Cooldowns Only)",
+            desc = "Enter the Spell ID of a castable ability to track its cooldown.\n\nThis does not work for buffs or debuffs. Use Blizzard's Cooldown Manager for those.",
             order = 13,
             width = 0.8,
+            disabled = IsArcDisabled,
             get = function() return pendingSpellID end,
             set = function(_, val)
                 val = val:gsub("[^%d]", "")
@@ -565,6 +668,18 @@ function ns.GetArcAurasOptionsTable()
                     pendingSpellID = ""
                     return
                 end
+
+                -- Check if this spell ID is likely a buff/debuff rather than a castable cooldown
+                local isPassive = C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellID)
+                local spellName = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+
+                if isPassive then
+                    local displayName = spellName or ("Spell " .. spellID)
+                    pendingSpellID = ""
+                    ShowPassiveSpellWarning(spellID, displayName)
+                    return
+                end
+
                 local ArcAurasCooldown = ns.ArcAurasCooldown
                 if ArcAurasCooldown and ArcAurasCooldown.AddTrackedSpell then
                     local success = ArcAurasCooldown.AddTrackedSpell(spellID)
@@ -595,6 +710,14 @@ function ns.GetArcAurasOptionsTable()
             func = function(info)
                 -- Handling done in the widget's OnItemDropped callback
             end,
+        },
+        spellIDHelp = {
+            type = "description",
+            name = "\n|cffFF8800Note:|r Spell ID is for castable ability cooldowns only. "
+                .. "To track buffs, debuffs, or procs, use Blizzard's Cooldown Manager (Tracked Buffs).\n",
+            order = 15,
+            width = "full",
+            fontSize = "small",
         },
         
         -- ═══════════════════════════════════════════════════════════════
@@ -1485,6 +1608,19 @@ function ns.GetArcAurasOptionsTable()
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
         end,
     }
+    
+    -- ═══════════════════════════════════════════════════════════════
+    -- AUTO-DISABLE: Gray out all interactive controls when Arc Auras is off
+    -- Skip the enable toggle itself, descriptions, and headers
+    -- ═══════════════════════════════════════════════════════════════
+    local skipKeys = { enabled = true, description = true, disabledNotice = true }
+    for key, entry in pairs(args) do
+        if not skipKeys[key] and entry.type ~= "header" and entry.type ~= "description" then
+            if not entry.disabled then
+                entry.disabled = IsArcDisabled
+            end
+        end
+    end
     
     return {
         type = "group",

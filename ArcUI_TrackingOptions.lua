@@ -4,7 +4,7 @@
 -- - Removed search box
 -- - Filter dropdown next to Open CD Manager
 -- - Added Hide CDM Icon toggle to bar/icon setup and appearance
--- - v2.5.1: Secondary resources temporarily disabled (coming soon)
+-- - v3.5.0: Secondary resources fully enabled
 -- ===================================================================
 
 local ADDON, ns = ...
@@ -632,22 +632,17 @@ local function ShowDeleteConfirmation(barNum, barType, barName)
     elseif barType == "resource" then
       local cfg = ns.API.GetResourceBarConfig(barNum)
       if cfg then
-        -- Fully clear tracking data
-        cfg.tracking.enabled = false
-        cfg.tracking.powerType = nil
-        cfg.tracking.powerName = nil
-        
-        -- Clear behavior data including talent conditions
-        if cfg.behavior then
-          cfg.behavior.talentConditions = nil
-          cfg.behavior.talentMatchMode = nil
-          cfg.behavior.showOnSpecs = nil
+        -- Use the comprehensive DeleteBar function to fully reset the slot
+        if ns.Resources and ns.Resources.DeleteBar then
+          ns.Resources.DeleteBar(barNum)
+        else
+          -- Fallback: minimal reset
+          cfg.tracking.enabled = false
+          cfg.tracking.powerType = nil
+          cfg.tracking.powerName = nil
+          cfg.display.enabled = false
+          if ns.Resources and ns.Resources.HideBar then ns.Resources.HideBar(barNum) end
         end
-        
-        -- Reset display
-        cfg.display.enabled = false
-        
-        if ns.Resources and ns.Resources.HideBar then ns.Resources.HideBar(barNum) end
       end
     end
     deleteConfirmFrame:Hide()
@@ -672,7 +667,12 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
     inline = true,
     order = orderBase,
     hidden = function()
-      local cfg = ns.API.GetBarConfig(barNum)
+      -- IMPORTANT: Check db.bars directly to avoid auto-creating entries
+      -- via GetBarConfig. Creating entries bloats SavedVariables with empty configs.
+      local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+      if not db or not db.bars then return true end
+      local cfg = db.bars[barNum]
+      if not cfg or not cfg.tracking then return true end
       return not ShouldShowBarWithType(cfg, filterDisplayType)
     end,
     args = {
@@ -1313,32 +1313,49 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           return GetNumSpecializations() < 4
         end
       },
-      talentCondLabel = {
+      talentCondHeader = {
         type = "description",
-        name = "|cffffd700Talent Conditions:|r",
+        name = "\n|cffffd700Talent Conditions:|r",
         order = 5.5,
-        width = 0.65,
+        width = "full",
         fontSize = "medium",
         hidden = function() return not expandedBars[barKey] end
       },
-      talentCondBtn = {
-        type = "execute",
+      talentCondDesc = {
+        type = "description",
+        name = "|cff888888Only show this bar when specific talents are active. If no conditions are set, the bar shows whenever the spell is known.|r",
+        order = 5.51,
+        width = "full",
+        fontSize = "small",
+        hidden = function() return not expandedBars[barKey] end
+      },
+      talentCondSummary = {
+        type = "description",
         name = function()
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-            return "|cff00ff00Active|r"
+          if not cfg or not cfg.behavior then return "" end
+          if cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+            if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+              return ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode)
+            end
           end
-          return "None"
+          return ""
         end,
-        desc = function()
+        order = 5.52,
+        width = "full",
+        fontSize = "small",
+        hidden = function()
+          if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-            local summary = ns.TalentPicker and ns.TalentPicker.GetConditionSummary and 
-                            ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode) or "Active"
-            return summary .. "\n\n|cffffd700Click to edit talent conditions|r"
-          end
-          return "Show/hide this bar based on your talent choices.\n\n|cffffd700Click to open talent picker|r"
-        end,
+          return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
+        end
+      },
+      talentCondEdit = {
+        type = "execute",
+        name = "Edit Talent Conditions",
+        desc = "Open the talent picker to choose which talents must be active (or inactive) for this bar to show.",
+        order = 5.6,
+        width = 1.0,
         func = function()
           local cfg = ns.API.GetBarConfig(barNum)
           local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
@@ -1358,14 +1375,14 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
             print("|cff00ccffArc UI|r: Talent picker not available")
           end
         end,
-        order = 5.6,
-        width = 0.45,
         hidden = function() return not expandedBars[barKey] end
       },
       talentCondClear = {
         type = "execute",
-        name = "X",
-        desc = "Clear talent conditions",
+        name = "Clear",
+        desc = "Remove all talent conditions. The bar will show whenever the spell is known.",
+        order = 5.7,
+        width = 0.5,
         func = function()
           local cfg = ns.API.GetBarConfig(barNum)
           if cfg and cfg.behavior then
@@ -1374,8 +1391,6 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
-        order = 5.7,
-        width = 0.2,
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
@@ -2374,30 +2389,39 @@ function ns.TrackingOptions.GetResourceSetupTable()
   -- Get icon for secondary resource type
   local function GetSecondaryIcon(secondaryType)
     local icons = {
-      comboPoints = 132287,   -- Combo Points
-      holyPower = 135959,     -- Holy Power
-      chi = 606548,           -- Chi
-      runes = 135277,         -- Runes
-      soulShards = 136163,    -- Soul Shards
-      essence = 4630435,      -- Essence
-      arcaneCharges = 135932, -- Arcane Charges
-      stagger = 611419,       -- Stagger (Monk keg icon)
-      soulFragments = 1355117, -- Soul Fragments (DH)
+      comboPoints = 132287,            -- Combo Points
+      holyPower = 135959,              -- Holy Power
+      chi = 606548,                    -- Chi
+      runes = 135277,                  -- Runes
+      soulShards = 136163,             -- Soul Shards
+      arcaneCharges = 135932,          -- Arcane Charges
+      stagger = 611419,                -- Stagger (Monk keg icon)
+      soulFragments = 1355117,         -- Soul Fragments (DH Vengeance)
+      soulFragmentsDevourer = 1355117, -- Soul Fragments (Devourer hero spec)
+      maelstromWeapon = 237584,        -- Maelstrom Weapon (Enhancement)
+      mana = 136116,                   -- Mana (secondary)
     }
+    -- Essence: use known Evoker resource icon
+    if secondaryType == "essence" then
+      return 4630464
+    end
     return icons[secondaryType] or 134400
   end
   
   -- Secondary resource definitions with class/spec availability
   local SECONDARY_RESOURCES = {
-    { id = "comboPoints",   name = "Combo Points",   classes = {"ROGUE"}, specs = {[103]=true} },  -- Rogue, Feral Druid
-    { id = "holyPower",     name = "Holy Power",     classes = {"PALADIN"} },
-    { id = "chi",           name = "Chi",            classes = {}, specs = {[269]=true} },  -- Windwalker
-    { id = "runes",         name = "Runes",          classes = {"DEATHKNIGHT"} },
-    { id = "soulShards",    name = "Soul Shards",    classes = {"WARLOCK"} },
-    { id = "essence",       name = "Essence",        classes = {"EVOKER"} },
-    { id = "arcaneCharges", name = "Arcane Charges", classes = {}, specs = {[62]=true} },  -- Arcane Mage
-    { id = "stagger",       name = "Stagger",        classes = {}, specs = {[268]=true} },  -- Brewmaster
-    { id = "soulFragments", name = "Soul Fragments", classes = {}, specs = {[581]=true} },  -- Vengeance DH
+    { id = "comboPoints",          name = "Combo Points",              classes = {"ROGUE", "DRUID"} },  -- Rogue, all Druid specs (Cat Form)
+    { id = "holyPower",            name = "Holy Power",                classes = {"PALADIN"} },
+    { id = "chi",                  name = "Chi",                       classes = {}, specs = {[269]=true} },  -- Windwalker
+    { id = "runes",                name = "Runes",                     classes = {"DEATHKNIGHT"} },
+    { id = "soulShards",           name = "Soul Shards",               classes = {"WARLOCK"} },
+    { id = "essence",              name = "Essence",                   classes = {"EVOKER"} },
+    { id = "arcaneCharges",        name = "Arcane Charges",            classes = {}, specs = {[62]=true} },   -- Arcane Mage
+    { id = "stagger",              name = "Stagger",                   classes = {}, specs = {[268]=true} },  -- Brewmaster
+    { id = "soulFragments",        name = "Soul Fragments",            classes = {}, specs = {[581]=true} },  -- Vengeance DH
+    { id = "soulFragmentsDevourer", name = "Soul Fragments (Devourer)", classes = {}, specs = {[1480]=true} },  -- Devourer DH hero spec
+    { id = "maelstromWeapon",      name = "Maelstrom Weapon",          classes = {}, specs = {[263]=true} },  -- Enhancement Shaman
+    { id = "mana",                 name = "Mana (Secondary)",          classes = {}, specs = {[102]=true, [258]=true, [262]=true} },  -- Balance, Shadow, Ele
   }
   
   -- Check if secondary resource is available for current class/spec
@@ -2432,8 +2456,13 @@ function ns.TrackingOptions.GetResourceSetupTable()
       inline = true,
       order = orderBase,
       hidden = function()
-        local cfg = ns.API.GetResourceBarConfig(barNum)
-        if not cfg or not cfg.tracking.enabled then return true end
+        -- IMPORTANT: Check db.resourceBars directly to avoid auto-creating entries
+        -- via GetResourceBarConfig. Creating entries causes ghost bars on characters
+        -- that have no resource bars configured.
+        local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+        if not db or not db.resourceBars then return true end
+        local cfg = db.resourceBars[barNum]
+        if not cfg or not cfg.tracking or not cfg.tracking.enabled then return true end
         return false
       end,
       args = {
@@ -2533,32 +2562,49 @@ function ns.TrackingOptions.GetResourceSetupTable()
           width = 0.45,
           hidden = function() return not expandedResources[barKey] end
         },
-        talentCondLabel = {
+        talentCondHeader = {
           type = "description",
-          name = "|cffffd700Talent Conditions:|r",
+          name = "\n|cffffd700Talent Conditions:|r",
           order = 2.0,
-          width = 0.65,
+          width = "full",
           fontSize = "medium",
           hidden = function() return not expandedResources[barKey] end
         },
-        talentCondBtn = {
-          type = "execute",
+        talentCondDesc = {
+          type = "description",
+          name = "|cff888888Only show this resource bar when specific talents are active. If no conditions are set, the bar shows whenever applicable.|r",
+          order = 2.01,
+          width = "full",
+          fontSize = "small",
+          hidden = function() return not expandedResources[barKey] end
+        },
+        talentCondSummary = {
+          type = "description",
           name = function()
             local cfg = ns.API.GetResourceBarConfig(barNum)
-            if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-              return "|cff00ff00Active|r"
+            if not cfg or not cfg.behavior then return "" end
+            if cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+              if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+                return ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode)
+              end
             end
-            return "None"
+            return ""
           end,
-          desc = function()
+          order = 2.02,
+          width = "full",
+          fontSize = "small",
+          hidden = function()
+            if not expandedResources[barKey] then return true end
             local cfg = ns.API.GetResourceBarConfig(barNum)
-            if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-              local summary = ns.TalentPicker and ns.TalentPicker.GetConditionSummary and 
-                              ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode) or "Active"
-              return summary .. "\n\n|cffffd700Click to edit talent conditions|r"
-            end
-            return "Show/hide this bar based on your talent choices.\n\n|cffffd700Click to open talent picker|r"
-          end,
+            return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
+          end
+        },
+        talentCondEdit = {
+          type = "execute",
+          name = "Edit Talent Conditions",
+          desc = "Open the talent picker to choose which talents must be active (or inactive) for this resource bar to show.",
+          order = 2.1,
+          width = 1.0,
           func = function()
             local cfg = ns.API.GetResourceBarConfig(barNum)
             local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
@@ -2578,14 +2624,14 @@ function ns.TrackingOptions.GetResourceSetupTable()
               print("|cff00ccffArc UI|r: Talent picker not available")
             end
           end,
-          order = 2.1,
-          width = 0.45,
           hidden = function() return not expandedResources[barKey] end
         },
         talentCondClear = {
           type = "execute",
-          name = "X",
-          desc = "Clear talent conditions",
+          name = "Clear",
+          desc = "Remove all talent conditions. The bar will show whenever applicable.",
+          order = 2.2,
+          width = 0.5,
           func = function()
             local cfg = ns.API.GetResourceBarConfig(barNum)
             if cfg and cfg.behavior then
@@ -2597,8 +2643,6 @@ function ns.TrackingOptions.GetResourceSetupTable()
               LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
             end
           end,
-          order = 2.2,
-          width = 0.25,
           hidden = function()
             if not expandedResources[barKey] then return true end
             local cfg = ns.API.GetResourceBarConfig(barNum)
@@ -2799,6 +2843,33 @@ function ns.TrackingOptions.GetResourceSetupTable()
           width = "full",
           hidden = function() return not expandedResources[barKey] end
         },
+        hideBlizzFrame = {
+          type = "toggle",
+          name = "Hide Blizzard Frame",
+          desc = "Hide the default Blizzard resource frame (e.g. RuneFrame, ComboPointBarFrame) when this bar is active.\n\n|cffff9900Only applies out of combat.|r",
+          get = function()
+            local cfg = ns.API.GetResourceBarConfig(barNum)
+            return cfg and cfg.behavior and cfg.behavior.hideBlizzardFrame
+          end,
+          set = function(info, value)
+            local cfg = ns.API.GetResourceBarConfig(barNum)
+            if cfg then
+              if not cfg.behavior then cfg.behavior = {} end
+              cfg.behavior.hideBlizzardFrame = value
+              if ns.Resources and ns.Resources.UpdateBlizzardFrameVisibility then
+                ns.Resources.UpdateBlizzardFrameVisibility()
+              end
+            end
+          end,
+          order = 5.95,
+          width = "full",
+          hidden = function()
+            if not expandedResources[barKey] then return true end
+            -- Only show for secondary resource bars
+            local cfg = ns.API.GetResourceBarConfig(barNum)
+            return not cfg or cfg.tracking.resourceCategory ~= "secondary"
+          end
+        },
         appearance = {
           type = "execute",
           name = "Edit",
@@ -2903,7 +2974,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
       order = orderNum,
       width = 0.22,
       hidden = function()
-        return true  -- DISABLED: Secondary resources coming soon
+        return not IsSecondaryAvailable(secondaryType)
       end
     }
   end
@@ -2915,7 +2986,7 @@ function ns.TrackingOptions.GetResourceSetupTable()
     args = {
       description = {
         type = "description",
-        name = "|cff00ccffResource bars|r track power types like Mana, Energy, Maelstrom, etc.\nClick an icon below to create a new resource bar.\n",
+        name = "|cff00ccffResource bars|r track power types like Mana, Energy, Maelstrom, etc.\nSecondary resources like Combo Points, Runes, Holy Power are also available below.\nClick an icon to create a new resource bar.\n",
         fontSize = "medium",
         order = 0
       },
@@ -2964,10 +3035,9 @@ function ns.TrackingOptions.GetResourceSetupTable()
         end
       },
       
-      -- Secondary resources section (COMING SOON)
       secondaryHeader = {
         type = "description",
-        name = "\n|cff00ccffSecondary Resources|r |cffFFFF00(Coming Soon!)|r",
+        name = "\n|cff00ccffSecondary Resources|r",
         fontSize = "medium",
         order = 4
       },
@@ -2982,13 +3052,24 @@ function ns.TrackingOptions.GetResourceSetupTable()
       secArcaneCharges = CreateSecondaryIconEntry("arcaneCharges", "Arcane Charges", 5.6),
       secStagger = CreateSecondaryIconEntry("stagger", "Stagger", 5.7),
       secSoulFragments = CreateSecondaryIconEntry("soulFragments", "Soul Fragments", 5.8),
+      secSoulFragmentsDevourer = CreateSecondaryIconEntry("soulFragmentsDevourer", "Soul Fragments (Devourer)", 5.81),
+      secMaelstromWeapon = CreateSecondaryIconEntry("maelstromWeapon", "Maelstrom Weapon", 5.82),
+      secMana = CreateSecondaryIconEntry("mana", "Mana (Secondary)", 5.83),
       
       noSecondaryTypes = {
         type = "description",
-        name = "|cff888888Combo Points, Holy Power, Runes, Chi, Soul Shards, Essence, Arcane Charges, Stagger, Soul Fragments - coming in a future update.|r",
+        name = "|cff888888No secondary resources available for your current class/spec.|r",
         fontSize = "medium",
         order = 6,
-        hidden = false  -- Always show the coming soon message
+        hidden = function()
+          -- Hide this message if ANY secondary resource is available
+          for _, resource in ipairs(SECONDARY_RESOURCES) do
+            if IsSecondaryAvailable(resource.id) then
+              return true
+            end
+          end
+          return false
+        end
       },
       
       activeHeader = {

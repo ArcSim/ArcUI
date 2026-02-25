@@ -52,6 +52,7 @@ local collapsedSections = {
   keybindText = true,      -- Per-icon keybind display settings
   customLabel = true,      -- Per-icon custom label text
   spellUsability = true,   -- Per-icon spell usability tinting/glow
+  assistedCombatHighlight = false, -- Assisted Combat next-cast highlight (opt-in)
 }
 
 -- Cache for unified icon list
@@ -102,7 +103,7 @@ local SECTION_FIELDS = {
     "cooldownStateVisuals.cooldownState.preserveDurationText",
     "cooldownStateVisuals.cooldownState.waitForNoCharges",
   },
-  auraActiveState = { "auraActiveState.ignoreAuraOverride" },  -- Aura Active State settings
+  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly" },  -- Aura Active State settings
   rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
   procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
@@ -112,7 +113,7 @@ local SECTION_FIELDS = {
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
   alertEvents = { "alertEvents" },
-  spellUsability = { "spellUsability.enabled", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles" },
+  spellUsability = { "spellUsability.enabled", "spellUsability.useNormalColor", "spellUsability.normalColor", "spellUsability.normalDesaturate", "spellUsability.useOnCooldownColor", "spellUsability.onCooldownColor", "spellUsability.onCooldownDesaturate", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notEnoughResourceDesaturate", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.notUsableDesaturate", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles" },
 }
 
 -- Purple indicator for customized sections
@@ -1486,8 +1487,100 @@ local function ApplySharedCooldownSetting(setter)
   end
 end
 
--- ═══════════════════════════════════════════════════════════════════════════
--- EXPORT HELPERS FOR EXTERNAL OPTION MODULES
+-- Apply aura active glow setting (cooldown frames only)
+-- Updates config, invalidates cache, refreshes icons
+local function ApplyCooldownAuraActiveGlowSetting(setter)
+  local icons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(icons) do
+    local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
+    if cfg then
+      setter(cfg)
+    end
+  end
+  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
+    ns.CDMEnhance.InvalidateCache()
+  end
+  -- Force glow signature reset so changes are picked up immediately
+  for _, cdID in ipairs(icons) do
+    local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+    if data and data.frame then
+      data.frame._arcAuraActiveGlowSig = nil
+    end
+  end
+  UpdateCooldown()
+end
+
+-- Lighter version for sliders (avoids heavy glow restart)
+local function ApplyCooldownAuraActiveGlowSliderSetting(setter)
+  local icons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(icons) do
+    local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
+    if cfg then
+      setter(cfg)
+    end
+  end
+  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
+    ns.CDMEnhance.InvalidateCache()
+  end
+  for _, cdID in ipairs(icons) do
+    local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+    if data and data.frame then
+      data.frame._arcAuraActiveGlowSig = nil
+    end
+    if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
+  end
+end
+
+-- Aura Active Glow Preview tracking (separate from ready glow preview)
+local auraGlowPreviewIcons = {}
+ns.CDMEnhanceOptions = ns.CDMEnhanceOptions or {}
+
+function ns.CDMEnhanceOptions.IsAuraGlowPreviewActive(cdID)
+  return auraGlowPreviewIcons[cdID] == true
+end
+
+function ns.CDMEnhanceOptions.SetAuraGlowPreview(cdID, active)
+  auraGlowPreviewIcons[cdID] = active or nil
+  local data = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+  if data and data.frame then
+    data.frame._arcAuraActiveGlowSig = nil  -- Force re-evaluation
+    data.frame._arcLastApplyVisuals = nil   -- Bypass throttle
+    data.frame._arcLastOptimizedCall = nil  -- Bypass optimized throttle
+    if not active then
+      -- Immediately hide the glow when preview disabled
+      if ns.CDMEnhance.HideAuraActiveGlow then
+        ns.CDMEnhance.HideAuraActiveGlow(data.frame)
+      end
+    end
+    if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
+  end
+end
+
+function ns.CDMEnhanceOptions.ToggleAuraGlowPreviewForSelection()
+  local icons = GetCooldownIconsToUpdate()
+  local anyActive = false
+  for _, cdID in ipairs(icons) do
+    if auraGlowPreviewIcons[cdID] then anyActive = true; break end
+  end
+  for _, cdID in ipairs(icons) do
+    ns.CDMEnhanceOptions.SetAuraGlowPreview(cdID, not anyActive)
+  end
+end
+
+function ns.CDMEnhanceOptions.GetAuraGlowPreviewState()
+  local icons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(icons) do
+    if auraGlowPreviewIcons[cdID] then return true end
+  end
+  return false
+end
+
+function ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
+  for cdID in pairs(auraGlowPreviewIcons) do
+    ns.CDMEnhanceOptions.SetAuraGlowPreview(cdID, false)
+  end
+  wipe(auraGlowPreviewIcons)
+end
 -- External option files (e.g. ArcUI_CustomLabelOptions) use these to build
 -- option entries that work seamlessly with edit-all / multi-select.
 -- Placed AFTER all local helper functions are defined so references are valid.
@@ -3078,14 +3171,16 @@ function ns.GetCDMAuraIconsOptionsTable()
     activeStateGlowType = {
       type = "select",
       name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
       values = {
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow (Default)",
         ["proc"] = "Proc Effect",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Burst (ACH)",
       },
-      sorting = {"button", "pixel", "autocast", "proc"},
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
       get = function()
         local c = GetAuraCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -3184,7 +3279,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
       end,
     },
     activeStateGlowSpeed = {
@@ -3211,8 +3306,9 @@ function ns.GetCDMAuraIconsOptionsTable()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Proc glow doesn't use speed
-        return c.cooldownStateVisuals.readyState.glowType == "proc"
+        -- Proc/ants/ach_proc don't use speed (fixed frame rate)
+        local gt = c.cooldownStateVisuals.readyState.glowType
+        return gt == "proc" or gt == "ants" or gt == "ach_proc"
       end,
     },
     activeStateGlowLines = {
@@ -3321,7 +3417,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Button glow doesn't support offset
-        return c.cooldownStateVisuals.readyState.glowType == "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
       end,
     },
     activeStateGlowYOffset = {
@@ -3349,7 +3445,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Button glow doesn't support offset
-        return c.cooldownStateVisuals.readyState.glowType == "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
       end,
     },
     activeStateGlowFrameStrata = {
@@ -3623,7 +3719,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     
     -- ═══════════════════════════════════════════════════════════════════
-    -- RANGE INDICATOR SECTION
+    -- RANGE INDICATOR SECTION (HIDDEN for auras - only applies to cooldown frames)
     -- ═══════════════════════════════════════════════════════════════════
     rangeIndicatorHeader = {
       type = "toggle",
@@ -3634,14 +3730,14 @@ function ns.GetCDMAuraIconsOptionsTable()
       set = function(_, v) collapsedSections.rangeIndicator = not v end,
       order = 108,
       width = "full",
-      hidden = HideIfNoAuraSelection,
+      hidden = function() return true end,  -- Aura frames don't have range/usability
     },
     rangeEnabled = {
       type = "toggle", name = "Show Range Overlay",
       desc = "Show the out-of-range darkening overlay when spells are out of range",
       get = function() return GetAuraBoolSetting(function(c) return c and c.rangeIndicator and c.rangeIndicator.enabled ~= false end, function() local c = GetAuraCfg(); return c and c.rangeIndicator and c.rangeIndicator.enabled ~= false end) end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.rangeIndicator then c.rangeIndicator = {} end; c.rangeIndicator.enabled = v end) end,
-      order = 108.1, width = 1.0, hidden = HideAuraRangeIndicator,
+      order = 108.1, width = 1.0, hidden = function() return true end,
     },
     resetRangeIndicator = {
       type = "execute",
@@ -3649,7 +3745,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       desc = "Reset Range Indicator settings to defaults for selected icon(s)",
       order = 108.9,
       width = 0.7,
-      hidden = HideAuraRangeIndicator,
+      hidden = function() return true end,
       func = function() ResetAuraSectionSettings("rangeIndicator") end,
     },
     
@@ -3687,15 +3783,17 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     procGlowType = {
       type = "select", name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow",
+      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
       values = {
         ["default"] = "Default (Blizzard)",
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow",
         ["proc"] = "Proc Effect",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Burst (ACH)",
       },
-      sorting = {"default", "proc", "pixel", "autocast", "button"},
+      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
       get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.glowType or "default" end,
       set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.glowType = v end) end,
       order = 109.15, width = 0.8, hidden = HideAuraProcGlow,
@@ -3753,7 +3851,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Show for autocast and button types (scale works via SetScale)
-        return glowType ~= "autocast" and glowType ~= "button"
+        return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
       end,
     },
     procGlowSpeed = {
@@ -3767,7 +3865,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Speed doesn't apply to default or proc types
-        return glowType == "default" or glowType == "proc"
+        return glowType == "default" or glowType == "proc" or glowType == "ants" or glowType == "ach_proc"
       end,
     },
     procGlowLines = {
@@ -4519,12 +4617,8 @@ function ns.GetCDMAuraIconsOptionsTable()
     end
   end
   
-  -- Merge Spell Usability options from external module
-  if ns.SpellUsabilityOptions and ns.SpellUsabilityOptions.GetAuraArgs then
-    for k, v in pairs(ns.SpellUsabilityOptions.GetAuraArgs()) do
-      args[k] = v
-    end
-  end
+  -- Spell Usability is COOLDOWN FRAMES ONLY - aura frames don't have usability state
+  -- (options are available in the Cooldown Icons tab instead)
   
   return {
     type = "group",
@@ -5181,6 +5275,74 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 107.83, width = 0.8,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
     },
+    readyStateTint = {
+      type = "toggle",
+      name = "Custom Tint",
+      desc = "Override the icon color when the spell is ready and usable.\n\nWhen off, CDM's default white is used.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.spellUsability and c.spellUsability.useNormalColor or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.spellUsability then c.spellUsability = {} end
+          c.spellUsability.useNormalColor = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.831, width = 0.6,
+      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
+    },
+    readyStateTintColor = {
+      type = "color",
+      name = "Tint Color",
+      desc = "Icon tint color when the spell is ready and usable.",
+      hasAlpha = false,
+      get = function()
+        local c = GetCooldownCfg()
+        local col = c and c.spellUsability and c.spellUsability.normalColor
+        if col then return col.r or 1, col.g or 1, col.b or 1 end
+        return 1, 1, 1
+      end,
+      set = function(_, r, g, b)
+        ApplyCooldownSetting(function(c)
+          if not c.spellUsability then c.spellUsability = {} end
+          c.spellUsability.normalColor = { r = r, g = g, b = b }
+          c.spellUsability.useNormalColor = true
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.832, width = 0.35,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.spellUsability and c.spellUsability.useNormalColor)
+      end,
+    },
+    readyStateDesat = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Desaturate (grayscale) the icon when the spell is ready and usable.\n\nRarely useful — mainly for testing or niche visual setups.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.spellUsability and c.spellUsability.normalDesaturate or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.spellUsability then c.spellUsability = {} end
+          c.spellUsability.normalDesaturate = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.833, width = 0.6,
+      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
+    },
     readyStateGlow = {
       type = "toggle",
       name = "Glow When Ready",
@@ -5301,14 +5463,16 @@ function ns.GetCDMCooldownIconsOptionsTable()
     readyStateGlowType = {
       type = "select",
       name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
       values = {
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow (Default)",
         ["proc"] = "Proc Effect",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Burst (ACH)",
       },
-      sorting = {"button", "pixel", "autocast", "proc"},
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
       get = function()
         local c = GetCooldownCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -5407,7 +5571,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
       end,
     },
     readyStateGlowSpeed = {
@@ -5434,8 +5598,9 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Proc glow doesn't use speed
-        return c.cooldownStateVisuals.readyState.glowType == "proc"
+        -- Proc/ants/ach_proc don't use speed (fixed frame rate)
+        local gt = c.cooldownStateVisuals.readyState.glowType
+        return gt == "proc" or gt == "ants" or gt == "ach_proc"
       end,
     },
     readyStateGlowLines = {
@@ -5544,7 +5709,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Button glow doesn't support offset
-        return c.cooldownStateVisuals.readyState.glowType == "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
       end,
     },
     readyStateGlowYOffset = {
@@ -5572,7 +5737,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Button glow doesn't support offset
-        return c.cooldownStateVisuals.readyState.glowType == "button"
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
       end,
     },
     readyStateGlowFrameStrata = {
@@ -5719,6 +5884,54 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 107.94, width = 1.0,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.cooldownState end,
     },
+    cooldownStateTint = {
+      type = "toggle",
+      name = "Custom Tint",
+      desc = "Override the icon color when all charges are on cooldown.\n\nWhen off, CDM handles the default cooldown appearance.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.spellUsability and c.spellUsability.useOnCooldownColor or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.spellUsability then c.spellUsability = {} end
+          c.spellUsability.useOnCooldownColor = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.941, width = 0.6,
+      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.cooldownState end,
+    },
+    cooldownStateTintColor = {
+      type = "color",
+      name = "Tint Color",
+      desc = "Icon tint color when all charges are on cooldown.\n\nDefault: |cff999999Gray|r",
+      hasAlpha = false,
+      get = function()
+        local c = GetCooldownCfg()
+        local col = c and c.spellUsability and c.spellUsability.onCooldownColor
+        if col then return col.r or 0.4, col.g or 0.4, col.b or 0.4 end
+        return 0.4, 0.4, 0.4
+      end,
+      set = function(_, r, g, b)
+        ApplyCooldownSetting(function(c)
+          if not c.spellUsability then c.spellUsability = {} end
+          c.spellUsability.onCooldownColor = { r = r, g = g, b = b }
+          c.spellUsability.useOnCooldownColor = true
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.942, width = 0.35,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.spellUsability and c.spellUsability.useOnCooldownColor)
+      end,
+    },
     cooldownStatePreserveDurationText = {
       type = "toggle",
       name = "Preserve Duration Text",
@@ -5856,6 +6069,298 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 107.97, width = 1.2,
       hidden = HideCooldownAuraActiveState,
     },
+    auraActiveStateGlow = {
+      type = "toggle",
+      name = "Glow When Aura Active",
+      desc = "Show a glow effect on this cooldown icon while its associated buff/aura is active on you.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glow end,
+          function()
+            local c = GetCooldownCfg()
+            return c and c.auraActiveState and c.auraActiveState.glow or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glow = v
+        end)
+        if not v then
+          ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
+        end
+      end,
+      order = 107.971, width = 1.1,
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateGlowPreview = {
+      type = "toggle",
+      name = "Preview",
+      desc = "Toggle glow preview for selected icon(s). Preview will automatically stop when you close the options panel.",
+      get = function()
+        return ns.CDMEnhanceOptions.GetAuraGlowPreviewState()
+      end,
+      set = function(_, v)
+        ns.CDMEnhanceOptions.ToggleAuraGlowPreviewForSelection()
+      end,
+      order = 107.9711, width = 0.5,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glow)
+      end,
+    },
+    auraActiveStateGlowCombatOnly = {
+      type = "toggle",
+      name = "In Combat Only",
+      desc = "Only show the aura active glow while in combat",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glowCombatOnly end,
+          function()
+            local c = GetCooldownCfg()
+            return c and c.auraActiveState and c.auraActiveState.glowCombatOnly or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowCombatOnly = v
+        end)
+        if v and not InCombatLockdown() and not UnitAffectingCombat("player") then
+          local icons = GetCooldownIconsToUpdate()
+          for _, cdID in ipairs(icons) do
+            local data = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+            if data and data.frame and ns.CDMEnhance.HideAuraActiveGlow then
+              ns.CDMEnhance.HideAuraActiveGlow(data.frame)
+            end
+          end
+        end
+      end,
+      order = 107.9712, width = 0.8,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glow)
+      end,
+    },
+    auraActiveStateGlowType = {
+      type = "select",
+      name = "Glow Style",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      values = {
+        ["pixel"] = "Pixel Glow",
+        ["autocast"] = "AutoCast Sparkles",
+        ["button"] = "Button Glow (Default)",
+        ["proc"] = "Proc Effect",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Burst (ACH)",
+      },
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowType or "button"
+        end
+        return "button"
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowType = v
+        end)
+      end,
+      order = 107.972, width = 0.9,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glow)
+      end,
+    },
+    auraActiveStateGlowColor = {
+      type = "color",
+      name = "Color",
+      desc = "Glow color",
+      hasAlpha = false,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          local col = c.auraActiveState.glowColor
+          if col then return col.r or 1, col.g or 0.85, col.b or 0.1 end
+        end
+        return 1, 0.85, 0.1
+      end,
+      set = function(_, r, g, b)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowColor = {r = r, g = g, b = b}
+        end)
+      end,
+      order = 107.973, width = 0.5,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glow)
+      end,
+    },
+    auraActiveStateGlowIntensity = {
+      type = "range",
+      name = "Intensity",
+      desc = "How bright the glow appears",
+      min = 0, max = 1.0, step = 0.05,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowIntensity or 1.0
+        end
+        return 1.0
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowIntensity = v
+        end)
+      end,
+      order = 107.974, width = 0.6,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glow)
+      end,
+    },
+    auraActiveStateGlowScale = {
+      type = "range",
+      name = "Scale",
+      desc = "Size of the glow effect",
+      min = 0.5, max = 4.0, step = 0.05,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowScale or 1.0
+        end
+        return 1.0
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowScale = v
+        end)
+      end,
+      order = 107.975, width = 0.55,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local gt = c.auraActiveState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+      end,
+    },
+    auraActiveStateGlowSpeed = {
+      type = "range",
+      name = "Speed",
+      desc = "How fast the glow animates",
+      min = 0.05, max = 1.0, step = 0.05,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowSpeed or 0.25
+        end
+        return 0.25
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowSpeed = v
+        end)
+      end,
+      order = 107.976, width = 0.55,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local gt = c.auraActiveState.glowType
+        return gt == "proc" or gt == "ants" or gt == "ach_proc"
+      end,
+    },
+    auraActiveStateGlowLines = {
+      type = "range",
+      name = "Lines",
+      desc = "Number of glow lines",
+      min = 1, max = 16, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowLines or 8
+        end
+        return 8
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowLines = v
+        end)
+      end,
+      order = 107.977, width = 0.55,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        return c.auraActiveState.glowType ~= "pixel"
+      end,
+    },
+    auraActiveStateGlowThickness = {
+      type = "range",
+      name = "Thickness",
+      desc = "Thickness of glow lines",
+      min = 1, max = 10, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowThickness or 2
+        end
+        return 2
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowThickness = v
+        end)
+      end,
+      order = 107.978, width = 0.55,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        return c.auraActiveState.glowType ~= "pixel"
+      end,
+    },
+    auraActiveStateGlowParticles = {
+      type = "range",
+      name = "Particles",
+      desc = "Number of particle groups",
+      min = 1, max = 8, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowParticles or 4
+        end
+        return 4
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowParticles = v
+        end)
+      end,
+      order = 107.979, width = 0.55,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        return c.auraActiveState.glowType ~= "autocast"
+      end,
+    },
     resetAuraActiveState = {
       type = "execute",
       name = "Reset Section",
@@ -5939,15 +6444,17 @@ function ns.GetCDMCooldownIconsOptionsTable()
     },
     procGlowType = {
       type = "select", name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow",
+      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
       values = {
         ["default"] = "Default (Blizzard)",
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow",
         ["proc"] = "Proc Effect",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Burst (ACH)",
       },
-      sorting = {"default", "proc", "pixel", "autocast", "button"},
+      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
       get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.glowType or "default" end,
       set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.glowType = v end) end,
       order = 109.15, width = 0.8, hidden = HideCooldownProcGlow,
@@ -6005,7 +6512,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Show for autocast and button types (scale works via SetScale)
-        return glowType ~= "autocast" and glowType ~= "button"
+        return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
       end,
     },
     procGlowSpeed = {
@@ -6019,7 +6526,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Speed doesn't apply to default or proc types
-        return glowType == "default" or glowType == "proc"
+        return glowType == "default" or glowType == "proc" or glowType == "ants" or glowType == "ach_proc"
       end,
     },
     procGlowLines = {
@@ -7032,6 +7539,13 @@ function ns.GetCDMCooldownIconsOptionsTable()
     end
   end
   
+  -- Merge Assisted Combat Highlight options from external module
+  if ns.AssistedCombatHighlightOptions and ns.AssistedCombatHighlightOptions.GetCooldownArgs then
+    for k, v in pairs(ns.AssistedCombatHighlightOptions.GetCooldownArgs()) do
+      args[k] = v
+    end
+  end
+  
   return {
     type = "group",
     name = "CDM Cooldown Icons",
@@ -7343,8 +7857,10 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           ["autocast"] = "AutoCast Sparkles",
           ["button"] = "Button Glow (Default)",
           ["proc"] = "Proc Effect",
+          ["ants"] = "Ants (Marching)",
+          ["ach_proc"] = "Proc Burst (ACH)",
         },
-        sorting = {"button", "pixel", "autocast", "proc"},
+        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
         get = function()
           local g = GetAuraGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.readyState then
@@ -7438,7 +7954,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
         end,
       },
       activeStateGlowSpeed = {
@@ -7463,8 +7979,9 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Proc glow doesn't use speed
-          return g.cooldownStateVisuals.readyState.glowType == "proc"
+          -- Proc/ants/ach_proc don't use speed (fixed frame rate)
+          local gt = g.cooldownStateVisuals.readyState.glowType
+          return gt == "proc" or gt == "ants" or gt == "ach_proc"
         end,
       },
       activeStateGlowLines = {
@@ -7565,7 +8082,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
           -- Button glow doesn't support offset
-          return g.cooldownStateVisuals.readyState.glowType == "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
         end,
       },
       activeStateGlowYOffset = {
@@ -7591,7 +8108,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
           -- Button glow doesn't support offset
-          return g.cooldownStateVisuals.readyState.glowType == "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
         end,
       },
       activeStateGlowThreshold = {
@@ -8173,8 +8690,8 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
       },
       glowType = {
         type = "select", name = "Type",
-        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc" },
-        sorting = {"default", "proc", "pixel", "autocast", "button"},
+        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Burst (ACH)" },
+        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
         get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.glowType or "default" end,
         set = function(_, v) ApplyAuraGlobalSetting("procGlow.glowType", v); RefreshGlobalAuras() end,
         order = 52, width = 0.7, hidden = function() return collapsedGlobalAuraSections.procGlow end,
@@ -8226,7 +8743,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.procGlow then return true end
           local g = GetAuraGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType ~= "autocast" and glowType ~= "button"
+          return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
         end,
       },
       glowSpeed = {
@@ -8239,7 +8756,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.procGlow then return true end
           local g = GetAuraGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType == "default" or glowType == "proc"
+          return glowType == "default" or glowType == "proc" or glowType == "ants" or glowType == "ach_proc"
         end,
       },
       glowLines = {
@@ -8690,8 +9207,10 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           ["autocast"] = "AutoCast Sparkles",
           ["button"] = "Button Glow (Default)",
           ["proc"] = "Proc Effect",
+          ["ants"] = "Ants (Marching)",
+          ["ach_proc"] = "Proc Burst (ACH)",
         },
-        sorting = {"button", "pixel", "autocast", "proc"},
+        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
         get = function()
           local g = GetCooldownGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.readyState then
@@ -8785,7 +9304,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
         end,
       },
       readyStateGlowSpeed = {
@@ -8810,8 +9329,9 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Proc glow doesn't use speed
-          return g.cooldownStateVisuals.readyState.glowType == "proc"
+          -- Proc/ants/ach_proc don't use speed (fixed frame rate)
+          local gt = g.cooldownStateVisuals.readyState.glowType
+          return gt == "proc" or gt == "ants" or gt == "ach_proc"
         end,
       },
       readyStateGlowLines = {
@@ -8912,7 +9432,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
           -- Button glow doesn't support offset
-          return g.cooldownStateVisuals.readyState.glowType == "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
         end,
       },
       readyStateGlowYOffset = {
@@ -8938,7 +9458,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
           -- Button glow doesn't support offset
-          return g.cooldownStateVisuals.readyState.glowType == "button"
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
         end,
       },
       
@@ -9493,8 +10013,8 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
       },
       glowType = {
         type = "select", name = "Type",
-        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc" },
-        sorting = {"default", "proc", "pixel", "autocast", "button"},
+        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Burst (ACH)" },
+        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
         get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.glowType or "default" end,
         set = function(_, v) ApplyCooldownGlobalSetting("procGlow.glowType", v); RefreshGlobalCooldowns() end,
         order = 52, width = 0.7, hidden = function() return collapsedGlobalCooldownSections.procGlow end,
@@ -9546,7 +10066,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.procGlow then return true end
           local g = GetCooldownGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType ~= "autocast" and glowType ~= "button"
+          return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
         end,
       },
       glowSpeed = {
@@ -9559,7 +10079,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.procGlow then return true end
           local g = GetCooldownGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType == "default" or glowType == "proc"
+          return glowType == "default" or glowType == "proc" or glowType == "ants" or glowType == "ach_proc"
         end,
       },
       glowLines = {
@@ -9761,6 +10281,11 @@ function ns.GetCDMIconsOptionsTable()
     -- Skip global options (they're defined in the unified panel already)
     globalOptionsHeader = true, globalOptionsDesc = true,
     showTooltips = true, clickThrough = true,
+    -- Skip ACH options (merged directly into unified panel at correct order)
+    achHeader = true, achDesc = true, achEnabled = true, achStyle = true, achArcAuras = true,
+    achColor = true, achResetColor = true, achStatus = true, achCombatOnly = true,
+    achStrata = true, achLevel = true, achScale = true,
+    achAlwaysAnimate = true, achShowBurst = true,
   }
   -- Also skip catalogIcon entries
   for i = 1, 50 do
@@ -10385,6 +10910,27 @@ function ns.GetCDMIconsOptionsTable()
   -- Add catalog icons
   for i = 1, 50 do
     args["catalogIcon" .. i] = CreateUnifiedCatalogIconEntry(i)
+  end
+  
+  -- Merge Assisted Combat Highlight options directly into unified panel
+  -- Override orders to 7.xx (between keybinds at 6 and catalog at 9)
+  if ns.AssistedCombatHighlightOptions and ns.AssistedCombatHighlightOptions.GetCooldownArgs then
+    local orderMap = {
+      achHeader = 7, achDesc = 7.01, achEnabled = 7.02, achStyle = 7.025, achArcAuras = 7.03,
+      achCombatOnly = 7.035, achStrata = 7.036, achLevel = 7.037, achScale = 7.038,
+      achAlwaysAnimate = 7.039, achShowBurst = 7.0395,
+      achColor = 7.04, achResetColor = 7.05, achStatus = 7.06,
+    }
+    for k, v in pairs(ns.AssistedCombatHighlightOptions.GetCooldownArgs()) do
+      if orderMap[k] then
+        local copy = {}
+        for vk, vv in pairs(v) do copy[vk] = vv end
+        copy.order = orderMap[k]
+        args[k] = copy
+      else
+        args[k] = v
+      end
+    end
   end
   
   -- Copy AURA per-icon options (order 100-199) - they use HideIfNoAuraSelection
@@ -11017,6 +11563,9 @@ local function CheckOptionsStateChange()
       end
       if ns.CDMEnhanceOptions.ClearAllUsableGlowPreviews then
         ns.CDMEnhanceOptions.ClearAllUsableGlowPreviews()
+      end
+      if ns.CDMEnhanceOptions.ClearAuraGlowPreviews then
+        ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
       end
       -- Turn off cooldown animation preview
       if ns.CDMEnhance and ns.CDMEnhance.SetCooldownPreviewMode then

@@ -125,8 +125,7 @@ local state = {
     -- PERFORMANCE: Throttle HasGridMismatch checks (expensive)
     lastMismatchCheckTime = 0,  -- GetTime() of last mismatch check
     
-    -- PERFORMANCE: Module-level cached panel state (updated once per tick)
-    -- All functions should use this instead of calling IsOptionsPanelOpen()
+    -- PERFORMANCE: Module-level cached panel state (kept for backward compat, no longer polled)
     cachedPanelOpenThisTick = false,
 }
 
@@ -226,36 +225,15 @@ end
 local dynamicLayoutHookedFrames = {}
 
 -- Check if options panel is open
--- PERFORMANCE: Returns cached value from current tick if available
--- The maintainer updates state.cachedPanelOpenThisTick once per tick
+-- ZERO-COST: Reads hook-driven flags directly (no polling, no LibStub, no GetTime)
 local function IsOptionsPanelOpen()
-    -- Use tick-cached value (set by maintainer OnUpdate)
-    return state.cachedPanelOpenThisTick
-end
-
--- Cache for AceConfigDialog reference (avoid LibStub calls)
-local _cachedACD = nil
-
--- Force-update the panel cache (called by maintainer and when fresh value needed)
--- PERFORMANCE: Inlined logic to avoid calling profiled ns.CDMGroups.IsOptionsPanelOpen
-local function UpdatePanelCache()
-    -- Check ArcUI AceConfig panel (cached ACD reference)
-    if not _cachedACD then
-        _cachedACD = LibStub("AceConfigDialog-3.0", true)
-    end
-    local arcUIOpen = _cachedACD and _cachedACD.OpenFrames and _cachedACD.OpenFrames["ArcUI"] and true or false
-    
-    -- Check CDM options panel (cached flag from CDMGroups)
-    local cdmOpen = ns.CDMGroups and ns.CDMGroups.cdmOptionsPanelOpen or false
-    
-    -- Check Blizzard Edit Mode (skip if already open)
-    local blizzEditMode = false
-    if not arcUIOpen and not cdmOpen then
-        blizzEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() or false
-    end
-    
-    state.cachedPanelOpenThisTick = arcUIOpen or cdmOpen or blizzEditMode
-    return state.cachedPanelOpenThisTick
+    -- ArcUI panel (set by Shared hooks)
+    if ns.optionsPanelOpen then return true end
+    -- CDM options panel (set by OnShow/OnHide hooks)
+    if ns.CDMGroups and ns.CDMGroups.cdmOptionsPanelOpen then return true end
+    -- Blizzard Edit Mode
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return true end
+    return false
 end
 
 -- Trigger immediate layout for a center-aligned group
@@ -830,15 +808,41 @@ function DL.DeduplicateGroupPositions(group)
     local maxSlots = maxRows * maxCols
     
     -- Pass 1: Collect all saved positions for this group, sorted by cdID for determinism
+    -- SKIP placeholders — they're temporary reservations, not real position conflicts.
+    -- Including them would (a) create false duplicates with the real icon they reserve for,
+    -- and (b) overwrite their isPlaceholder flag when "fixing", corrupting placeholder state.
+    -- SKIP non-members — cdIDs that are in savedPositions but NOT in group.members are
+    -- slot reservations for removed/unlearned talents (e.g. Halo/Void Torrent pairs).
+    -- Without _slotPartnerMap (only available during Reconcile), we can't detect slot partners,
+    -- so including non-members causes false duplicate detection and position corruption.
+    -- NOTE: Must check BOTH saved.isPlaceholder AND member.isPlaceholder because:
+    --   saved.isPlaceholder may be nil (SaveGroupPosition no longer persists it)
+    --   member.isPlaceholder is the authoritative runtime state
     local groupEntries = {}  -- { cdID, row, col, sortIndex }
     for cdID, saved in pairs(savedPositions) do
         if saved.type == "group" and saved.target == groupName then
-            table.insert(groupEntries, {
-                cdID = cdID,
-                row = saved.row or 0,
-                col = saved.col or 0,
-                sortIndex = saved.sortIndex,
-            })
+            -- Check runtime placeholder state from member (authoritative)
+            local member = group.members and group.members[cdID]
+            
+            -- CRITICAL FIX: Skip non-members entirely. They are saved slot reservations
+            -- for talents not currently learned. Including them causes false duplicate
+            -- detection when _slotPartnerMap is nil (outside Reconcile), which corrupts
+            -- the position of the remaining slot partner (the VT/Halo position bug).
+            if not member then
+                -- Not a current member — skip (preserved reservation for returning talent)
+            else
+                local isPlaceholder = saved.isPlaceholder 
+                    or (member and member.isPlaceholder)
+                
+                if not isPlaceholder then
+                    table.insert(groupEntries, {
+                        cdID = cdID,
+                        row = saved.row or 0,
+                        col = saved.col or 0,
+                        sortIndex = saved.sortIndex,
+                    })
+                end
+            end
         end
     end
     
@@ -858,11 +862,30 @@ function DL.DeduplicateGroupPositions(group)
     local occupiedSlots = {}  -- linearIdx -> cdID (first occupant wins)
     local duplicates = {}     -- list of entries that need new positions
     
+    -- Get slot partner map for mutually exclusive talent detection
+    local partnerMap = ns.CDMGroups._slotPartnerMap
+    
     for _, entry in ipairs(groupEntries) do
         local linearIdx = entry.row * maxCols + entry.col
         if occupiedSlots[linearIdx] then
-            -- DUPLICATE - this entry shares a slot with another cdID
-            table.insert(duplicates, entry)
+            -- SLOT-PARTNER CHECK: If these two are slot partners (mutually exclusive talents),
+            -- this is NOT a real duplicate - they intentionally share a position.
+            -- Skip deduplication for this pair.
+            local existingCdID = occupiedSlots[linearIdx]
+            local isSlotPartner = false
+            if partnerMap and partnerMap[entry.cdID] then
+                for _, partner in ipairs(partnerMap[entry.cdID]) do
+                    if partner.partnerCdID == existingCdID then
+                        isSlotPartner = true
+                        break
+                    end
+                end
+            end
+            
+            if not isSlotPartner then
+                -- REAL DUPLICATE - this entry shares a slot with a non-partner cdID
+                table.insert(duplicates, entry)
+            end
         else
             occupiedSlots[linearIdx] = entry.cdID
         end
@@ -1626,6 +1649,16 @@ local function CheckGroupForChanges(group, shouldCheckMismatch)
     local changedIcons = {}
     
     for cdID, member in pairs(group.members) do
+        -- STALE FLAG CHECK: Detect members that have a frame but are still marked placeholder.
+        -- This happens when CDM reassigns a frame directly (talent swap back) without going
+        -- through AssignFrameToGroup. When detected, mark as changed to trigger reflow,
+        -- which will auto-heal the flag in CollectMembersForReflow.
+        if member.isPlaceholder and member.frame and member.frame.cooldownID == cdID then
+            anyChanged = true
+            LogEvent("STALE_DETECT", groupName, 
+                string.format("cdID %s has frame but isPlaceholder=true, queuing reflow", tostring(cdID)))
+        end
+        
         if not member.isPlaceholder and member.frame then
             -- PERFORMANCE: Only check aura frames for visibility changes
             -- Cooldowns and utilities don't change visibility based on aura state
@@ -1777,21 +1810,10 @@ end
 local DynamicMaintainer = CreateFrame("Frame")
 local elapsed = 0
 
--- PERFORMANCE: Separate throttle for options panel check
--- ArcUI and CDM panels use direct hooks - polling only needed for Blizzard Edit Mode
-local panelCheckElapsed = 0
-local PANEL_CHECK_INTERVAL = 0.1  -- 100ms = 10 checks/second
-
--- Called directly by ArcUI_Options.lua when panel opens
+-- Called by Shared panel hooks when panel opens
 function DL.OnOptionsPanelOpened()
-    -- Update cache immediately
-    state.cachedPanelOpenThisTick = true
+    state.cachedPanelOpenThisTick = true  -- backward compat
     state.optionsPanelWasOpen = true
-    
-    -- Invalidate CDMGroups panel cache so Layout() sees fresh state
-    if ns.CDMGroups.InvalidateOptionsPanelCache then
-        ns.CDMGroups.InvalidateOptionsPanelCache()
-    end
     
     -- Reset ALL groups to grid positions
     -- Pixel positioning is cleared so users can freely edit icon positions
@@ -1842,18 +1864,10 @@ end
 
 -- Called directly by ArcUI_Options.lua when panel closes
 -- No polling needed - immediate response
+-- Called by Shared panel hooks when panel closes
 function DL.OnOptionsPanelClosed()
-    -- Update cache immediately
-    state.cachedPanelOpenThisTick = false
+    state.cachedPanelOpenThisTick = false  -- backward compat
     state.optionsPanelWasOpen = false
-    
-    -- Invalidate CDMGroups panel cache so Layout() sees panel as CLOSED.
-    -- Without this, the 100ms cache returns stale "true" → usePixelLayout = false
-    -- → CalculateDynamicSlots skipped → no compact container size → no sync to
-    -- CDMContainerSync → Sensei width bars never update.
-    if ns.CDMGroups.InvalidateOptionsPanelCache then
-        ns.CDMGroups.InvalidateOptionsPanelCache()
-    end
     
     -- Clear any applied container offsets so positions reset properly
     if ns.CDMGroups.groups then
@@ -1883,24 +1897,17 @@ DynamicMaintainer:SetScript("OnUpdate", function(self, dt)
         return
     end
     
-    -- PERFORMANCE: Throttle the options panel check
-    -- ArcUI and CDM panels use direct hooks - this only catches Blizzard Edit Mode
-    panelCheckElapsed = panelCheckElapsed + dt
-    local optionsPanelOpen = state.cachedPanelOpenThisTick  -- Use cached value by default
+    -- Panel state: zero-cost flag read (set by hooks in Shared, no polling)
+    local optionsPanelOpen = IsOptionsPanelOpen()
     
-    if panelCheckElapsed >= PANEL_CHECK_INTERVAL then
-        panelCheckElapsed = 0
-        optionsPanelOpen = UpdatePanelCache()  -- Updates state.cachedPanelOpenThisTick
-        
-        -- FALLBACK: If polling detects panel just closed but direct hook didn't fire
-        local wasOpen = state.optionsPanelWasOpen
-        if wasOpen and not optionsPanelOpen then
-            DL.OnOptionsPanelClosed()
-        elseif not wasOpen and optionsPanelOpen then
-            DL.OnOptionsPanelOpened()
-        end
-        state.optionsPanelWasOpen = optionsPanelOpen
+    -- Detect state transitions for open/close callbacks
+    local wasOpen = state.optionsPanelWasOpen
+    if wasOpen and not optionsPanelOpen then
+        DL.OnOptionsPanelClosed()
+    elseif not wasOpen and optionsPanelOpen then
+        DL.OnOptionsPanelOpened()
     end
+    state.optionsPanelWasOpen = optionsPanelOpen
     
     -- Skip all processing when options panel is open
     if optionsPanelOpen then return end
@@ -2111,7 +2118,30 @@ function DL.CollectMembersForReflow(group)
         -- Store cdID on member for type detection
         member.cdID = cdID
         
-        -- Skip placeholders entirely
+        -- STALE FLAG FIX: When CDM reassigns a frame to a member (e.g. talent swap back),
+        -- it may set member.frame directly without going through AssignFrameToGroup,
+        -- leaving isPlaceholder=true despite having a real frame. Auto-heal here
+        -- BEFORE the main categorization so the healed member participates in reflow.
+        if member.isPlaceholder and HasValidFrame(member, cdID) then
+            member.isPlaceholder = nil
+            member.placeholderInfo = nil
+            
+            -- Also clear saved isPlaceholder flag if present
+            local saved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID]
+            if saved then
+                saved.isPlaceholder = nil
+            end
+            
+            -- Notify visibility tracking
+            if DL.OnPlaceholderResolved then
+                DL.OnPlaceholderResolved(cdID, group.name)
+            end
+            
+            LogEvent("STALE_FIX", group.name or "?", 
+                string.format("cdID %s had frame but isPlaceholder=true, auto-healed", tostring(cdID)))
+        end
+        
+        -- Skip genuine placeholders (no frame)
         if member.isPlaceholder then
             -- Placeholders don't participate in reflow
         elseif not HasValidFrame(member, cdID) then
@@ -2151,6 +2181,20 @@ function DL.CollectMembersForReflow(group)
                 sortIndex = member.row * maxCols + member.col
             else
                 sortIndex = 9999
+            end
+            
+            -- SLOT-PARTNER FIX: If this cdID has a slot partner and its saved position
+            -- looks different from the partner's shared position (CDM corrupted it),
+            -- use the partner's position for consistent sort ordering
+            local partnerMap = ns.CDMGroups._slotPartnerMap
+            if partnerMap and partnerMap[cdID] then
+                local partnerInfo = partnerMap[cdID][1]
+                if partnerInfo and partnerInfo.group == group.name then
+                    local partnerSortIndex = partnerInfo.row * maxCols + partnerInfo.col
+                    if sortIndex ~= partnerSortIndex then
+                        sortIndex = partnerSortIndex
+                    end
+                end
             end
             
             -- PERFORMANCE: Use pooled iconData instead of creating new table
@@ -2509,6 +2553,22 @@ function DL.OnPlaceholderCreated(cdID, groupName)
     state.iconVisibility[cdID] = nil
     
     LogEvent("PLACEHOLDER_CREATED", groupName or "unknown", string.format("cdID %s became placeholder", tostring(cdID)))
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- REGISTER PANEL STATE CALLBACK
+-- Shared fires these when ArcUI AceConfig panel opens/closes
+-- ═══════════════════════════════════════════════════════════════════════════
+
+if Shared and Shared.RegisterPanelCallback then
+    Shared.RegisterPanelCallback("DynamicLayout", {
+        onOpen = function()
+            DL.OnOptionsPanelOpened()
+        end,
+        onClose = function()
+            DL.OnOptionsPanelClosed()
+        end,
+    })
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

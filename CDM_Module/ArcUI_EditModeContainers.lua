@@ -58,6 +58,15 @@ local function IsBaseCDMGroup(groupName)
     return BASE_CDM_GROUPS[groupName] == true
 end
 
+-- Should we skip showing the ArcUI drag overlay for this group during Blizzard Edit Mode?
+-- Only skip when container sync IS enabled — Blizzard Edit Mode moves the CDM viewer which
+-- syncs back to the ArcUI group automatically. If sync is disabled, the user wants to drag
+-- the ArcUI container independently, so show our overlay.
+local function ShouldSkipOverlayInEditMode(groupName)
+    if not IsBaseCDMGroup(groupName) then return false end
+    return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled(groupName)
+end
+
 -- Forward declarations for functions used before they're defined
 local ShowSingleWrapper, HideSingleWrapper, HideSingleWrapperForce, SyncGroupToWrapper
 
@@ -158,7 +167,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════
 -- SYNC: Wrapper → Group (user dragged wrapper in Edit Mode)
 -- ═══════════════════════════════════════════════════════════════════
-local function SyncWrapperToGroup(groupName)
+local function SyncWrapperToGroup(groupName, force)
     if pushing then return end
     if not enabled[groupName] then return end
     
@@ -167,6 +176,15 @@ local function SyncWrapperToGroup(groupName)
     
     if not wrapper or not group or not group.container then 
         return 
+    end
+    
+    -- SAFETY: Only allow wrapper→group sync if user is physically dragging
+    -- or if explicitly forced (e.g. slash command save)
+    -- This prevents programmatic moves (layout restore, Edit Mode transitions,
+    -- initialization) from silently relocating groups
+    if not force and not (wrapper._isDragging or IsMouseButtonDown("LeftButton")) then
+        DebugPrint("SyncWrapperToGroup BLOCKED (no user drag):", groupName)
+        return
     end
     
     -- Get wrapper center position relative to UIParent center
@@ -551,7 +569,7 @@ local function RegisterWrapperWithLibEQOL(groupName)
     -- Callback signature: function(frame, layoutName, point, x, y)
     -- This fires when user drags in Edit Mode or layout changes
     lib:AddFrame(wrapper, function(frame, layoutName, point, x, y)
-        -- Apply the position LibEQOL gives us
+        -- Apply the position LibEQOL gives us (visual only)
         if point and x and y then
             pushing = true
             frame:ClearAllPoints()
@@ -559,10 +577,18 @@ local function RegisterWrapperWithLibEQOL(groupName)
             pushing = false
         end
         
-        -- Sync wrapper position to group
-        C_Timer.After(0, function()
-            SyncWrapperToGroup(groupName)
-        end)
+        -- ONLY sync wrapper→group if user is physically dragging
+        -- Layout restores and programmatic repositions must NEVER move the group
+        if IsMouseButtonDown("LeftButton") then
+            C_Timer.After(0, function()
+                SyncWrapperToGroup(groupName)
+            end)
+        else
+            -- Not a user drag — re-sync wrapper FROM group to undo LibEQOL's position
+            C_Timer.After(0.1, function()
+                SyncGroupToWrapper(groupName)
+            end)
+        end
     end, {
         -- Default position (LibEQOL format)
         point = "CENTER",
@@ -629,11 +655,18 @@ local function SetupWrapperHooks(groupName)
     wrapperHooksInstalled[groupName] = true
     
     -- SetPoint hook - detect Edit Mode movement
+    -- CRITICAL: Only sync wrapper→group when user is PHYSICALLY DRAGGING
+    -- Programmatic moves (layout restore, init, enter/exit Edit Mode) must NOT move the group
     hooksecurefunc(wrapper, "SetPoint", function()
         if not enabled[groupName] then return end
         if pushing then return end
         
-        -- Sync to group
+        -- Only allow wrapper→group sync during actual user drag
+        if not (wrapper._isDragging or IsMouseButtonDown("LeftButton")) then
+            return
+        end
+        
+        -- Sync to group (user is actively dragging)
         C_Timer.After(0.05, function()
             SyncWrapperToGroup(groupName)
         end)
@@ -649,9 +682,9 @@ local function ShowAllWrappers()
     for groupName, isGroupEnabled in pairs(enabled) do
         if isGroupEnabled then
             -- Base CDM groups (Essential/Utility/Buffs) have native Blizzard Edit Mode
-            -- selection via their viewers — skip our overlay during Blizzard Edit Mode
-            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
-                -- Don't show our overlay — Blizzard's own Edit Mode handles these
+            -- selection via their viewers — skip our overlay when container sync handles them
+            if blizzEditModeOn and ShouldSkipOverlayInEditMode(groupName) then
+                -- Don't show our overlay — Blizzard's own Edit Mode + container sync handles these
             else
                 local wrapper = wrappers[groupName]
                 if wrapper then
@@ -726,11 +759,11 @@ local function OnEditModeEnter()
         end
     end
     
-    -- Blizzard Edit Mode enter - show wrappers for NON-base groups only
-    -- Base CDM groups (Essential/Utility/Buffs) use native Blizzard Edit Mode selection
+    -- Blizzard Edit Mode enter - show wrappers for groups not handled by container sync
+    -- Base CDM groups are skipped only if container sync is moving them via Blizzard Edit Mode
     C_Timer.After(0.1, function()
         for groupName, isGroupEnabled in pairs(enabled) do
-            if isGroupEnabled and not IsBaseCDMGroup(groupName) then
+            if isGroupEnabled and not ShouldSkipOverlayInEditMode(groupName) then
                 local wrapper = wrappers[groupName]
                 if wrapper then
                     SyncGroupToWrapper(groupName)
@@ -758,15 +791,14 @@ local function OnEditModeExit()
         wipe(cdmViewerOriginalSizes)
     end
     
-    -- Blizzard Edit Mode exit - sync positions
+    -- Blizzard Edit Mode exit - sync group→wrapper (group is source of truth)
+    -- NEVER sync wrapper→group on exit — wrapper may have been repositioned by
+    -- layout restore or other programmatic changes that should NOT move the group
     C_Timer.After(0.2, function()
-        -- Sync positions for any visible wrappers
+        -- Re-sync wrappers FROM groups to ensure they match
         for groupName, isGroupEnabled in pairs(enabled) do
             if isGroupEnabled then
-                local wrapper = wrappers[groupName]
-                if wrapper and wrapper:IsShown() then
-                    SyncWrapperToGroup(groupName)
-                end
+                SyncGroupToWrapper(groupName)
             end
         end
         
@@ -807,10 +839,10 @@ local function SetOverlaysEnabledInternal(isEnabled)
     if isEnabled then
         ShowAllWrappers()
     else
-        -- Sync positions before hiding
+        -- Sync wrappers FROM groups before hiding (group is source of truth)
         for groupName, isGroupEnabled in pairs(enabled) do
             if isGroupEnabled then
-                SyncWrapperToGroup(groupName)
+                SyncGroupToWrapper(groupName)
             end
         end
         
@@ -865,9 +897,9 @@ function ns.EditModeContainers.SetEnabled(groupName, isGroupEnabled)
             local blizzEditModeOn = IsBlizzEditModeActive()
             
             -- Show wrapper only if Drag Groups toggle is ON or Blizzard Edit Mode is active
-            -- But skip base CDM groups during Blizzard Edit Mode (they have native selection)
-            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
-                -- Don't show — Blizzard Edit Mode handles base CDM groups natively
+            -- But skip base CDM groups during Blizzard Edit Mode when container sync handles them
+            if blizzEditModeOn and ShouldSkipOverlayInEditMode(groupName) then
+                -- Don't show — Blizzard Edit Mode + container sync handles this group
             elseif (overlaysEnabled or blizzEditModeOn) then
                 if blizzEditModeOn then
                     wrapper:EnableMouse(false)
@@ -947,8 +979,8 @@ function ns.EditModeContainers.EnableAllGroups()
         C_Timer.After(0.1, function()
             if blizzEditModeOn then
                 for groupName, isGroupEnabled in pairs(enabled) do
-                    -- Skip base CDM groups in Blizzard Edit Mode
-                    if isGroupEnabled and not IsBaseCDMGroup(groupName) then
+                    -- Skip base CDM groups when container sync handles them
+                    if isGroupEnabled and not ShouldSkipOverlayInEditMode(groupName) then
                         local wrapper = wrappers[groupName]
                         if wrapper then
                             SyncGroupToWrapper(groupName)
@@ -1019,9 +1051,9 @@ function ns.EditModeContainers.ShowAllWrappersForEditMode()
     
     for groupName, isGroupEnabled in pairs(enabled) do
         if isGroupEnabled then
-            -- Skip base CDM groups during Blizzard Edit Mode
-            if blizzEditModeOn and IsBaseCDMGroup(groupName) then
-                -- Skip — native Blizzard selection handles these
+            -- Skip base CDM groups during Blizzard Edit Mode when container sync handles them
+            if blizzEditModeOn and ShouldSkipOverlayInEditMode(groupName) then
+                -- Skip — container sync + Blizzard Edit Mode handles these
             else
                 local wrapper = wrappers[groupName]
                 if wrapper then
@@ -1133,11 +1165,11 @@ SlashCmdList["EDITMODECONT"] = function(msg)
             end
         end
     elseif msg == "save" then
-        -- Force save all positions
+        -- Force save all positions (explicit user command)
         print("|cff00ccff[EditMode]|r Force saving all positions...")
         for groupName, isEnabled in pairs(enabled) do
             if isEnabled then
-                SyncWrapperToGroup(groupName)
+                SyncWrapperToGroup(groupName, true)  -- force=true for explicit save
             end
         end
         if ns.CDMGroups and ns.CDMGroups.TriggerTemplateAutoSave then
@@ -1263,9 +1295,9 @@ function ns.EditModeContainers.Initialize()
         lib:RegisterCallback("enter", function()
             SetBlizzEditModeActive(true)
             
-            -- Show wrappers for non-base groups only during Blizzard Edit Mode
+            -- Show wrappers for groups not handled by container sync during Blizzard Edit Mode
             for groupName, isGroupEnabled in pairs(enabled) do
-                if isGroupEnabled and not IsBaseCDMGroup(groupName) then
+                if isGroupEnabled and not ShouldSkipOverlayInEditMode(groupName) then
                     local wrapper = wrappers[groupName]
                     if wrapper then
                         SyncGroupToWrapper(groupName)
@@ -1313,9 +1345,9 @@ function ns.EditModeContainers.Initialize()
     C_Timer.After(0.1, function()
         -- Use cached state (already set by callback registration above)
         if IsBlizzEditModeActive() then
-            -- Blizzard Edit Mode is on - show non-base wrappers only
+            -- Blizzard Edit Mode is on - show wrappers for groups not handled by container sync
             for groupName, isGroupEnabled in pairs(enabled) do
-                if isGroupEnabled and not IsBaseCDMGroup(groupName) then
+                if isGroupEnabled and not ShouldSkipOverlayInEditMode(groupName) then
                     local wrapper = wrappers[groupName]
                     if wrapper then
                         SyncGroupToWrapper(groupName)

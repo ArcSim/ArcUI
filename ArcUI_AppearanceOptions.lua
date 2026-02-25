@@ -30,6 +30,8 @@ local collapsedSections = {
   border = true,
   frameStrata = true,
   tickMarks = true,
+  cdText = true,
+  prediction = true,
   stackText = true,
   durationText = true,
   readyText = true,
@@ -468,10 +470,35 @@ local function IsCustomTracking()
   return IsCustomAura() or IsCustomCooldown()
 end
 
+-- Check if selected resource bar is in fragmented or icons display mode
+local function IsFragmentedOrIconsMode()
+  local cfg = GetSelectedConfig()
+  if not cfg then return false end
+  local mode = cfg.display and cfg.display.thresholdMode
+  return mode == "fragmented" or mode == "icons"
+end
+
+-- Check if in any non-continuous display mode (segmented, fragmented, or icons)
+local function IsNonContinuousMode()
+  local cfg = GetSelectedConfig()
+  if not cfg then return false end
+  local mode = cfg.display and cfg.display.thresholdMode
+  return mode == "perStack" or mode == "fragmented" or mode == "icons"
+end
+
+-- Check if selected resource bar tracks a type with per-segment cooldowns (Runes, Essence)
+local function HasCooldownSegments()
+  if not IsResourceBar() then return false end
+  local cfg = GetSelectedConfig()
+  if not cfg or not cfg.tracking then return false end
+  local st = cfg.tracking.secondaryType
+  return st == "runes" or st == "essence"
+end
+
 -- Apply color ranges to stackColors array
 local function ApplyColorRanges(cfg)
   if not cfg then return end
-  local maxStacks = cfg.tracking.maxStacks or 10
+  local maxStacks = cfg.tracking.maxStacks or cfg.tracking.maxValue or 10
   
   -- Initialize stackColors if needed
   if not cfg.stackColors then cfg.stackColors = {} end
@@ -565,6 +592,12 @@ local function RefreshBar()
   local barType, barNum = GetSelectedBarType()
   if not barType or not barNum then return end
   
+  -- Bump config version so Display's cached setup invalidates
+  -- Without this, _configVersion gates skip SetOrientation/SetTexture/etc.
+  if barType == "buff" and ns.Display and ns.Display.BumpConfigVersion then
+    ns.Display.BumpConfigVersion(barNum)
+  end
+  
   if barType == "buff" then
     if ns.Display and ns.Display.ApplyAppearance then
       ns.Display.ApplyAppearance(barNum)
@@ -649,6 +682,14 @@ local function UpdateBar()
       end
     end)
   end
+end
+
+-- Helper: Refresh bar + notify AceConfig to update color swatches
+-- Use ONLY from color picker setters where other swatches need to visually update.
+-- Do NOT use from sliders/ranges — NotifyChange re-renders the panel and steals slider focus.
+local function RefreshBarAndSwatches()
+  RefreshBar()
+  LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
 end
 
 local function StopPreview()
@@ -1118,7 +1159,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "description",
         name = "Live Preview:",
         order = 3.5,
-        width = 0.55,
+        width = 0.65,
         hidden = function()
           if IsIconMode() then return true end
           return GetSelectedConfig() == nil
@@ -1139,7 +1180,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 4,
-        width = 0.55,
+        width = 0.7,
         hidden = function()
           if IsIconMode() then return true end
           return GetSelectedConfig() == nil
@@ -1160,7 +1201,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 4.5,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() then return true end
           return GetSelectedConfig() == nil
@@ -1268,7 +1309,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.12,
-        width = 0.6,
+        width = 0.8,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay
@@ -1290,7 +1331,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.13,
-        width = 0.7,
+        width = 1.0,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay
@@ -1351,7 +1392,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.21,
-        width = 0.7,
+        width = 1.0,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay
@@ -1385,7 +1426,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.22,
-        width = 0.7,
+        width = 1.5,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
@@ -1415,6 +1456,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       iconStackFont = {
         type = "select",
+        dialogControl = "LSM30_Font",
         name = "Font",
         values = GetFonts,
         get = function()
@@ -1451,7 +1493,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.23,
-        width = 0.55,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
@@ -1499,7 +1541,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.241,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
@@ -1520,7 +1562,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.242,
-        width = 0.45,
+        width = 0.8,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
@@ -1552,7 +1594,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.243,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not cfg.display.iconShowStacks
@@ -1621,7 +1663,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.251,
-        width = 0.8,
+        width = 1.0,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomTracking()
@@ -1645,7 +1687,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.252,
-        width = 1.0,
+        width = 1.4,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomAura()
@@ -1680,7 +1722,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.261,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomCooldown()
@@ -1702,7 +1744,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.262,
-        width = 0.5,
+        width = 0.7,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomCooldown() or not cfg.display.iconShowCooldownSwipe
@@ -1724,7 +1766,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.263,
-        width = 0.6,
+        width = 0.8,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomCooldown() or not cfg.display.iconShowCooldownSwipe
@@ -1768,7 +1810,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.265,
-        width = 1.0,
+        width = 1.3,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDisplay or not IsCustomCooldown()
@@ -1808,7 +1850,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.31,
-        width = 0.8,
+        width = 1.1,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDuration
@@ -1816,6 +1858,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       iconDurationFont = {
         type = "select",
+        dialogControl = "LSM30_Font",
         name = "Font",
         values = GetFonts,
         get = function()
@@ -1852,7 +1895,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.32,
-        width = 0.55,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDuration or not cfg.display.iconShowDuration
@@ -1880,7 +1923,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.325,
-        width = 0.45,
+        width = 0.65,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDuration or not cfg.display.iconShowDuration
@@ -1928,7 +1971,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.34,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDuration or not cfg.display.iconShowDuration
@@ -1949,7 +1992,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 9.35,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.displayType ~= "icon" or collapsedSections.iconDuration or not cfg.display.iconShowDuration
@@ -1994,7 +2037,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         name = "Fine Tuning",
         desc = "Switch to direct input boxes for pixel-precise bar width and height values.",
         order = 11.5,
-        width = 0.85,
+        width = 1.0,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.barSize end,
         get = function()
           return ns._fineTuningBarSize
@@ -2159,7 +2202,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 15.1,
-        width = 1.0,
+        width = 1.1,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.barSize end
       },
       
@@ -2181,7 +2224,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 15.2,
-        width = 1.0,
+        width = 1.1,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.barSize end
       },
       
@@ -2203,7 +2246,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 15.3,
-        width = 1.0,
+        width = 1.1,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.barSize end
       },
       
@@ -2238,8 +2281,149 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 21,
-        width = 0.65,
-        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill end
+        width = 0.85,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          -- Hide for fragmented/icons (they have their own layout/fill controls)
+          if IsFragmentedOrIconsMode() then return true end
+          return false
+        end
+      },
+      
+      rotateTexture = {
+        type = "toggle",
+        name = "Rotate Texture",
+        desc = "Rotate the bar texture 90 degrees. Automatically enabled for vertical bars but can be toggled for any orientation.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          if not cfg then return true end
+          if cfg.display.rotateTexture == nil then return true end
+          return cfg.display.rotateTexture
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.rotateTexture = value
+            RefreshBar()
+          end
+        end,
+        order = 21.05,
+        width = 0.75,
+        hidden = function()
+          return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill
+        end
+      },
+      
+      -- Fragmented Layout Direction (how segments are arranged)
+      fragmentedLayoutDirection = {
+        type = "select",
+        name = "Segment Layout",
+        desc = "How segments are arranged: Horizontal (left-to-right) or Vertical (bottom-to-top)",
+        values = {
+          ["horizontal"] = "Horizontal",
+          ["vertical"] = "Vertical",
+        },
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.fragmentedLayoutDirection or "horizontal"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedLayoutDirection = value
+            RefreshBar()
+          end
+        end,
+        order = 21.1,
+        width = 1.0,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+        end
+      },
+      
+      -- Fragmented Fill Orientation (how each segment's StatusBar fills)
+      fragmentedFillOrientation = {
+        type = "select",
+        name = "Segment Fill",
+        desc = "How each segment fills: Horizontal (left-to-right) or Vertical (bottom-to-top)",
+        values = {
+          ["horizontal"] = "Horizontal",
+          ["vertical"] = "Vertical",
+        },
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.fragmentedFillOrientation or "horizontal"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedFillOrientation = value
+            RefreshBar()
+          end
+        end,
+        order = 21.2,
+        width = 0.9,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+        end
+      },
+      
+      -- Fragmented Spacing (gap between segments - Fill section)
+      fragmentedSpacing = {
+        type = "range",
+        name = "Segment Gap",
+        desc = "Space between each segment (pixels). Negative values overlap segments.",
+        min = -10, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.fragmentedSpacing or 2
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedSpacing = value
+            RefreshBar()
+          end
+        end,
+        order = 21.3,
+        width = 1.0,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+        end
+      },
+      
+      -- Segmented Spacing (gap between segments - Fill section)
+      segmentedSpacing = {
+        type = "range",
+        name = "Segment Gap",
+        desc = "Space between each segment (pixels)",
+        min = 0, max = 10, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.segmentedSpacing or 1
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.segmentedSpacing = value
+            RefreshBar()
+          end
+        end,
+        order = 21.35,
+        width = 1.1,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "perStack"
+        end
       },
       barFillMode = {
         type = "select",
@@ -2258,7 +2442,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 21.5,
-        width = 0.55,
+        width = 0.75,
         hidden = function()
           if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
           if not IsDurationBar() then return true end  -- Only show for duration bars
@@ -2267,7 +2451,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       barReverseFill = {
         type = "toggle",
-        name = "Reverse",
+        name = "Reverse Fill",
         desc = "Reverse fill direction (right-to-left for horizontal, top-to-bottom for vertical)",
         get = function()
           local cfg = GetSelectedConfig()
@@ -2281,11 +2465,16 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 21.6,
-        width = 0.5,
-        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill end
+        width = 1.0,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          if IsFragmentedOrIconsMode() then return true end
+          return false
+        end
       },
       barTexture = {
         type = "select",
+        dialogControl = "LSM30_Statusbar",
         name = "Bar Texture",
         values = GetStatusBarTextures,
         get = function()
@@ -2301,6 +2490,14 @@ function ns.AppearanceOptions.GetOptionsTable()
         end,
         order = 22,
         width = 1.2,  -- Fits "Blizzard Raid Bar"
+        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill end
+      },
+      customTextureHelp = {
+        type = "description",
+        name = "|cff888888Have a custom texture? Share it in the ArcUI Discord and it may be added in a future update!|r",
+        fontSize = "small",
+        order = 22.01,
+        width = "full",
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill end
       },
       enableSmoothing = {
@@ -2319,7 +2516,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 23,
-        width = 0.7,
+        width = 1.0,
         hidden = function()
           if IsIconMode() or collapsedSections.fill then return true end
           if IsCooldownBar() then return true end  -- Hide for cooldown charge bars
@@ -2343,12 +2540,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 23.1,
-        width = 0.55,
+        width = "full",
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill end
       },
       gradientDirection = {
         type = "select",
-        name = "Direction",
+        name = "Gradient Direction",
         desc = "Direction of the gradient effect",
         values = {
           ["VERTICAL"] = "Vertical",
@@ -2366,7 +2563,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 23.2,
-        width = 0.55,
+        width = 1.3,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or IsIconMode() or collapsedSections.fill or not cfg.display.useGradient
@@ -2417,7 +2614,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 23.4,
-        width = 0.55,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return not cfg or IsIconMode() or collapsedSections.fill or not cfg.display.useGradient
@@ -2486,7 +2683,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() end
       },
       
-      -- Display Style Dropdown
+      -- Display Style Dropdown (in Fill section, before Orientation)
       displayStyle = {
         type = "select",
         name = "Style",
@@ -2497,10 +2694,10 @@ function ns.AppearanceOptions.GetOptionsTable()
             ["continuous"] = "Continuous",
             ["segmented"] = "Segmented"
           }
-          -- Add Fragmented and Icons options ONLY for secondary resource bars (runes/essence)
+          -- Add Fragmented and Icons options for all discrete secondary resources
           if barType == "resource" and cfg and cfg.tracking then
             local secType = cfg.tracking.secondaryType
-            if secType == "runes" or secType == "essence" then
+            if secType and ns.Resources and ns.Resources.TickedSecondaryTypes and ns.Resources.TickedSecondaryTypes[secType] then
               vals["fragmented"] = "Fragmented"
               vals["icons"] = "Icons"
             end
@@ -2509,10 +2706,10 @@ function ns.AppearanceOptions.GetOptionsTable()
         end,
         sorting = function()
           local cfg, barType = GetSelectedConfig()
-          -- Only include fragmented/icons in sorting for secondary resource bars
+          -- Only include fragmented/icons in sorting for discrete secondary resource bars
           if barType == "resource" and cfg and cfg.tracking then
             local secType = cfg.tracking.secondaryType
-            if secType == "runes" or secType == "essence" then
+            if secType and ns.Resources and ns.Resources.TickedSecondaryTypes and ns.Resources.TickedSecondaryTypes[secType] then
               return {"continuous", "segmented", "fragmented", "icons"}
             end
           end
@@ -2534,26 +2731,55 @@ function ns.AppearanceOptions.GetOptionsTable()
         set = function(info, value)
           local cfg = GetSelectedConfig()
           if cfg then
+            -- ═══════════════════════════════════════════════════════════
+            -- CLEANUP: Clear conflicting settings from previous style
+            -- ═══════════════════════════════════════════════════════════
+            local oldMode = cfg.display.thresholdMode or "simple"
+            
+            -- When leaving continuous modes, disable their specific features
+            if oldMode == "simple" or oldMode == "folded" or oldMode == "colorCurve" then
+              if value ~= "continuous" then
+                cfg.display.colorCurveEnabled = false
+                if oldMode == "folded" then
+                  cfg.display.thresholdMode = "simple"  -- Reset folded
+                end
+              end
+            end
+            
+            -- Clear stackColors cache when switching modes (force rebuild)
+            cfg.stackColors = nil
+            
             if value == "segmented" then
               cfg.display.thresholdMode = "perStack"
-              local maxStacks = cfg.tracking.maxStacks or 10
+              local maxStacks = cfg.tracking.maxStacks or cfg.tracking.maxValue or 10
+              if not cfg.tracking.maxStacks then
+                cfg.tracking.maxStacks = maxStacks
+              end
               if not cfg.colorRanges then
-                cfg.colorRanges = {
-                  [1] = { from = 1, to = maxStacks, color = cfg.display.barColor or {r=0, g=0.5, b=1, a=1} },
-                  [2] = { enabled = false, from = 5, to = math.min(8, maxStacks), color = {r=1, g=1, b=0, a=1} },
-                  [3] = { enabled = false, from = 9, to = maxStacks, color = {r=0, g=1, b=0, a=1} }
-                }
+                local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+                if isSecondary and maxStacks <= 10 then
+                  local splitPoint = math.ceil(maxStacks * 0.5)
+                  cfg.colorRanges = {
+                    [1] = { from = 1, to = splitPoint, color = {r=0.2, g=0.6, b=1, a=1} },
+                    [2] = { enabled = true, from = splitPoint + 1, to = maxStacks, color = {r=1, g=0.8, b=0, a=1} },
+                    [3] = { enabled = false, from = 1, to = maxStacks, color = {r=0, g=1, b=0, a=1} }
+                  }
+                else
+                  cfg.colorRanges = {
+                    [1] = { from = 1, to = maxStacks, color = {r=0.2, g=0.6, b=1, a=1} },
+                    [2] = { enabled = false, from = 5, to = math.min(8, maxStacks), color = {r=1, g=0.8, b=0, a=1} },
+                    [3] = { enabled = false, from = 9, to = maxStacks, color = {r=0, g=1, b=0, a=1} }
+                  }
+                end
               end
               ApplyColorRanges(cfg)
             elseif value == "fragmented" then
               cfg.display.thresholdMode = "fragmented"
-              -- Initialize default colors if not set
               if not cfg.display.fragmentedColors then
                 cfg.display.fragmentedColors = {}
               end
             elseif value == "icons" then
               cfg.display.thresholdMode = "icons"
-              -- Initialize icons settings if not set
               if not cfg.display.fragmentedColors then
                 cfg.display.fragmentedColors = {}
               end
@@ -2561,18 +2787,19 @@ function ns.AppearanceOptions.GetOptionsTable()
                 cfg.display.iconsPositions = {}
               end
             else
-              if cfg.display.thresholdMode == "perStack" or cfg.display.thresholdMode == "fragmented" or cfg.display.thresholdMode == "icons" then
-                cfg.display.thresholdMode = "simple"
-              end
+              -- Continuous: reset to simple
+              cfg.display.thresholdMode = "simple"
             end
-            UpdateBar()
+            
+            ns.Resources.ClearAllResourceColorCurves()
+            RefreshBar()
           end
         end,
-        order = 30.1,
-        width = 0.65,
+        order = 20.5,
+        width = 0.9,
         hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for duration bars and charge bars
+          if IsIconMode() or collapsedSections.fill then return true end
+          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
           local cfg = GetSelectedConfig()
           if not cfg then return true end
           local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 10
@@ -2580,32 +2807,9 @@ function ns.AppearanceOptions.GetOptionsTable()
         end
       },
       
-      -- Fragmented Spacing (show after Style when fragmented - resource bars only)
-      fragmentedSpacing = {
-        type = "range",
-        name = "Gap",
-        desc = "Space between each segment",
-        min = 0, max = 50, step = 1,
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.fragmentedSpacing or 2
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.fragmentedSpacing = value
-            RefreshBar()
-          end
-        end,
-        order = 30.15,
-        width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if not IsResourceBar() then return true end  -- Only for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
-        end
-      },
+      
+      -- (Fragmented Spacing moved to Fill section)
+      -- (Segmented Spacing moved to Fill section)
       
       -- ============================================================
       -- ICONS MODE SETTINGS (for Runes/Essence as individual icons - resource bars only)
@@ -2630,7 +2834,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.16,
-        width = 0.5,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
@@ -2654,7 +2858,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.17,
-        width = 0.5,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
@@ -2679,12 +2883,95 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.18,
-        width = 0.4,
+        width = 0.8,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.thresholdMode ~= "icons" or cfg.display.iconsMode == "freeform"
+        end
+      },
+      iconsShape = {
+        type = "select",
+        name = "Shape",
+        desc = "Shape of each icon\n\nSquare (Drawn): Flat color, pixel borders\nTexture shapes: .tga file rendering, crisp at any size\n'+Ring' variants have border baked into the texture",
+        values = function()
+          -- Use sorted order if available
+          local order = ns.Resources and ns.Resources.ICON_SHAPE_ORDER
+          local labels = ns.Resources and ns.Resources.ICON_SHAPE_OPTIONS or {}
+          if order then
+            local sorted = {}
+            for i, key in ipairs(order) do
+              sorted[key] = labels[key] or key
+            end
+            return sorted
+          end
+          return labels
+        end,
+        sorting = function()
+          return ns.Resources and ns.Resources.ICON_SHAPE_ORDER or {}
+        end,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconsShape or "square"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconsShape = value
+            RefreshBar()
+          end
+        end,
+        order = 30.185,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      iconsBorderStyle = {
+        type = "select",
+        name = "Border Style",
+        desc = "Border style for circle shapes:\n\nDrawn (Ring): Ring-only texture tinted to your border color. Transparent center works with any background.\n\nTexture: Artistic border file overlay.\n\nSquare shapes use pixel-perfect 4-edge borders automatically.\nTriangles: Use the '+Ring' shape variant for built-in borders.",
+        values = function()
+          local cfg = GetSelectedConfig()
+          local shape = cfg and cfg.display.iconsShape or "square"
+          -- Both drawn and texture borders use ring-only textures (transparent center)
+          -- Triangles have no ring texture, so no border options (use triangleBorder variant)
+          local isTriangle = (shape == "triangle" or shape == "triangleBorder")
+          if isTriangle then
+            return { ["none"] = "None (use +Ring variant)" }
+          end
+          local hasTextureBorder = (shape ~= "square")
+          local vals = { ["drawn"] = "Drawn (Ring)" }
+          if hasTextureBorder then
+            vals["texture"] = "Texture"
+          end
+          return vals
+        end,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconsBorderStyle or "drawn"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconsBorderStyle = value
+            RefreshBar()
+          end
+        end,
+        order = 30.186,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or cfg.display.thresholdMode ~= "icons" then return true end
+          -- All shapes now use procedural borders (squares: 4-edge, triangles: vertex-offset, circles: mask)
+          -- No border style choice needed anymore
+          return true
         end
       },
       iconsShowCooldownText = {
@@ -2703,12 +2990,87 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.19,
+        width = 0.65,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if not IsResourceBar() or HasCooldownSegments() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      iconsCDTextSize = {
+        type = "range",
+        name = "Size",
+        desc = "Cooldown text font size",
+        min = 4, max = 48, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconsCooldownTextSize or 12
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconsCooldownTextSize = value
+            RefreshBar()
+          end
+        end,
+        order = 30.191,
         width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
-          if not IsResourceBar() then return true end  -- Only for resource bars
+          if not IsResourceBar() or HasCooldownSegments() then return true end
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "icons"
+          return not cfg or cfg.display.thresholdMode ~= "icons" or not cfg.display.iconsShowCooldownText
+        end
+      },
+      iconsCDTextOffsetX = {
+        type = "range",
+        name = "X",
+        desc = "Horizontal offset for cooldown text",
+        min = -50, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconsCDTextOffsetX or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconsCDTextOffsetX = value
+            RefreshBar()
+          end
+        end,
+        order = 30.192,
+        width = 0.45,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if not IsResourceBar() or HasCooldownSegments() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "icons" or not cfg.display.iconsShowCooldownText
+        end
+      },
+      iconsCDTextOffsetY = {
+        type = "range",
+        name = "Y",
+        desc = "Vertical offset for cooldown text",
+        min = -50, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.iconsCDTextOffsetY or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.iconsCDTextOffsetY = value
+            RefreshBar()
+          end
+        end,
+        order = 30.193,
+        width = 0.45,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if not IsResourceBar() or HasCooldownSegments() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "icons" or not cfg.display.iconsShowCooldownText
         end
       },
       iconsResetPositions = {
@@ -2723,7 +3085,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.195,
-        width = 0.6,
+        width = 1.4,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
@@ -2806,13 +3168,14 @@ function ns.AppearanceOptions.GetOptionsTable()
             if cfg.display.thresholdMode == "perStack" then
               ApplyColorRanges(cfg)
             end
-            RefreshBar()  -- Use RefreshBar to apply appearance changes including colors
+            RefreshBarAndSwatches()  -- Use RefreshBarAndSwatches to apply appearance changes including colors
           end
         end,
         order = 30.2,
         width = 0.7,
         hidden = function()
           if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.colorOptions then return true end
+          if IsNonContinuousMode() then return true end  -- Segmented/fragmented/icons have their own color systems
           -- Hide for charge bars when per-slot colors is enabled
           if IsChargeBar() then
             local cfg = GetSelectedConfig()
@@ -2841,7 +3204,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.21,
-        width = 0.5,
+        width = 0.75,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.colorOptions end
       },
       chargeSlot1Color = {
@@ -2983,7 +3346,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "description",
         name = "",
         order = 30.9,
-        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.colorOptions end
+        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.colorOptions or IsNonContinuousMode() end
       },
       
       -- Toggle for different full charge color (Charge bars only)
@@ -3003,7 +3366,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.91,
-        width = 1.0,
+        width = 1.5,
         hidden = function() return GetSelectedConfig() == nil or not IsChargeBar() or collapsedSections.colorOptions end
       },
       
@@ -3058,10 +3421,11 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 31,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for duration bars and charge bars
+          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
+          if IsNonContinuousMode() then return true end  -- Non-continuous modes have their own color systems
           return GetSelectedConfig() == nil
         end
       },
@@ -3093,7 +3457,8 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for duration bars and charge bars
+          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
+          if IsNonContinuousMode() then return true end  -- Non-continuous modes have their own color systems
           local cfg = GetSelectedConfig()
           if not cfg then return true end
           return not cfg.display.enableMaxColor
@@ -3122,13 +3487,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for duration bars and charge bars
-          local cfg = GetSelectedConfig()
-          if not cfg then return true end
-          return cfg.display.thresholdMode == "perStack"
+          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
+          if IsNonContinuousMode() then return true end
+          return GetSelectedConfig() == nil
         end
       },
       foldedColor1 = {
@@ -3151,7 +3515,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.1,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() then return true end
           local cfg = GetSelectedConfig()
@@ -3179,7 +3543,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.2,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() then return true end
           local cfg = GetSelectedConfig()
@@ -3213,7 +3577,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.5,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
@@ -3324,7 +3688,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.54,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsResourceBar() then return true end
@@ -3407,7 +3771,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.57,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsResourceBar() then return true end
@@ -3490,7 +3854,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 32.6,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsResourceBar() then return true end
@@ -3516,6 +3880,35 @@ function ns.AppearanceOptions.GetOptionsTable()
             cfg.display.colorCurveEnabled = value
             if value then
               cfg.display.thresholdMode = "colorCurve"
+              -- For secondary resources: auto-setup sensible defaults
+              local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+              if isSecondary then
+                local maxVal = cfg.tracking.maxValue or 5
+                -- Default to raw values (not percent) for small resources
+                if cfg.display.colorCurveThresholdAsPercent == nil then
+                  cfg.display.colorCurveThresholdAsPercent = false
+                end
+                -- Default to fills-to direction (building combo points etc.)
+                if not cfg.display.colorCurveDirection then
+                  cfg.display.colorCurveDirection = "fill"
+                  cfg.display.colorCurveDirectionFilling = true
+                end
+                -- Auto-enable first threshold if none are enabled yet
+                local anyEnabled = false
+                for i = 2, 5 do
+                  if cfg.display["colorCurveThreshold" .. i .. "Enabled"] then
+                    anyEnabled = true
+                    break
+                  end
+                end
+                if not anyEnabled then
+                  -- Set a sensible default: threshold at ~60% of max (rounded to whole number)
+                  local defaultVal = math.max(1, math.floor(maxVal * 0.6))
+                  cfg.display.colorCurveThreshold2Enabled = true
+                  cfg.display.colorCurveThreshold2Value = defaultVal
+                  cfg.display.colorCurveThreshold2Color = {r=1, g=1, b=0, a=1}  -- Yellow
+                end
+              end
             else
               -- Restore to folded if it was folded before, otherwise simple
               if not cfg.display.thresholdMode or cfg.display.thresholdMode == "colorCurve" then
@@ -3527,14 +3920,14 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end  -- Hide for duration bars
           if not IsResourceBar() then return true end  -- Only show for resource bars (buff bars use Segmented style)
           local cfg = GetSelectedConfig()
           if not cfg then return true end
-          if cfg.display.thresholdMode == "perStack" then return true end
+          if cfg.display.thresholdMode == "perStack" or cfg.display.thresholdMode == "fragmented" or cfg.display.thresholdMode == "icons" then return true end
           return false
         end
       },
@@ -3544,7 +3937,14 @@ function ns.AppearanceOptions.GetOptionsTable()
         desc = "Interpret threshold values as percentages of max instead of raw values",
         get = function()
           local cfg = GetSelectedConfig()
-          return cfg and cfg.display.colorCurveThresholdAsPercent
+          if not cfg then return false end
+          -- If explicitly set, use that
+          if cfg.display.colorCurveThresholdAsPercent ~= nil then
+            return cfg.display.colorCurveThresholdAsPercent
+          end
+          -- Auto-default: OFF for secondary resources (small max), ON for primary (large max)
+          local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+          return not isSecondary
         end,
         set = function(info, value)
           local cfg = GetSelectedConfig()
@@ -3583,7 +3983,9 @@ function ns.AppearanceOptions.GetOptionsTable()
           if cfg.display.colorCurveDirectionFilling then
             return "fill"
           end
-          return "drain"
+          -- Auto-default: "fill" for secondary resources (build up combo points etc.)
+          local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+          return isSecondary and "fill" or "drain"
         end,
         set = function(info, value)
           local cfg = GetSelectedConfig()
@@ -3596,7 +3998,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.09,
-        width = 0.55,
+        width = 0.8,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
@@ -3688,7 +4090,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.3,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
@@ -3768,7 +4170,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.6,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
@@ -3848,7 +4250,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.9,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
@@ -3928,7 +4330,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.2,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
@@ -3945,11 +4347,49 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "description",
         name = "|cff888888Segment Colors (Ready):|r",
         order = 30.31,
+        width = 0.7,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
+        end
+      },
+      -- "Set All" color picker - sets all segment colors at once
+      fragColorAll = {
+        type = "color",
+        name = "All",
+        desc = "Set all segment colors to the same color at once",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          -- Show barColor or spec default as the "all" preview
+          if cfg and cfg.display.barColor then
+            local c = cfg.display.barColor
+            return c.r, c.g, c.b, c.a or 1
+          end
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            local color = {r=r, g=g, b=b, a=a}
+            cfg.display.barColor = color
+            if not cfg.display.fragmentedColors then cfg.display.fragmentedColors = {} end
+            local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 6
+            for i = 1, maxVal do
+              cfg.display.fragmentedColors[i] = {r=r, g=g, b=b, a=a}
+            end
+            RefreshBarAndSwatches()
+          end
+        end,
+        order = 30.315,
+        width = 0.4,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       -- Segment 1 color
@@ -3963,7 +4403,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[1]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1  -- Default DK rune red
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -3974,12 +4414,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.32,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       -- Segment 2 color
@@ -3993,7 +4433,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[2]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -4004,12 +4444,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.33,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       -- Segment 3 color
@@ -4023,7 +4463,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[3]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -4034,12 +4474,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.34,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       -- Segment 4 color
@@ -4053,7 +4493,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[4]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -4064,12 +4504,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.35,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       -- Segment 5 color
@@ -4083,7 +4523,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[5]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -4094,15 +4534,15 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.36,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          if not cfg or cfg.display.thresholdMode ~= "fragmented" then return true end
-          -- Only show 5th for DK (6 runes) or Evoker (5 essence)
-          local secType = cfg.tracking and cfg.tracking.secondaryType
-          return not (secType == "runes" or secType == "essence")
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          -- Only show 5th+ color when resource has 5+ max segments
+          local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 4
+          return maxVal < 5
         end
       },
       -- Segment 6 color (DK only)
@@ -4116,7 +4556,7 @@ function ns.AppearanceOptions.GetOptionsTable()
             local c = cfg.display.fragmentedColors[6]
             return c.r, c.g, c.b, c.a or 1
           end
-          return 0.77, 0.12, 0.23, 1
+          local dc = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.5,g=0.5,b=0.5,a=1}; return dc.r, dc.g, dc.b, dc.a or 1
         end,
         set = function(info, r, g, b, a)
           local cfg = GetSelectedConfig()
@@ -4127,15 +4567,15 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.37,
-        width = 0.22,
+        width = 0.25,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          if not cfg or cfg.display.thresholdMode ~= "fragmented" then return true end
-          -- Only show 6th for DK (6 runes)
-          local secType = cfg.tracking and cfg.tracking.secondaryType
-          return secType ~= "runes"
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          -- Only show 6th color when resource has 6+ max segments
+          local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 4
+          return maxVal < 6
         end
       },
       fragmentedColorLineBreak = {
@@ -4146,7 +4586,31 @@ function ns.AppearanceOptions.GetOptionsTable()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
+        end
+      },
+      smartChargingColor = {
+        type = "toggle",
+        name = "Auto Charging",
+        desc = "Automatically derive the charging color by dimming each segment's ready color.\n\nWhen enabled, the charging color updates automatically when you change the 'All' color or per-segment colors.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.smartChargingColor
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.smartChargingColor = value
+            RefreshBarAndSwatches()
+          end
+        end,
+        order = 30.38,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
         end
       },
       fragmentedChargingColor = {
@@ -4170,12 +4634,184 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.39,
-        width = 0.5,
+        width = 0.7,
         hidden = function()
           if collapsedSections.colorOptions then return true end
           if not IsResourceBar() then return true end  -- Only for resource bars
           local cfg = GetSelectedConfig()
-          return not cfg or cfg.display.thresholdMode ~= "fragmented"
+          if not cfg then return true end
+          if cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          -- Hide manual picker when smart mode is on
+          return cfg.display.smartChargingColor == true
+        end
+      },
+      -- Animacharged (Echoing Reprimand) combo point color — shown on ALL display styles
+      chargedComboColor = {
+        type = "color",
+        name = "Anima Charge",
+        desc = "Color for Animacharged combo points (from Echoing Reprimand / Shadow Techniques procs). Applies in all display styles.",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.chargedComboColor then
+            local c = cfg.display.chargedComboColor
+            return c.r, c.g, c.b, c.a or 1
+          end
+          return 0.169, 0.733, 0.992, 1  -- Default blue
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.chargedComboColor = {r=r, g=g, b=b, a=a}
+            RefreshBar()
+          end
+        end,
+        order = 30.395,
+        width = 0.7,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg then return true end
+          -- Only show for combo point resources (all display styles)
+          local secType = cfg.tracking and cfg.tracking.secondaryType
+          return secType ~= "comboPoints"
+        end
+      },
+      -- ============================================================
+      -- PER-SPEC COLORS (DK runes auto-color by spec)
+      -- ============================================================
+      specColorToggle = {
+        type = "toggle",
+        name = "Per-Spec Colors",
+        desc = "Base ready color changes by specialization.\n\nSegment Colors (1-6) above become per-segment overrides.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          if not cfg then return false end
+          local sc = cfg.display.fragmentedSpecColors
+          if sc == nil and cfg.tracking.secondaryType == "runes" then return true end
+          return sc and sc.enabled or false
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.fragmentedSpecColors then cfg.display.fragmentedSpecColors = {} end
+            cfg.display.fragmentedSpecColors.enabled = value
+            if value then cfg.display.fragmentedColors = {} end
+            RefreshBar()
+          end
+        end,
+        order = 30.397,
+        width = 1.2,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          return cfg.tracking.secondaryType ~= "runes"
+        end
+      },
+      specColorBlood = {
+        type = "color", name = "Blood", desc = "Ready color in Blood spec", hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.fragmentedSpecColors and cfg.display.fragmentedSpecColors[250] then
+            local c = cfg.display.fragmentedSpecColors[250]; return c.r, c.g, c.b, c.a or 1
+          end
+          return 0.77, 0.12, 0.23, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.fragmentedSpecColors then cfg.display.fragmentedSpecColors = { enabled = true } end
+            cfg.display.fragmentedSpecColors[250] = {r=r, g=g, b=b, a=a}; RefreshBarAndSwatches()
+          end
+        end,
+        order = 30.398, width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          if cfg.tracking.secondaryType ~= "runes" then return true end
+          local sc = cfg.display.fragmentedSpecColors
+          if sc == nil then return false end; return not (sc and sc.enabled)
+        end
+      },
+      specColorFrost = {
+        type = "color", name = "Frost", desc = "Ready color in Frost spec", hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.fragmentedSpecColors and cfg.display.fragmentedSpecColors[251] then
+            local c = cfg.display.fragmentedSpecColors[251]; return c.r, c.g, c.b, c.a or 1
+          end
+          return 0.2, 0.6, 1.0, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.fragmentedSpecColors then cfg.display.fragmentedSpecColors = { enabled = true } end
+            cfg.display.fragmentedSpecColors[251] = {r=r, g=g, b=b, a=a}; RefreshBarAndSwatches()
+          end
+        end,
+        order = 30.399, width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          if cfg.tracking.secondaryType ~= "runes" then return true end
+          local sc = cfg.display.fragmentedSpecColors
+          if sc == nil then return false end; return not (sc and sc.enabled)
+        end
+      },
+      specColorUnholy = {
+        type = "color", name = "Unholy", desc = "Ready color in Unholy spec", hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.fragmentedSpecColors and cfg.display.fragmentedSpecColors[252] then
+            local c = cfg.display.fragmentedSpecColors[252]; return c.r, c.g, c.b, c.a or 1
+          end
+          return 0.0, 0.8, 0.2, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.fragmentedSpecColors then cfg.display.fragmentedSpecColors = { enabled = true } end
+            cfg.display.fragmentedSpecColors[252] = {r=r, g=g, b=b, a=a}; RefreshBarAndSwatches()
+          end
+        end,
+        order = 30.3995, width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          if cfg.tracking.secondaryType ~= "runes" then return true end
+          local sc = cfg.display.fragmentedSpecColors
+          if sc == nil then return false end; return not (sc and sc.enabled)
+        end
+      },
+      -- Clear segment color overrides button
+      clearSegmentOverrides = {
+        type = "execute",
+        name = "Clear Overrides",
+        desc = "Clear all per-segment color overrides so they inherit from spec colors (or bar color).",
+        func = function()
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedColors = {}
+            RefreshBar()
+          end
+        end,
+        order = 30.3996,
+        width = 1.4,
+        hidden = function()
+          if collapsedSections.colorOptions or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or (cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons") then return true end
+          -- Only show if there are actual overrides set
+          local fc = cfg.display.fragmentedColors
+          if not fc then return true end
+          for _ in pairs(fc) do return false end
+          return true
         end
       },
       fragmentedShowSegmentText = {
@@ -4194,10 +4830,11 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.391,
-        width = 0.45,
+        width = 0.65,
         hidden = function()
           if collapsedSections.colorOptions then return true end
-          if not IsResourceBar() then return true end  -- Only for resource bars
+          if not IsResourceBar() then return true end
+          if HasCooldownSegments() then return true end  -- Use new unified section instead
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.thresholdMode ~= "fragmented"
         end
@@ -4218,10 +4855,60 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 30.392,
-        width = 0.4,
+        width = 0.6,
         hidden = function()
           if collapsedSections.colorOptions then return true end
-          if not IsResourceBar() then return true end  -- Only for resource bars
+          if not IsResourceBar() or HasCooldownSegments() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "fragmented" or not cfg.display.fragmentedShowSegmentText
+        end
+      },
+      fragmentedTextOffsetX = {
+        type = "range",
+        name = "X",
+        desc = "Horizontal offset for cooldown text",
+        min = -50, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.fragmentedTextOffsetX or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedTextOffsetX = value
+            RefreshBar()
+          end
+        end,
+        order = 30.3921,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() or HasCooldownSegments() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or cfg.display.thresholdMode ~= "fragmented" or not cfg.display.fragmentedShowSegmentText
+        end
+      },
+      fragmentedTextOffsetY = {
+        type = "range",
+        name = "Y",
+        desc = "Vertical offset for cooldown text",
+        min = -50, max = 50, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.fragmentedTextOffsetY or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.fragmentedTextOffsetY = value
+            RefreshBar()
+          end
+        end,
+        order = 30.3922,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() or HasCooldownSegments() then return true end
           local cfg = GetSelectedConfig()
           return not cfg or cfg.display.thresholdMode ~= "fragmented" or not cfg.display.fragmentedShowSegmentText
         end
@@ -4239,10 +4926,390 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       
       -- ============================================================
-      -- DURATION BAR THRESHOLDS (only for duration mode bars)
-      -- Matches stack threshold UI pattern with "At" toggles
-      -- 100% uses Base Bar Color, thresholds 2-5 are optional
+      -- ACTIVE COUNT COLORS (recolor active segments by count)
+      -- Opt-in system: enable toggle + up to 3 conditions
+      -- Works with Segmented, Fragmented, and Icons modes
       -- ============================================================
+      enableActiveCountColors = {
+        type = "toggle",
+        name = "|cffffd700Active Count Colors|r",
+        desc = "Recolor active/ready segments based on how many are currently active. E.g. turn all active segments yellow when you have 3+ combo points.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.enableActiveCountColors
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.enableActiveCountColors = value
+            -- Initialize default conditions if enabling for first time
+            if value and not cfg.display.activeCountColors then
+              local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 10
+              cfg.display.activeCountColors = {
+                [1] = { from = 1, to = maxVal, color = ns.Resources and ns.Resources.GetSecondaryResourceDefaultColor and ns.Resources.GetSecondaryResourceDefaultColor() or {r=0.2, g=0.6, b=1, a=1} },
+                [2] = { enabled = false, from = math.ceil(maxVal * 0.6), to = maxVal - 1, color = {r=1, g=0.8, b=0, a=1} },
+                [3] = { enabled = false, from = maxVal, to = maxVal, color = {r=0, g=1, b=0, a=1} },
+              }
+            end
+            RefreshBar()
+          end
+        end,
+        order = 30.5,
+        width = "full",
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or (cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons")
+        end
+      },
+      -- Condition 1: always present when enabled
+      activeCount1Label = {
+        type = "description",
+        name = "|cffccccccCondition 1:|r",
+        order = 30.51,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      activeCount1From = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "From",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[1] and cfg.display.activeCountColors[1].from or 1)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[1] then cfg.display.activeCountColors[1] = { from = 1, to = 99, color = {r=0.2, g=0.6, b=1, a=1} } end
+            cfg.display.activeCountColors[1].from = tonumber(value) or 1
+            RefreshBar()
+          end
+        end,
+        order = 30.52,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      activeCount1To = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "To",
+        get = function()
+          local cfg = GetSelectedConfig()
+          local maxVal = cfg and (cfg.tracking.maxValue or cfg.tracking.maxStacks or 10)
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[1] and cfg.display.activeCountColors[1].to or maxVal)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[1] then cfg.display.activeCountColors[1] = { from = 1, to = 99, color = {r=0.2, g=0.6, b=1, a=1} } end
+            cfg.display.activeCountColors[1].to = tonumber(value) or 99
+            RefreshBar()
+          end
+        end,
+        order = 30.53,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      activeCount1Color = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[1] and cfg.display.activeCountColors[1].color then
+            local c = cfg.display.activeCountColors[1].color
+            return c.r, c.g, c.b, c.a or 1
+          end
+          return 0.2, 0.6, 1, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[1] then cfg.display.activeCountColors[1] = { from = 1, to = 99 } end
+            cfg.display.activeCountColors[1].color = {r=r, g=g, b=b, a=a}
+            RefreshBar()
+          end
+        end,
+        order = 30.54,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      -- Condition 2: optional
+      activeCount2Enable = {
+        type = "toggle",
+        name = "Condition 2",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].enabled
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[2] then
+              local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 10
+              cfg.display.activeCountColors[2] = { enabled = false, from = math.ceil(maxVal * 0.6), to = maxVal - 1, color = {r=1, g=0.8, b=0, a=1} }
+            end
+            cfg.display.activeCountColors[2].enabled = value
+            RefreshBar()
+          end
+        end,
+        order = 30.55,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      activeCount2From = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "From",
+        get = function()
+          local cfg = GetSelectedConfig()
+          local maxVal = cfg and (cfg.tracking.maxValue or cfg.tracking.maxStacks or 10)
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].from or math.ceil(maxVal * 0.6))
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] then
+            cfg.display.activeCountColors[2].from = tonumber(value) or 1
+            RefreshBar()
+          end
+        end,
+        order = 30.56,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].enabled)
+        end
+      },
+      activeCount2To = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "To",
+        get = function()
+          local cfg = GetSelectedConfig()
+          local maxVal = cfg and (cfg.tracking.maxValue or cfg.tracking.maxStacks or 10)
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].to or maxVal)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] then
+            cfg.display.activeCountColors[2].to = tonumber(value) or 99
+            RefreshBar()
+          end
+        end,
+        order = 30.57,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].enabled)
+        end
+      },
+      activeCount2Color = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].color then
+            local c = cfg.display.activeCountColors[2].color
+            return c.r, c.g, c.b, c.a or 1
+          end
+          return 1, 0.8, 0, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[2] then cfg.display.activeCountColors[2] = { enabled = true, from = 1, to = 99 } end
+            cfg.display.activeCountColors[2].color = {r=r, g=g, b=b, a=a}
+            RefreshBar()
+          end
+        end,
+        order = 30.58,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[2] and cfg.display.activeCountColors[2].enabled)
+        end
+      },
+      -- Condition 3: optional
+      activeCount3Enable = {
+        type = "toggle",
+        name = "Condition 3",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].enabled
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[3] then
+              local maxVal = cfg.tracking.maxValue or cfg.tracking.maxStacks or 10
+              cfg.display.activeCountColors[3] = { enabled = false, from = maxVal, to = maxVal, color = {r=0, g=1, b=0, a=1} }
+            end
+            cfg.display.activeCountColors[3].enabled = value
+            RefreshBar()
+          end
+        end,
+        order = 30.59,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      activeCount3From = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "From",
+        get = function()
+          local cfg = GetSelectedConfig()
+          local maxVal = cfg and (cfg.tracking.maxValue or cfg.tracking.maxStacks or 10)
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].from or maxVal)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] then
+            cfg.display.activeCountColors[3].from = tonumber(value) or 1
+            RefreshBar()
+          end
+        end,
+        order = 30.591,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].enabled)
+        end
+      },
+      activeCount3To = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "To",
+        get = function()
+          local cfg = GetSelectedConfig()
+          local maxVal = cfg and (cfg.tracking.maxValue or cfg.tracking.maxStacks or 10)
+          return tostring(cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].to or maxVal)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] then
+            cfg.display.activeCountColors[3].to = tonumber(value) or 99
+            RefreshBar()
+          end
+        end,
+        order = 30.592,
+        width = 0.25,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].enabled)
+        end
+      },
+      activeCount3Color = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].color then
+            local c = cfg.display.activeCountColors[3].color
+            return c.r, c.g, c.b, c.a or 1
+          end
+          return 0, 1, 0, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.display.activeCountColors then cfg.display.activeCountColors = {} end
+            if not cfg.display.activeCountColors[3] then cfg.display.activeCountColors[3] = { enabled = true, from = 1, to = 99 } end
+            cfg.display.activeCountColors[3].color = {r=r, g=g, b=b, a=a}
+            RefreshBar()
+          end
+        end,
+        order = 30.593,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          if cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons" then return true end
+          return not (cfg.display.activeCountColors and cfg.display.activeCountColors[3] and cfg.display.activeCountColors[3].enabled)
+        end
+      },
+      activeCountEndBreak = {
+        type = "description",
+        name = "",
+        order = 30.599,
+        hidden = function()
+          if collapsedSections.colorOptions then return true end
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableActiveCountColors then return true end
+          return cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "fragmented" and cfg.display.thresholdMode ~= "icons"
+        end
+      },
+      
+      -- ============================================================
+      -- DURATION BAR THRESHOLDS (only for duration mode bars)
       durationThresholdHeader = {
         type = "description",
         name = "\n",
@@ -4273,7 +5340,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.72,
-        width = 0.9,
+        width = 1.4,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4300,7 +5367,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.73,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4436,7 +5503,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.92,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4526,7 +5593,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.02,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4616,7 +5683,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.12,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4706,7 +5773,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.22,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -4737,7 +5804,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.72,
-        width = 0.45,
+        width = 0.65,
         hidden = function()
           return true  -- Duration thresholds removed
         end
@@ -4812,7 +5879,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 33.77,
-        width = 0.45,
+        width = 0.65,
         hidden = function() return true end  -- Duration thresholds removed
       },
       durThreshold3Value = {
@@ -4988,7 +6055,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.2,
-        width = 0.45,
+        width = 0.7,
         hidden = function()
           if IsIconMode() then return true end
           local cfg = GetSelectedConfig()
@@ -5089,7 +6156,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 34.3,
-        width = 0.45,
+        width = 0.7,
         hidden = function()
           if IsIconMode() then return true end
           local cfg = GetSelectedConfig()
@@ -5204,7 +6271,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           ns.selectedPerStack = value
         end,
         order = 35.1,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           local cfg = GetSelectedConfig()
@@ -5278,6 +6345,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       backgroundTexture = {
         type = "select",
+        dialogControl = "LSM30_Background",
         name = "Texture",
         values = GetBackgroundTextures,
         get = function()
@@ -5369,7 +6437,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 41.4,
-        width = 1.0,
+        width = 1.1,
         hidden = function()
           if IsIconMode() or collapsedSections.background then return true end
           local cfg = GetSelectedConfig()
@@ -5399,6 +6467,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       slotBackgroundTexture = {
         type = "select",
+        dialogControl = "LSM30_Background",
         name = "Texture",
         desc = "Texture for charge slot backgrounds",
         values = GetBackgroundTextures,
@@ -5557,7 +6626,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 51.1,
-        width = 0.7,
+        width = 1.0,
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
           local cfg = GetSelectedConfig()
@@ -5607,9 +6676,9 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 51.3,
-        width = 0.7,
+        width = 0.9,
         hidden = function()
-          if IsIconMode() or collapsedSections.border then return true end
+          if collapsedSections.border then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showBorder)
         end
@@ -5631,7 +6700,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 51.4,
-        width = 0.7,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
           if IsChargeBar() then return true end
@@ -5665,7 +6734,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         name = "Thickness",
         min = 1, max = 10, step = 1,
         order = 52.2,
-        width = 0.5,
+        width = 0.9,
         hidden = function() return true end,
         get = function() return 1 end,
         set = function() end,
@@ -5735,7 +6804,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 52.2,
-        width = 0.7,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return cfg == nil or not IsChargeBar() or not cfg.display.showSlotBorder or collapsedSections.border
@@ -5783,7 +6852,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 54.1,
-        width = 1.0,
+        width = 1.3,
         hidden = function()
           return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.frameStrata
         end
@@ -5826,7 +6895,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         set = function(info, value) collapsedSections.tickMarks = not value end,
         order = 60,
         width = "full",
-        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsChargeBar() end  -- Hide for charge bars
+        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsChargeBar() or IsFragmentedOrIconsMode() end  -- Hide for charge bars and fragmented/icons
       },
       enableTickMarks = {
         type = "toggle",
@@ -5846,8 +6915,8 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 61,
-        width = 1.0,
-        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsChargeBar() or collapsedSections.tickMarks end  -- Hide for charge bars
+        width = 1.4,
+        hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsChargeBar() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks end  -- Hide for charge bars and fragmented/icons
       },
       maxTicksInput = {
         type = "input",
@@ -5885,11 +6954,15 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 61.1,
         width = 0.7,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
-          -- Hide when tick mode is custom (custom uses explicit positions)
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
+          -- Always show for duration bars (they need max duration for tick positioning)
+          if IsDurationBar() then
+            return not (cfg and cfg.display.showTickMarks)
+          end
+          -- Hide when tick mode is custom for non-duration bars (custom uses explicit positions)
           if cfg and cfg.display and cfg.display.tickMode == "custom" then return true end
-          return not IsDurationBar()
+          return true
         end
       },
       tickAllMode = {
@@ -5910,7 +6983,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 61.5,
         width = 0.35,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks)
         end
@@ -5936,7 +7009,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 62,
         width = 0.45,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks)
         end
@@ -5969,7 +7042,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 62.5,
         width = 0.45,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks and cfg.display.tickMode == "percent")
         end
@@ -5992,7 +7065,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 63,
         width = 0.55,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks)
         end
@@ -6015,7 +7088,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 63.5,
         width = 0.45,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks and cfg.display.tickMode == "custom")
         end
@@ -6042,7 +7115,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 64,
         width = 0.6,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks)
         end
@@ -6063,9 +7136,9 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 65,
-        width = 1.0,
+        width = 1.2,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks)
         end
@@ -6104,12 +7177,442 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 66,
         width = 1.2,
         hidden = function()
-          if IsIconMode() or collapsedSections.tickMarks then return true end
+          if IsIconMode() or IsFragmentedOrIconsMode() or collapsedSections.tickMarks then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showTickMarks and cfg.display.tickMode == "custom")
         end
       },
       
+      
+      -- ============================================================
+      -- COOLDOWN TEXT (per-segment CD countdowns for Runes, Essence)
+      -- Unified section for fragmented + icons modes
+      -- ============================================================
+      cdTextHeader = {
+        type = "toggle",
+        name = "Cooldown Text",
+        desc = "Click to expand/collapse",
+        dialogControl = "CollapsibleHeader",
+        get = function() return not collapsedSections.cdText end,
+        set = function(info, value) collapsedSections.cdText = not value end,
+        order = 68,
+        width = "full",
+        hidden = function()
+          return not HasCooldownSegments() or not IsFragmentedOrIconsMode()
+        end
+      },
+      cdTextShow = {
+        type = "toggle",
+        name = "Show CD Text",
+        desc = "Show cooldown countdown on each segment/icon",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.cdTextShow
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextShow = value
+            RefreshBar()
+          end
+        end,
+        order = 68.1,
+        width = 0.65,
+        hidden = function()
+          return collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode()
+        end
+      },
+      cdTextFont = {
+        type = "select",
+        dialogControl = "LSM30_Font",
+        name = "Font",
+        values = GetFonts,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.cdTextFont or "2002 Bold"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextFont = value
+            RefreshBar()
+          end
+        end,
+        order = 68.2,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextSize = {
+        type = "range",
+        name = "Size",
+        min = 4, max = 48, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.cdTextSize or 10
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextSize = value
+            RefreshBar()
+          end
+        end,
+        order = 68.3,
+        width = 0.6,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextOutline = {
+        type = "select",
+        name = "Outline",
+        values = { NONE = "None", OUTLINE = "Thin", THICKOUTLINE = "Thick" },
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.cdTextOutline or "OUTLINE"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextOutline = value
+            RefreshBar()
+          end
+        end,
+        order = 68.4,
+        width = 0.55,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextColor = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.cdTextColor then
+            local c = cfg.display.cdTextColor
+            return c.r or 1, c.g or 1, c.b or 1, c.a or 1
+          end
+          return 1, 1, 1, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextColor = {r = r, g = g, b = b, a = a}
+            RefreshBar()
+          end
+        end,
+        order = 68.5,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextDecimalPrecision = {
+        type = "select",
+        name = "Decimals",
+        desc = "How many decimal places to show on cooldown text",
+        values = {
+          [0] = "0 (3s)",
+          [1] = "1 (3.5s)",
+          [2] = "2 (3.52s)",
+        },
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.cdTextDecimalPrecision or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.cdTextDecimalPrecision = value
+            RefreshBar()
+          end
+        end,
+        order = 68.6,
+        width = 0.65,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextOffsetX = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "X Offset",
+        desc = "Horizontal offset for cooldown text",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return tostring(cfg and cfg.display.cdTextOffsetX or 0)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            local num = tonumber(value)
+            if num then
+              cfg.display.cdTextOffsetX = num
+              RefreshBar()
+            end
+          end
+        end,
+        order = 68.7,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+      cdTextOffsetY = {
+        type = "input",
+        dialogControl = "ArcUI_EditBox",
+        name = "Y Offset",
+        desc = "Vertical offset for cooldown text",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return tostring(cfg and cfg.display.cdTextOffsetY or 0)
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            local num = tonumber(value)
+            if num then
+              cfg.display.cdTextOffsetY = num
+              RefreshBar()
+            end
+          end
+        end,
+        order = 68.8,
+        width = 0.45,
+        hidden = function()
+          if collapsedSections.cdText or not HasCooldownSegments() or not IsFragmentedOrIconsMode() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.cdTextShow
+        end
+      },
+
+      -- ============================================================
+      -- SPELL PREDICTION (Soul Shards - Warlock)
+      -- ============================================================
+      predictionHeader = {
+        type = "toggle",
+        name = "Spell Prediction",
+        desc = "Click to expand/collapse",
+        dialogControl = "CollapsibleHeader",
+        get = function() return not collapsedSections.prediction end,
+        set = function(info, value) collapsedSections.prediction = not value end,
+        order = 69,
+        width = "full",
+        hidden = function()
+          if not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+      showPrediction = {
+        type = "toggle",
+        name = "Show Overlay Prediction",
+        desc = "Show a visual overlay on segments that will be spent or gained during a spell cast",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.showPrediction
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.showPrediction = value
+            RefreshBar()
+          end
+        end,
+        order = 69.1,
+        width = 1.2,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+      predCostColor = {
+        type = "color",
+        name = "Cost Overlay Color",
+        desc = "Color shown over segments that will be consumed",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.predCostColor then
+            local c = cfg.display.predCostColor
+            return c.r or 0, c.g or 0, c.b or 0, c.a or 0.5
+          end
+          return 0, 0, 0, 0.5
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predCostColor = {r = r, g = g, b = b, a = a}
+            RefreshBar()
+          end
+        end,
+        order = 69.2,
+        width = 0.7,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.showPrediction or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+      predGainColor = {
+        type = "color",
+        name = "Gain Overlay Color",
+        desc = "Color shown on segments that will be gained",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.predGainColor then
+            local c = cfg.display.predGainColor
+            return c.r or 1, c.g or 1, c.b or 1, c.a or 0.3
+          end
+          return 1, 1, 1, 0.3
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predGainColor = {r = r, g = g, b = b, a = a}
+            RefreshBar()
+          end
+        end,
+        order = 69.3,
+        width = 0.7,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.display.showPrediction or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+      predTextFormat = {
+        type = "select",
+        name = "Text Prediction Format",
+        desc = "How the resource text displays predicted changes during a spell cast",
+        values = {
+          none = "None",
+          arrow = "Arrow (3 -> 1)",
+          delta = "Delta (3 (-2))",
+          predicted = "Predicted Only (1)",
+        },
+        sorting = {"none", "arrow", "delta", "predicted"},
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.predTextFormat or "none"
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predTextFormat = value
+            RefreshBar()
+          end
+        end,
+        order = 69.5,
+        width = 1.2,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+      predTextCostColor = {
+        type = "color",
+        name = "Cost Text Color",
+        desc = "Color for cost portion of prediction text",
+        hasAlpha = false,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.predTextCostColor then
+            local c = cfg.display.predTextCostColor
+            return c.r or 1, c.g or 0.3, c.b or 0.3, 1
+          end
+          return 1, 0.3, 0.3, 1
+        end,
+        set = function(info, r, g, b)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predTextCostColor = {r = r, g = g, b = b}
+            RefreshBar()
+          end
+        end,
+        order = 69.6,
+        width = 0.65,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards" then return true end
+          local fmt = cfg.display.predTextFormat or "none"
+          return fmt == "none"
+        end
+      },
+      predTextGainColor = {
+        type = "color",
+        name = "Gain Text Color",
+        desc = "Color for gain portion of prediction text",
+        hasAlpha = false,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.predTextGainColor then
+            local c = cfg.display.predTextGainColor
+            return c.r or 0.3, c.g or 1, c.b or 0.3, 1
+          end
+          return 0.3, 1, 0.3, 1
+        end,
+        set = function(info, r, g, b)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predTextGainColor = {r = r, g = g, b = b}
+            RefreshBar()
+          end
+        end,
+        order = 69.7,
+        width = 0.65,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards" then return true end
+          local fmt = cfg.display.predTextFormat or "none"
+          return fmt == "none"
+        end
+      },
+      predResetDefaults = {
+        type = "execute",
+        name = "Reset Prediction Defaults",
+        desc = "Reset all prediction options back to defaults",
+        func = function()
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.predCostColor = {r=0, g=0, b=0, a=0.5}
+            cfg.display.predGainColor = {r=1, g=1, b=1, a=0.3}
+            cfg.display.predTextFormat = "none"
+            cfg.display.predTextCostColor = {r=1, g=0.3, b=0.3}
+            cfg.display.predTextGainColor = {r=0.3, g=1, b=0.3}
+            RefreshBar()
+          end
+        end,
+        order = 69.8,
+        width = 1.1,
+        hidden = function()
+          if collapsedSections.prediction or not IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not cfg or not cfg.tracking or cfg.tracking.secondaryType ~= "soulShards"
+        end
+      },
+
       -- ============================================================
       -- STACK TEXT
       -- ============================================================
@@ -6166,14 +7669,43 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 71.5,
-        width = 0.7,
+        width = 0.8,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           if not IsResourceBar() then return true end
           local cfg = GetSelectedConfig()
           if not cfg or not cfg.display.showText then return true end
           -- Hide for secondary resources (percentage doesn't make sense for 5 combo points)
-          return cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+          -- Exception: stagger is continuous (0 to maxHealth) so percent is useful
+          if cfg.tracking and cfg.tracking.resourceCategory == "secondary" then
+            return cfg.tracking.secondaryType ~= "stagger"
+          end
+          return false
+        end
+      },
+      textShowPercentSymbol = {
+        type = "toggle",
+        name = "Show %",
+        desc = "Show the % symbol after the percentage value",
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.textShowPercentSymbol == false then return false end
+          return true  -- Default: on
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.textShowPercentSymbol = value
+            RefreshBar()
+          end
+        end,
+        order = 71.6,
+        width = 0.55,
+        hidden = function()
+          if IsIconMode() or collapsedSections.stackText then return true end
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.showText then return true end
+          return cfg.display.textFormat ~= "percent"
         end
       },
       textColor = {
@@ -6205,6 +7737,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       font = {
         type = "select",
+        dialogControl = "LSM30_Font",
         name = "Font",
         values = GetFonts,
         get = function()
@@ -6287,7 +7820,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 74.2,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           local cfg = GetSelectedConfig()
@@ -6346,7 +7879,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 74.5,
-        width = 0.9,
+        width = 1.4,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           if IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for charge/duration bars (use Charge Text Anchor)
@@ -6356,11 +7889,13 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       textLocked = {
         type = "toggle",
-        name = "Lock",
-        desc = "Lock stack text position (prevents accidental dragging)",
+        name = "Lock Text",
+        desc = "Lock resource text position (prevents accidental dragging)",
         get = function()
           local cfg = GetSelectedConfig()
-          return cfg and cfg.display.textLocked
+          if not cfg then return true end
+          if cfg.display.textLocked == nil then return true end
+          return cfg.display.textLocked
         end,
         set = function(info, value)
           local cfg = GetSelectedConfig()
@@ -6370,12 +7905,12 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 74.51,
-        width = 0.4,
+        width = 0.55,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           if IsChargeBar() or IsCooldownDurationBar() then return true end
           local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textAnchor == "FREE")
+          return not (cfg and cfg.display.showText)
         end
       },
       textAnchorOffsetX = {
@@ -6446,7 +7981,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 75.1,
-        width = 0.6,
+        width = 1.1,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           return not IsChargeBar() and not IsCooldownDurationBar()
@@ -6483,7 +8018,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 75.2,
-        width = 0.75,
+        width = 1.3,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           local cfg = GetSelectedConfig()
@@ -6516,7 +8051,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 75.22,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           local cfg = GetSelectedConfig()
@@ -6635,7 +8170,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.1,
-        width = 0.8,
+        width = 1.1,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or IsResourceBar() or collapsedSections.durationText end
       },
       showZeroWhenReady = {
@@ -6654,7 +8189,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.15,
-        width = 0.9,
+        width = 1.4,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() then return true end
@@ -6694,6 +8229,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       durationFont = {
         type = "select",
+        dialogControl = "LSM30_Font",
         name = "Font",
         values = GetFonts,
         get = function()
@@ -6756,7 +8292,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.31,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() then return true end
@@ -6779,7 +8315,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.32,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() then return true end
@@ -6809,7 +8345,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.35,
-        width = 0.55,
+        width = 0.8,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() then return true end
@@ -6866,7 +8402,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.4,
-        width = 0.9,
+        width = 1.4,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() or IsChargeBar() then return true end  -- Hide for resource/charge bars only
@@ -6955,7 +8491,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.7,
-        width = 0.75,
+        width = 1.2,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -6981,7 +8517,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.69,
-        width = 0.95,
+        width = 1.3,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -7014,7 +8550,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.72,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -7070,7 +8606,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.74,
-        width = 0.7,
+        width = 1.0,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -7252,7 +8788,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.981,
-        width = 0.7,
+        width = 1.2,
         hidden = function()
           if IsIconMode() or collapsedSections.readyText then return true end
           local cfg = GetSelectedConfig()
@@ -7325,7 +8861,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.984,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.readyText then return true end
           local cfg = GetSelectedConfig()
@@ -7358,7 +8894,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 76.985,
-        width = 0.5,
+        width = 0.8,
         hidden = function()
           if IsIconMode() or collapsedSections.readyText then return true end
           local cfg = GetSelectedConfig()
@@ -7453,7 +8989,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 77.2,
-        width = 0.35,
+        width = 0.45,
         hidden = function()
           if IsIconMode() or collapsedSections.nameText then return true end
           local cfg = GetSelectedConfig()
@@ -7463,6 +8999,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       nameFont = {
         type = "select",
+        dialogControl = "LSM30_Font",
         name = "Font",
         values = GetFonts,
         get = function()
@@ -7558,7 +9095,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 77.4,
-        width = 0.9,
+        width = 1.4,
         hidden = function()
           if IsIconMode() or collapsedSections.nameText then return true end
           local cfg = GetSelectedConfig()
@@ -7647,7 +9184,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 77.7,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           if IsIconMode() or collapsedSections.nameText then return true end
           local cfg = GetSelectedConfig()
@@ -7759,7 +9296,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 78.25,
-        width = 0.55,
+        width = 0.8,
         hidden = function()
           if IsResourceBar() or collapsedSections.barIcon then return true end
           local cfg = GetSelectedConfig()
@@ -7810,7 +9347,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 78.3,
-        width = 0.55,
+        width = 0.7,
         hidden = function()
           if IsResourceBar() or collapsedSections.barIcon then return true end
           local cfg = GetSelectedConfig()
@@ -7832,7 +9369,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 78.4,
-        width = 0.45,
+        width = 0.6,
         hidden = function()
           if IsResourceBar() or collapsedSections.barIcon then return true end
           local cfg = GetSelectedConfig()
@@ -7856,7 +9393,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 78.5,
-        width = 1.0,
+        width = 1.1,
         hidden = function()
           if IsResourceBar() or collapsedSections.barIcon then return true end
           local cfg = GetSelectedConfig()
@@ -7880,7 +9417,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 78.6,
-        width = 1.0,
+        width = 1.1,
         hidden = function()
           if IsResourceBar() or collapsedSections.barIcon then return true end
           local cfg = GetSelectedConfig()
@@ -7978,7 +9515,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 80.3,
-        width = 0.7,
+        width = 1.0,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.position end
       },
       
@@ -8012,7 +9549,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.1,
-        width = 0.7,
+        width = 1.2,
         hidden = function() return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor end
       },
       anchorGroupName = {
@@ -8040,7 +9577,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.2,
-        width = 0.8,
+        width = 1.1,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
@@ -8069,7 +9606,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.3,
-        width = 0.6,
+        width = 1.1,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
@@ -8091,7 +9628,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.4,
-        width = 0.6,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
@@ -8114,7 +9651,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.45,
-        width = 0.6,
+        width = 1.1,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup and cfg.display.matchGroupWidth)
@@ -8124,7 +9661,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "range",
         name = "X Offset",
         desc = "Horizontal offset from anchor point",
-        min = -200, max = 200, step = 1,
+        min = -200, max = 200, step = 0.5,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.anchorOffsetX or 0
@@ -8137,7 +9674,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.7,
-        width = 0.5,
+        width = 0.85,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
@@ -8147,7 +9684,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "range",
         name = "Y Offset",
         desc = "Vertical offset from anchor point",
-        min = -200, max = 200, step = 1,
+        min = -200, max = 200, step = 0.5,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.anchorOffsetY or 0
@@ -8160,7 +9697,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 85.8,
-        width = 0.5,
+        width = 0.9,
         hidden = function()
           local cfg = GetSelectedConfig()
           return GetSelectedConfig() == nil or not SupportsCDMGroupAnchor() or collapsedSections.groupAnchor or not (cfg and cfg.display.anchorToGroup)
@@ -8181,23 +9718,45 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = "full",
         hidden = function() return GetSelectedConfig() == nil end
       },
-      hideOutOfCombat = {
-        type = "toggle",
-        name = "Hide Out of Combat",
-        get = function()
+      hideWhenConditions = {
+        type = "multiselect",
+        name = "Hide When...",
+        desc = "Select conditions that will HIDE this bar.\nIf none selected, bar visibility is controlled only by other behavior settings.",
+        get = function(_, key)
           local cfg = GetSelectedConfig()
-          return cfg and cfg.behavior and cfg.behavior.hideOutOfCombat
+          if not cfg or not cfg.behavior then return false end
+          local hideWhen = cfg.behavior.hideWhen
+          -- Handle migration from old hideOutOfCombat
+          if not hideWhen and cfg.behavior.hideOutOfCombat then
+            hideWhen = { hideOOC = true }
+          end
+          if type(hideWhen) ~= "table" then return false end
+          return hideWhen[key] or false
         end,
-        set = function(info, value)
+        set = function(_, key, val)
           local cfg = GetSelectedConfig()
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
-            cfg.behavior.hideOutOfCombat = value
+            -- Migrate old format if needed
+            if not cfg.behavior.hideWhen or type(cfg.behavior.hideWhen) ~= "table" then
+              cfg.behavior.hideWhen = {}
+              if cfg.behavior.hideOutOfCombat then
+                cfg.behavior.hideWhen.hideOOC = true
+                cfg.behavior.hideOutOfCombat = nil
+              end
+            end
+            cfg.behavior.hideWhen[key] = val or nil
             UpdateBar()
           end
         end,
+        values = function()
+          if ns.CooldownBars and ns.CooldownBars.HIDE_CONDITIONS then
+            return ns.CooldownBars.HIDE_CONDITIONS
+          end
+          return { hideOOC = "Out of Combat" }  -- Fallback
+        end,
         order = 91,
-        width = 1.0,
+        width = 1.5,
         hidden = function() return GetSelectedConfig() == nil or collapsedSections.behavior end
       },
       hideWhenInactive = {
@@ -8217,7 +9776,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 92,
-        width = 1.2,
+        width = 1.4,
         hidden = function()
           if GetSelectedConfig() == nil or collapsedSections.behavior then return true end
           if IsResourceBar() or IsChargeBar() or IsCooldownDurationBar() then return true end  -- Hide for resource/charge/CD bars
@@ -8243,7 +9802,7 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 93,
-        width = 1.0,
+        width = 1.2,
         hidden = function()
           if GetSelectedConfig() == nil or collapsedSections.behavior then return true end
           return not IsChargeBar()  -- Only show for charge bars
@@ -8268,10 +9827,62 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
         order = 94,
-        width = 1.0,
+        width = 1.2,
         hidden = function()
           if GetSelectedConfig() == nil or collapsedSections.behavior then return true end
           return not IsCooldownDurationBar()  -- Only show for cooldown duration bars
+        end
+      },
+      
+      -- Druid form visibility: show bar only in selected forms
+      showInFormsDesc = {
+        type = "description",
+        name = "|cff00cc66Druid Form Visibility|r  —  Select which forms show this bar. If none selected, the bar shows in all forms.",
+        fontSize = "medium",
+        order = 95,
+        width = "full",
+        hidden = function()
+          if GetSelectedConfig() == nil or collapsedSections.behavior then return true end
+          local _, playerClass = UnitClass("player")
+          return playerClass ~= "DRUID"
+        end
+      },
+      showInForms = {
+        type = "multiselect",
+        name = "Show in Forms",
+        desc = "Select which Druid forms will show this bar.\nIf none selected, the bar is visible in ALL forms.",
+        get = function(_, key)
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.behavior then return false end
+          local forms = cfg.behavior.showInForms
+          if type(forms) ~= "table" then return false end
+          return forms[key] or false
+        end,
+        set = function(_, key, val)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            if not cfg.behavior then cfg.behavior = {} end
+            if not cfg.behavior.showInForms or type(cfg.behavior.showInForms) ~= "table" then
+              cfg.behavior.showInForms = {}
+            end
+            cfg.behavior.showInForms[key] = val or nil
+            RefreshBar()
+          end
+        end,
+        values = {
+          caster  = "Caster / No Form",
+          cat     = "Cat Form",
+          bear    = "Bear Form",
+          moonkin = "Moonkin Form",
+          travel  = "Travel / Flight / Aquatic",
+          tree    = "Tree of Life",
+        },
+        order = 95.1,
+        width = 1.5,
+        hidden = function()
+          if GetSelectedConfig() == nil or collapsedSections.behavior then return true end
+          local _, playerClass = UnitClass("player")
+          return playerClass ~= "DRUID"
         end
       },
       

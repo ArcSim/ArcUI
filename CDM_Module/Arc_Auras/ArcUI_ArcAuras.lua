@@ -50,7 +50,7 @@ ArcAuras.frames = {}           -- arcID -> frame
 ArcAuras.updateTicker = nil    -- C_Timer ticker for updates
 ArcAuras.isEnabled = false
 ArcAuras.initialized = false
-ArcAuras.masqueGroup = nil     -- Masque group for skinning
+-- Masque registration handled by unified ns.Masque system (ArcUI_Masque.lua)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PERFORMANCE: CACHED REFERENCES (avoid repeated lookups)
@@ -66,60 +66,29 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- MASQUE INTEGRATION
--- Register ArcAura buttons with Masque for skinning
+-- Registration handled by unified ns.Masque system (ArcUI_Masque.lua)
+-- No local Masque group needed - prevents dual registration conflicts
 -- ═══════════════════════════════════════════════════════════════════════════
-
-local function GetMasqueGroup()
-    if ArcAuras.masqueGroup then return ArcAuras.masqueGroup end
-    
-    local Masque = LibStub and LibStub("Masque", true)
-    if not Masque then return nil end
-    
-    -- Create group: Masque:Group(addon, group)
-    ArcAuras.masqueGroup = Masque:Group("ArcUI", "Arc Auras")
-    return ArcAuras.masqueGroup
-end
-
-local function RegisterWithMasque(frame)
-    -- Check if Masque skinning is enabled in ArcUI settings
-    if ns.Masque and ns.Masque.IsEnabled and not ns.Masque.IsEnabled() then
-        -- Masque skinning is disabled - don't register
-        return
-    end
-    
-    local group = GetMasqueGroup()
-    if not group then return end
-    
-    -- AddButton expects: button, buttonData
-    -- ONLY pass Icon - Masque will only control the icon texture/border
-    -- We use _arcStackText instead of Count so Masque can't auto-detect it
-    group:AddButton(frame, {
-        Icon = frame.Icon,
-    })
-    
-    frame._arcAuraMasqueRegistered = true
-    
-    -- Deferred ReSkin after frame size is finalized by CDMGroups
-    C_Timer.After(0.2, function()
-        if frame and group and group.ReSkin then
-            group:ReSkin(frame)
-        end
-    end)
-end
-
-local function UnregisterFromMasque(frame)
-    local group = ArcAuras.masqueGroup
-    if not group then return end
-    
-    if frame._arcAuraMasqueRegistered then
-        group:RemoveButton(frame)
-        frame._arcAuraMasqueRegistered = nil
-    end
-end
 
 -- Settings cache per frame - invalidated only when settings change
 local settingsCache = {}  -- arcID -> { settings = {}, timestamp = time }
 local SETTINGS_CACHE_TTL = 5  -- Re-validate cache every 5 seconds max
+
+-- Apply swipe/edge colors from settings, skipping when Masque controls cooldowns
+-- Masque's skin owns swipe/edge colors when useMasqueCooldowns is enabled.
+local function ApplySwipeColors(frame, settings)
+    if ns.Masque and ns.Masque.ShouldMasqueControlCooldowns
+       and ns.Masque.ShouldMasqueControlCooldowns() then return end
+    if not frame.Cooldown or not settings or not settings.cooldownSwipe then return end
+    local sc = settings.cooldownSwipe.swipeColor
+    if sc then
+        frame.Cooldown:SetSwipeColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
+    end
+    local ec = settings.cooldownSwipe.edgeColor
+    if ec and frame.Cooldown.SetEdgeColor then
+        frame.Cooldown:SetEdgeColor(ec.r or 1, ec.g or 1, ec.b or 1, ec.a or 1)
+    end
+end
 
 local function InvalidateSettingsCache(arcID)
     if arcID then
@@ -1081,8 +1050,10 @@ function ArcAuras.CreateFrame(arcID, config)
     -- Register with CDMEnhance for visual style integration
     ArcAuras.RegisterWithCDMEnhance(arcID, frame)
     
-    -- Register with Masque for skinning (if available)
-    RegisterWithMasque(frame)
+    -- Register with Masque for skinning via unified system (if available)
+    if ns.Masque and ns.Masque.AddFrame then
+        ns.Masque.AddFrame(frame, "ArcAuras", arcID)
+    end
     
     -- Initialize stack cache for this frame
     InvalidateStackCache(arcID)
@@ -1098,8 +1069,10 @@ function ArcAuras.DestroyFrame(arcID)
     InvalidateSettingsCache(arcID)
     InvalidateStackCache(arcID)
     
-    -- Unregister from Masque (if registered)
-    UnregisterFromMasque(frame)
+    -- Unregister from Masque via unified system
+    if ns.Masque and ns.Masque.RemoveFrame then
+        ns.Masque.RemoveFrame(frame)
+    end
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- SPELL CLEANUP: Clear ArcAurasCooldown state tables
@@ -1409,18 +1382,8 @@ local function UpdateTrinketCooldown(frame, slotID)
             frame.Cooldown:SetCooldown(startTime or 0, duration or 0)
         end
         
-        -- Apply swipe/edge colors from settings (only when cooldown changes)
-        if settings and settings.cooldownSwipe then
-            local sc = settings.cooldownSwipe.swipeColor
-            if sc then
-                frame.Cooldown:SetSwipeColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
-            end
-            
-            local ec = settings.cooldownSwipe.edgeColor
-            if ec then
-                frame.Cooldown:SetEdgeColor(ec.r or 1, ec.g or 1, ec.b or 1, ec.a or 1)
-            end
-        end
+        -- Apply swipe/edge colors (skips when Masque controls cooldowns)
+        ApplySwipeColors(frame, settings)
         
         -- Update cached values
         frame._lastStartTime = startTime
@@ -1555,18 +1518,8 @@ local function UpdateItemCooldown(frame, itemID)
             frame.Cooldown:SetCooldown(startTime or 0, duration or 0)
         end
         
-        -- Apply swipe/edge colors from settings (only when cooldown changes)
-        if settings and settings.cooldownSwipe then
-            local sc = settings.cooldownSwipe.swipeColor
-            if sc then
-                frame.Cooldown:SetSwipeColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
-            end
-            
-            local ec = settings.cooldownSwipe.edgeColor
-            if ec then
-                frame.Cooldown:SetEdgeColor(ec.r or 1, ec.g or 1, ec.b or 1, ec.a or 1)
-            end
-        end
+        -- Apply swipe/edge colors (skips when Masque controls cooldowns)
+        ApplySwipeColors(frame, settings)
         
         -- Update cached values
         frame._lastStartTime = startTime
@@ -1741,18 +1694,23 @@ local function OnArcAurasUpdate()
                     -- Desaturation - DEFAULT ON unless user disabled via noDesaturate
                     local noDesaturate = (stateVisuals and stateVisuals.noDesaturate) or (cs.noDesaturate == true)
                     local shouldDesaturate = not noDesaturate
-                    if iconTex then
-                        if shouldDesaturate then
-                            if iconTex.SetDesaturation then
-                                iconTex:SetDesaturation(1)
-                            elseif iconTex.SetDesaturated then
-                                iconTex:SetDesaturated(true)
-                            end
-                        else
-                            if iconTex.SetDesaturation then
-                                iconTex:SetDesaturation(0)
-                            elseif iconTex.SetDesaturated then
-                                iconTex:SetDesaturated(false)
+                    -- OPTIMIZED: Only call SetDesaturation when value changes
+                    local desatKey = shouldDesaturate and "desat" or "normal"
+                    if frame._lastDesatState ~= desatKey then
+                        frame._lastDesatState = desatKey
+                        if iconTex then
+                            if shouldDesaturate then
+                                if iconTex.SetDesaturation then
+                                    iconTex:SetDesaturation(1)
+                                elseif iconTex.SetDesaturated then
+                                    iconTex:SetDesaturated(true)
+                                end
+                            else
+                                if iconTex.SetDesaturation then
+                                    iconTex:SetDesaturation(0)
+                                elseif iconTex.SetDesaturated then
+                                    iconTex:SetDesaturated(false)
+                                end
                             end
                         end
                     end
@@ -1760,12 +1718,17 @@ local function OnArcAurasUpdate()
                     -- Tint
                     local cooldownTint = (stateVisuals and stateVisuals.cooldownTint) or (cs.tint == true)
                     local tintColor = (stateVisuals and stateVisuals.cooldownTintColor) or cs.tintColor
-                    if iconTex then
-                        if cooldownTint and tintColor then
-                            local c = tintColor
-                            iconTex:SetVertexColor(c.r or 0.5, c.g or 0.5, c.b or 0.5, 1)
-                        else
-                            iconTex:SetVertexColor(1, 1, 1, 1)
+                    -- OPTIMIZED: Only call SetVertexColor when tint state changes
+                    local tintRef = cooldownTint and tintColor or false
+                    if frame._lastTintRef ~= tintRef then
+                        frame._lastTintRef = tintRef
+                        if iconTex then
+                            if cooldownTint and tintColor then
+                                local c = tintColor
+                                iconTex:SetVertexColor(c.r or 0.5, c.g or 0.5, c.b or 0.5, 1)
+                            else
+                                iconTex:SetVertexColor(1, 1, 1, 1)
+                            end
                         end
                     end
                     
@@ -1847,10 +1810,12 @@ local function OnArcAurasUpdate()
                     
                     -- Check if item is usable - use cached result from cooldown update
                     local isUnusable = false
-                    local isPassive = config.isPassive
                     local isLockedOut = frame._arcLockedOut
                     
-                    if not isPassive and config.type == "item" and config.itemID then
+                    -- Check usability for ALL item-type frames (including passive consumables)
+                    -- _lastUsableResult is only explicitly false when IsUsableItem returns false
+                    -- (nil for items never checked, true for usable items - neither triggers desat)
+                    if config.type == "item" and config.itemID then
                         -- Use cached usability from UpdateItemCooldown
                         isUnusable = (frame._lastUsableResult == false) or isLockedOut
                     elseif isLockedOut then
@@ -1858,25 +1823,29 @@ local function OnArcAurasUpdate()
                     end
                     
                     -- Desaturation: normally off when ready, but ON if item is unusable/locked out
-                    -- Passive items always show normal (full color) - they have no usable state
-                    if iconTex then
-                        if isUnusable and not isPassive then
-                            -- Item not usable (not in bags, wrong class, locked out for combat) - desaturate
-                            if iconTex.SetDesaturation then
-                                iconTex:SetDesaturation(1)
-                            elseif iconTex.SetDesaturated then
-                                iconTex:SetDesaturated(true)
+                    -- OPTIMIZED: Only call SetDesaturation/SetVertexColor when state changes
+                    local desatKey = isUnusable and "desat_unusable" or "normal"
+                    if frame._lastDesatState ~= desatKey then
+                        frame._lastDesatState = desatKey
+                        if iconTex then
+                            if isUnusable then
+                                -- Item not usable (no stacks, wrong class, locked out) - desaturate
+                                if iconTex.SetDesaturation then
+                                    iconTex:SetDesaturation(1)
+                                elseif iconTex.SetDesaturated then
+                                    iconTex:SetDesaturated(true)
+                                end
+                                -- Dim vertex color to indicate unavailable
+                                iconTex:SetVertexColor(0.6, 0.6, 0.6, 1)
+                            else
+                                -- Normal ready state - no desaturation
+                                if iconTex.SetDesaturation then
+                                    iconTex:SetDesaturation(0)
+                                elseif iconTex.SetDesaturated then
+                                    iconTex:SetDesaturated(false)
+                                end
+                                iconTex:SetVertexColor(1, 1, 1, 1)
                             end
-                            -- Dim vertex color to indicate unavailable
-                            iconTex:SetVertexColor(0.6, 0.6, 0.6, 1)
-                        else
-                            -- Normal ready state (or passive item) - no desaturation
-                            if iconTex.SetDesaturation then
-                                iconTex:SetDesaturation(0)
-                            elseif iconTex.SetDesaturated then
-                                iconTex:SetDesaturated(false)
-                            end
-                            iconTex:SetVertexColor(1, 1, 1, 1)
                         end
                     end
                     
@@ -2228,13 +2197,17 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
         frame.Cooldown:SetDrawBling(swipe.showBling ~= false)
         frame.Cooldown:SetReverse(swipe.reverse == true)
         
-        -- Swipe color
-        if swipe.swipeColor then
-            local sc = swipe.swipeColor
-            frame.Cooldown:SetSwipeColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
-        else
-            -- Default black swipe
-            frame.Cooldown:SetSwipeColor(0, 0, 0, 0.7)
+        -- Swipe color (skip when Masque controls cooldowns — skin owns colors)
+        local masqueControlsCooldowns = ns.Masque and ns.Masque.ShouldMasqueControlCooldowns
+            and ns.Masque.ShouldMasqueControlCooldowns()
+        if not masqueControlsCooldowns then
+            if swipe.swipeColor then
+                local sc = swipe.swipeColor
+                frame.Cooldown:SetSwipeColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
+            else
+                -- Default black swipe
+                frame.Cooldown:SetSwipeColor(0, 0, 0, 0.7)
+            end
         end
         
         -- Edge scale
@@ -2242,10 +2215,12 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
             frame.Cooldown:SetEdgeScale(swipe.edgeScale)
         end
         
-        -- Edge color
-        if swipe.edgeColor and frame.Cooldown.SetEdgeColor then
-            local ec = swipe.edgeColor
-            frame.Cooldown:SetEdgeColor(ec.r or 1, ec.g or 1, ec.b or 1, ec.a or 1)
+        -- Edge color (skip when Masque controls cooldowns)
+        if not masqueControlsCooldowns then
+            if swipe.edgeColor and frame.Cooldown.SetEdgeColor then
+                local ec = swipe.edgeColor
+                frame.Cooldown:SetEdgeColor(ec.r or 1, ec.g or 1, ec.b or 1, ec.a or 1)
+            end
         end
         
         -- Swipe insets (adjust cooldown frame positioning)
@@ -2303,6 +2278,10 @@ end
 function ArcAuras.RefreshSwipeColors(arcID)
     local frame = ArcAuras.frames[arcID]
     if not frame or not frame.Cooldown then return end
+    
+    -- Skip when Masque controls cooldowns — skin owns swipe/edge colors
+    if ns.Masque and ns.Masque.ShouldMasqueControlCooldowns
+       and ns.Masque.ShouldMasqueControlCooldowns() then return end
     
     -- Invalidate cache to get fresh settings
     InvalidateSettingsCache(arcID)
@@ -2407,24 +2386,21 @@ function ArcAuras.ShowContextMenu(frame)
         return
     end
     
-    local menu = {
-        { text = "Arc Auras: " .. (frame._currentItemName or frame._arcAuraID), isTitle = true },
-        { text = "Configure Icon", func = function()
+    MenuUtil.CreateContextMenu(frame, function(ownerRegion, rootDescription)
+        rootDescription:CreateTitle("Arc Auras: " .. (frame._currentItemName or frame._arcAuraID))
+        rootDescription:CreateButton("Configure Icon", function()
             ArcAuras.OpenIconConfig(frame._arcAuraID)
-        end },
-        { text = "Change Icon...", func = function()
+        end)
+        rootDescription:CreateButton("Change Icon...", function()
             ArcAuras.ShowIconOverridePicker(frame._arcAuraID, frame)
-        end },
-        { text = "Reset Position", func = function()
+        end)
+        rootDescription:CreateButton("Reset Position", function()
             ArcAuras.ResetFramePosition(frame._arcAuraID)
-        end },
-        { text = "Hide This Frame", func = function()
+        end)
+        rootDescription:CreateButton("Hide This Frame", function()
             ArcAuras.SetTrackedItemEnabled(frame._arcAuraID, false)
-        end },
-        { text = "Cancel", func = function() end },
-    }
-    
-    EasyMenu(menu, CreateFrame("Frame", "ArcAurasContextMenu", UIParent, "UIDropDownMenuTemplate"), "cursor", 0, 0, "MENU")
+        end)
+    end)
 end
 
 function ArcAuras.OpenIconConfig(arcID)
@@ -3465,34 +3441,53 @@ function ArcAuras.Enable()
         if not db2 or not db2.trackedSpells then return end
         
         for arcID, config in pairs(db2.trackedSpells) do
-            if not ArcAuras.frames[arcID] then
-                local spellID = config.spellID
-                -- Use full visibility check (spec filter + talent conditions),
-                -- not just IsPlayerSpell. Without this, frames that should be
-                -- hidden by spec/talent conditions get created on reload,
-                -- registering with CDMGroups and corrupting saved positions.
-                local shouldShow = false
-                if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ShouldFrameBeVisible then
-                    shouldShow = ns.ArcAurasCooldown.ShouldFrameBeVisible(config, spellID)
-                else
-                    -- Fallback if cooldown module not loaded yet (shouldn't happen after 0.3s)
-                    shouldShow = config.forceShow or (IsPlayerSpell and IsPlayerSpell(spellID)) or (IsSpellKnown and IsSpellKnown(spellID))
-                end
+            local existingFrame = ArcAuras.frames[arcID]
+            local spellID = config.spellID
+            
+            -- Use full visibility check (spec filter + talent conditions),
+            -- not just IsPlayerSpell. Without this, frames that should be
+            -- hidden by spec/talent conditions get created on reload,
+            -- registering with CDMGroups and corrupting saved positions.
+            local shouldShow = false
+            if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ShouldFrameBeVisible then
+                shouldShow = ns.ArcAurasCooldown.ShouldFrameBeVisible(config, spellID)
+            else
+                -- Fallback if cooldown module not loaded yet (shouldn't happen after 0.3s)
+                shouldShow = config.forceShow or (IsPlayerSpell and IsPlayerSpell(spellID)) or (IsSpellKnown and IsSpellKnown(spellID))
+            end
+            
+            if existingFrame then
+                -- Frame already exists (hidden by Disable) - re-show if appropriate
                 if shouldShow then
-                    local spellConfig = {
-                        type = "spell",
-                        spellID = spellID,
-                        name = config.name,
-                        icon = config.iconOverride or config.icon,
-                        enabled = true,
-                    }
-                    local frame = ArcAuras.CreateFrame(arcID, spellConfig)
-                    if frame then
-                        frame:Show()
-                        -- Let ArcAurasCooldown engine take over
-                        if ns.ArcAurasCooldown and ns.ArcAurasCooldown.InitializeSpellFrame then
-                            ns.ArcAurasCooldown.InitializeSpellFrame(arcID, frame, spellConfig)
-                        end
+                    existingFrame:Show()
+                    ArcAuras.ApplyInitialStateVisuals(arcID, existingFrame)
+                    -- Re-initialize with cooldown engine so state tracking resumes
+                    if ns.ArcAurasCooldown and ns.ArcAurasCooldown.InitializeSpellFrame then
+                        local spellConfig = {
+                            type = "spell",
+                            spellID = spellID,
+                            name = config.name,
+                            icon = config.iconOverride or config.icon,
+                            enabled = true,
+                        }
+                        ns.ArcAurasCooldown.InitializeSpellFrame(arcID, existingFrame, spellConfig)
+                    end
+                end
+            elseif shouldShow then
+                -- No frame yet - create it
+                local spellConfig = {
+                    type = "spell",
+                    spellID = spellID,
+                    name = config.name,
+                    icon = config.iconOverride or config.icon,
+                    enabled = true,
+                }
+                local frame = ArcAuras.CreateFrame(arcID, spellConfig)
+                if frame then
+                    frame:Show()
+                    -- Let ArcAurasCooldown engine take over
+                    if ns.ArcAurasCooldown and ns.ArcAurasCooldown.InitializeSpellFrame then
+                        ns.ArcAurasCooldown.InitializeSpellFrame(arcID, frame, spellConfig)
                     end
                 end
             end
@@ -3904,6 +3899,8 @@ function ArcAuras.ApplyInitialStateVisuals(arcID, frame)
     frame._lastAppliedAlpha = nil
     frame._lastVisualState = nil
     frame._cachedStateVisuals = nil
+    frame._lastDesatState = nil
+    frame._lastTintRef = nil
     
     -- Get settings
     local settings = ArcAuras.GetCachedSettings(arcID)
@@ -3999,6 +3996,8 @@ function ArcAuras.RefreshFrameSettings(arcID)
     -- Without this, the optimization checks in OnArcAurasUpdate may skip applying new values
     frame._lastAppliedAlpha = nil  -- Force alpha re-application
     frame._lastVisualState = nil   -- Force visual state re-evaluation
+    frame._lastDesatState = nil    -- Force desat re-application
+    frame._lastTintRef = nil       -- Force tint re-application
     
     -- CRITICAL: Reset cached cooldown values so next OnArcAurasUpdate reapplies the cooldown swipe
     -- This fixes the issue where zone changes or Masque refresh clears the cooldown display
@@ -4055,18 +4054,22 @@ function ArcAuras.RefreshMasqueState()
     
     for arcID, frame in pairs(ArcAuras.frames) do
         if masqueEnabled then
-            -- Masque is now enabled - register if not already
-            if not frame._arcAuraMasqueRegistered then
-                RegisterWithMasque(frame)
+            -- Masque is now enabled - register via unified system if not already
+            if not frame._arcMasqueAdded then
+                if ns.Masque and ns.Masque.AddFrame then
+                    ns.Masque.AddFrame(frame, "ArcAuras", arcID)
+                end
             end
             -- Reset icon texture to default 1:1 for Masque to control
             if frame.Icon and frame.Icon.SetTexCoord then
                 frame.Icon:SetTexCoord(0, 1, 0, 1)
             end
         else
-            -- Masque is now disabled - unregister if registered
-            if frame._arcAuraMasqueRegistered then
-                UnregisterFromMasque(frame)
+            -- Masque is now disabled - unregister via unified system
+            if frame._arcMasqueAdded then
+                if ns.Masque and ns.Masque.RemoveFrame then
+                    ns.Masque.RemoveFrame(frame)
+                end
                 -- Reset icon texture to default
                 if frame.Icon and frame.Icon.SetTexCoord then
                     frame.Icon:SetTexCoord(0, 1, 0, 1)
@@ -4125,6 +4128,35 @@ function ArcAuras.Initialize()
             C_Timer.After(0.5, function()
                 -- nil = use onlyOnUseTrinkets setting, true = create slot trackers (arc_trinket_13)
                 ArcAuras.AutoAddTrinkets(nil, true)
+            end)
+            
+            -- VISIBILITY FIX: Enable() creates frames and calls frame:Show(), but
+            -- at login time GetInventoryItemID may return nil (items not loaded yet),
+            -- causing frames to get _arcSlotEmpty=true incorrectly. Re-check actual
+            -- slot state after items are loaded and call ShowTrinketSlotFrame.
+            C_Timer.After(1.5, function()
+                if not ArcAuras.isEnabled then return end
+                local db2 = GetDB()
+                if not db2 then return end
+                local onlyOnUse2 = db2.onlyOnUseTrinkets
+                for _, slot in ipairs(TRINKET_SLOTS) do
+                    if ArcAuras.IsAutoTrackSlotEnabled(slot.slotID) then
+                        local arcID = ArcAuras.MakeTrinketID(slot.slotID)
+                        local frame = ArcAuras.frames[arcID]
+                        if frame then
+                            -- Re-check actual slot state (items should be loaded by now)
+                            local itemID = GetInventoryItemID("player", slot.slotID)
+                            if itemID then
+                                local isPassive = onlyOnUse2 and IsItemPassive(itemID)
+                                if not isPassive then
+                                    -- Clear the stale flag so ShowTrinketSlotFrame works
+                                    frame._arcSlotEmpty = nil
+                                    ArcAuras.ShowTrinketSlotFrame(arcID)
+                                end
+                            end
+                        end
+                    end
+                end
             end)
         end
         

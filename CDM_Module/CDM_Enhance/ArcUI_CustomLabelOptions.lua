@@ -493,3 +493,363 @@ function ns.CustomLabelOptions.GetCooldownArgs()
 
   return args
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ASSISTED COMBAT HIGHLIGHT OPTIONS
+-- Global setting (not per-icon) — shows the Blizzard "next cast" flipbook
+-- highlight on CDM frames when Assisted Combat recommends a spell.
+-- Includes color tint and Arc Auras Cooldown toggle.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+ns.AssistedCombatHighlightOptions = ns.AssistedCombatHighlightOptions or {}
+
+local function GetACHDB()
+  if not ArcUIDB then return nil end
+  if not ArcUIDB.char then return nil end
+  local playerName = UnitName("player")
+  local realmName = GetRealmName()
+  if not playerName or playerName == "" or not realmName or realmName == "" then return nil end
+  local charKey = playerName .. " - " .. realmName
+  local charDB = ArcUIDB.char[charKey]
+  if not charDB or not charDB.achSettings then return nil end
+  return charDB.achSettings
+end
+
+local function IsACHAvailable()
+  return ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.available
+end
+
+function ns.AssistedCombatHighlightOptions.GetCooldownArgs()
+  local args = {}
+
+  -- Header
+  args.achHeader = {
+    type = "toggle",
+    name = "Assisted Combat Highlight",
+    desc = "Click to expand/collapse.\nShows the animated \"next cast\" highlight on CDM cooldown icons when Assisted Combat recommends a spell.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not H().collapsedSections.assistedCombatHighlight end,
+    set = function(_, v) H().collapsedSections.assistedCombatHighlight = not v end,
+    order = 169, width = "full",
+    hidden = function()
+      return not IsACHAvailable()
+    end,
+  }
+
+  local function HideACH()
+    if not IsACHAvailable() then return true end
+    return H().collapsedSections.assistedCombatHighlight
+  end
+
+  -- Description
+  args.achDesc = {
+    type = "description",
+    name = "|cff888888Uses the same animated flipbook overlay Blizzard shows on action bar buttons."
+      .. " The highlight appears on your CDM cooldown and utility icons when Assisted Combat"
+      .. " recommends a spell, animated in combat and static out of combat.\n"
+      .. "Requires Assisted Combat to be enabled in Game Settings > Combat.|r",
+    order = 169.01, width = "full", fontSize = "small",
+    hidden = HideACH,
+  }
+
+  -- Enable toggle
+  args.achEnabled = {
+    type = "toggle",
+    name = "Enable on CDM Frames",
+    desc = "Show the Assisted Combat next-cast highlight on CDM cooldown and utility icons.",
+    order = 169.02, width = 1.0,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      if not db then return false end
+      if db.assistedCombatHighlight == nil then return false end
+      return db.assistedCombatHighlight
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.assistedCombatHighlight = v
+      end
+      local ACH = ns.AssistedCombatHighlight
+      if not ACH then return end
+      if v then
+        local avail, reason = C_AssistedCombat.IsAvailable()
+        if avail then
+          ACH.Enable()
+        else
+          print("|cffFF6600[ArcUI]|r Assisted Combat is not available: " .. (reason or "unknown reason"))
+        end
+      else
+        ACH.Disable()
+      end
+    end,
+  }
+
+  -- Style dropdown
+  args.achStyle = {
+    type = "select",
+    name = "Style",
+    desc = "Choose the highlight animation style.\n\n|cff00ffffAnts|r — Blizzard's marching ants border (same as action bar assisted combat highlight).\n\n|cff00ffffProc Glow|r — Blizzard's spell proc burst + loop animation (same as spell activation overlay).",
+    order = 169.025, width = 0.6,
+    hidden = HideACH,
+    values = {
+      ants = "Ants",
+      proc = "Proc Glow",
+    },
+    sorting = { "ants", "proc" },
+    get = function()
+      local db = GetACHDB()
+      return db and db.achStyle or "ants"
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achStyle = v
+      end
+      if ns.AssistedCombatHighlight then
+        ns.AssistedCombatHighlight.DestroyAllHighlights()
+        ns.AssistedCombatHighlight.Refresh()
+      end
+    end,
+  }
+
+  -- Arc Auras Cooldown toggle
+  args.achArcAuras = {
+    type = "toggle",
+    name = "Include Arc Auras",
+    desc = "Also show the Assisted Combat highlight on Arc Auras Cooldown frames (custom spell tracking icons).",
+    order = 169.03, width = 1.0,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      return db and db.achOnArcAuras or false
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achOnArcAuras = v
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.Refresh then
+        ns.AssistedCombatHighlight.Refresh()
+      end
+    end,
+  }
+
+  -- Combat only toggle
+  args.achCombatOnly = {
+    type = "toggle",
+    name = "Combat Only",
+    desc = "Only show the next-cast highlight while in combat. Hides it when out of combat.",
+    order = 169.035, width = 0.8,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      return db and db.achCombatOnly or false
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achCombatOnly = v
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.Refresh then
+        ns.AssistedCombatHighlight.Refresh()
+      end
+    end,
+  }
+
+  -- Frame Strata dropdown
+  args.achStrata = {
+    type = "select",
+    name = "Strata",
+    desc = "Set the frame strata for the highlight overlay. 'Inherit' uses the parent icon's strata.",
+    order = 169.036, width = 0.7,
+    hidden = HideACH,
+    values = {
+      INHERIT    = "Inherit",
+      BACKGROUND = "Background",
+      LOW        = "Low",
+      MEDIUM     = "Medium",
+      HIGH       = "High",
+      DIALOG     = "Dialog",
+    },
+    sorting = { "INHERIT", "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+    get = function()
+      local db = GetACHDB()
+      return db and db.achStrata or "INHERIT"
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achStrata = v
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.RestrataAll then
+        ns.AssistedCombatHighlight.RestrataAll()
+      end
+    end,
+  }
+
+  -- Frame Level offset input
+  args.achLevel = {
+    type = "input",
+    name = "Level",
+    desc = "Frame level offset above the parent icon. Higher values render on top of other overlays within the same strata.",
+    order = 169.037, width = 0.45,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      return tostring(db and db.achLevel or 5)
+    end,
+    set = function(_, v)
+      local num = tonumber(v)
+      if not num then return end
+      num = math.floor(math.max(0, math.min(50, num)))
+      local db = GetACHDB()
+      if db then
+        db.achLevel = num
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.RestrataAll then
+        ns.AssistedCombatHighlight.RestrataAll()
+      end
+    end,
+  }
+
+  -- Glow size scale slider
+  args.achScale = {
+    type = "range",
+    name = "Glow Size",
+    desc = "Scale the highlight glow relative to the icon. 1.0 = exact icon size, higher values extend the glow beyond the icon edge.",
+    order = 169.038, width = 1.0,
+    min = 0.5, max = 2.0, step = 0.05,
+    isPercent = true,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      return db and db.achScale or 1.0
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achScale = v
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.ResizeAll then
+        ns.AssistedCombatHighlight.ResizeAll()
+      end
+    end,
+  }
+
+  -- Always Animate toggle
+  args.achAlwaysAnimate = {
+    type = "toggle",
+    name = "Always Animate",
+    desc = "Keep the highlight animation playing even when out of combat. When disabled, the highlight freezes on a static frame outside of combat.",
+    order = 169.039, width = 0.9,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      return db and db.achAlwaysAnimate or false
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achAlwaysAnimate = v
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.RefreshAnimAll then
+        ns.AssistedCombatHighlight.RefreshAnimAll()
+      end
+    end,
+  }
+
+  -- Show Burst toggle (proc style only)
+  args.achShowBurst = {
+    type = "toggle",
+    name = "Show Burst Intro",
+    desc = "Play the burst intro animation when the next-cast spell changes. Only applies to the Proc Glow style.",
+    order = 169.0395, width = 0.9,
+    hidden = function()
+      if HideACH() then return true end
+      local db = GetACHDB()
+      return not db or (db.achStyle or "ants") ~= "proc"
+    end,
+    get = function()
+      local db = GetACHDB()
+      if not db then return true end
+      if db.achShowBurst == nil then return true end
+      return db.achShowBurst
+    end,
+    set = function(_, v)
+      local db = GetACHDB()
+      if db then
+        db.achShowBurst = v
+      end
+    end,
+  }
+
+  -- Color picker
+  args.achColor = {
+    type = "color",
+    name = "Tint Color",
+    desc = "Tint the highlight animation. White = default Blizzard color.",
+    hasAlpha = true,
+    order = 169.04, width = 0.6,
+    hidden = HideACH,
+    get = function()
+      local db = GetACHDB()
+      if not db or not db.achColor then return 1, 1, 1, 1 end
+      local c = db.achColor
+      return c.r or 1, c.g or 1, c.b or 1, c.a or 1
+    end,
+    set = function(_, r, g, b, a)
+      local db = GetACHDB()
+      if db then
+        db.achColor = { r = r, g = g, b = b, a = a }
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.RecolorAll then
+        ns.AssistedCombatHighlight.RecolorAll()
+      end
+    end,
+  }
+
+  -- Reset color button
+  args.achResetColor = {
+    type = "execute",
+    name = "Reset Color",
+    desc = "Reset highlight color to default (white).",
+    order = 169.05, width = 0.6,
+    hidden = function()
+      if HideACH() then return true end
+      local db = GetACHDB()
+      return not db or not db.achColor
+    end,
+    func = function()
+      local db = GetACHDB()
+      if db then
+        db.achColor = nil
+      end
+      if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.RecolorAll then
+        ns.AssistedCombatHighlight.RecolorAll()
+      end
+    end,
+  }
+
+  -- Status line
+  args.achStatus = {
+    type = "description",
+    name = function()
+      if not C_AssistedCombat then
+        return "|cffff6666Assisted Combat system not found on this build.|r"
+      end
+      local avail, reason = C_AssistedCombat.IsAvailable()
+      if avail then
+        local rotationSpells = C_AssistedCombat.GetRotationSpells()
+        local count = rotationSpells and #rotationSpells or 0
+        return "|cff00ff00Assisted Combat is active|r — " .. count .. " rotation spell" .. (count ~= 1 and "s" or "") .. " tracked"
+      else
+        return "|cffff6666Assisted Combat unavailable:|r " .. (reason or "unknown")
+      end
+    end,
+    order = 169.06, width = "full", fontSize = "medium",
+    hidden = HideACH,
+  }
+
+  return args
+end

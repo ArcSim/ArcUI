@@ -2,7 +2,8 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.5.1.a
+## Version: 3.5.4
+## X-Wago-ID:mNw7Q2No
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
 
 
@@ -19,6 +20,8 @@ Libs\AceSerializer-3.0\AceSerializer-3.0.xml
 Libs\AceGUI-3.0\AceGUI-3.0.xml
 Libs\AceGUI-3.0-CollapsibleHeader\AceGUI-3.0-CollapsibleHeader.lua
 Libs\AceGUI-3.0-ArcUI-Widgets\AceGUI-3.0-ArcUI-Widgets.lua
+Libs\AceGUI-3.0-ArcUI-Widgets\ArcUI-CatalogGridBuilder.lua
+Libs\AceGUI-3.0-ArcUI-Widgets\ArcUI_IconStateVisualsWidget.lua
 Libs\AceGUI-3.0_SFX-Widgets\AceGUI-3.0_SFX-Widgets.xml
 Libs\AceConfig-3.0\AceConfig-3.0.xml
 Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
@@ -27,6 +30,9 @@ Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\LibEditModeOverride\LibEditModeOverride.xml
 Libs\LibEQOL\LibEQOL.xml
+
+# Custom Textures (community-contributed bar textures and fonts)
+#ArcUI_CustomTextures.lua
 
 # Core Files
 ArcUI_DB.lua
@@ -67,6 +73,7 @@ CDM_Module\CDM_Enhance\ArcUI_Keybinds.lua
 CDM_Module\CDM_Enhance\ArcUI_CustomLabel.lua
 CDM_Module\CDM_Enhance\ArcUI_Masque.lua
 CDM_Module\CDM_Enhance\ArcUI_CDMSpellUsability.lua
+CDM_Module\CDM_Enhance\ArcUI_AssistedCombatHighlight.lua
 
 # CDM Groups Registry (frame tracking - must load before CDMGroups)
 CDM_Module\CDM_Groups\ArcUI_CDMGroups_Registry.lua

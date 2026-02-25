@@ -760,43 +760,143 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- CACHED OPTIONS PANEL STATE
--- Single source of truth for options panel open state
--- Cached to avoid expensive LibStub lookups on every call (was 700+ calls/sec!)
+-- HOOK-BASED OPTIONS PANEL STATE (Zero-Polling)
+-- Single source of truth: ns.optionsPanelOpen
+-- Hooks AceConfigDialog Open/Close/CloseAll and widget frame OnShow/OnHide
+-- No tickers, no polling, no GetTime() checks. Instant state changes.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local optionsPanelOpenCache = false
-local optionsPanelCacheTime = 0
-local OPTIONS_PANEL_CACHE_INTERVAL = 0.25  -- Update cache every 0.25s
+-- The global flag - ALL modules read this instead of polling ACD.OpenFrames
+ns.optionsPanelOpen = false
 
--- Internal: Actually check if options panel is open (expensive - uses LibStub)
-local function CheckOptionsPanelOpen()
-    local ACD = LibStub and LibStub("AceConfigDialog-3.0", true)
-    if ACD then
-        return ACD.OpenFrames and ACD.OpenFrames["ArcUI"] ~= nil
+-- Registered callbacks: modules add functions here to be notified of state changes
+-- Each entry: { onOpen = function, onClose = function }
+Shared._panelCallbacks = {}
+
+-- Register a callback for panel open/close events
+-- Usage: Shared.RegisterPanelCallback("MyModule", { onOpen = fn, onClose = fn })
+function Shared.RegisterPanelCallback(name, callbacks)
+    Shared._panelCallbacks[name] = callbacks
+end
+
+-- Internal: Set panel state and fire all callbacks
+local function SetPanelState(open)
+    if ns.optionsPanelOpen == open then return end
+    ns.optionsPanelOpen = open
+
+    -- Fire legacy callback (if any module set it directly)
+    if Shared.OnOptionsPanelStateChanged then
+        local ok, err = pcall(Shared.OnOptionsPanelStateChanged, open)
+        if not ok then
+            print("|cffFF0000[ArcUI PanelHook]|r Legacy callback error: " .. tostring(err))
+        end
     end
-    return false
-end
 
--- Public: Get cached options panel state (cheap - just returns cached value)
-function Shared.IsOptionsPanelOpen()
-    return optionsPanelOpenCache
-end
-
--- Update the cache - called by ticker
-local function UpdateOptionsPanelCache()
-    local newState = CheckOptionsPanelOpen()
-    if newState ~= optionsPanelOpenCache then
-        optionsPanelOpenCache = newState
-        -- Fire callback if state changed
-        if Shared.OnOptionsPanelStateChanged then
-            Shared.OnOptionsPanelStateChanged(newState)
+    -- Fire registered callbacks
+    local key = open and "onOpen" or "onClose"
+    for name, cbs in pairs(Shared._panelCallbacks) do
+        if cbs[key] then
+            local ok, err = pcall(cbs[key])
+            if not ok then
+                print("|cffFF0000[ArcUI PanelHook]|r Callback error (" .. name .. "): " .. tostring(err))
+            end
         end
     end
 end
 
--- Ticker to update cache periodically
-local optionsPanelCacheTicker = C_Timer.NewTicker(OPTIONS_PANEL_CACHE_INTERVAL, UpdateOptionsPanelCache)
+-- Public: Get options panel state (instant - just reads the flag)
+function Shared.IsOptionsPanelOpen()
+    return ns.optionsPanelOpen
+end
+
+-- Force-set panel state (for external callers that need to override, e.g. combat close)
+function Shared.SetOptionsPanelState(open)
+    SetPanelState(open)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- HOOK INSTALLATION
+-- Hooks AceConfigDialog methods + widget frame. Called once at init.
+--
+-- IMPORTANT: Must install AFTER all addons have loaded. If hooked at
+-- file-load time, other addons that bundle a newer AceConfigDialog-3.0
+-- will re-register the library and overwrite ACD.Open, silently
+-- destroying our posthook. PLAYER_LOGIN fires after all addons are
+-- fully loaded and initialized, so hooks are safe at that point.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local panelHooksInstalled = false
+local widgetFrameHooked = false
+
+local function HookWidgetFrame(ACD)
+    if widgetFrameHooked then return end
+    local widget = ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+    if not widget or not widget.frame then return end
+
+    widget.frame:HookScript("OnShow", function()
+        SetPanelState(true)
+    end)
+    widget.frame:HookScript("OnHide", function()
+        SetPanelState(false)
+    end)
+    widgetFrameHooked = true
+    Shared._widgetFrameHooked = true
+end
+
+function Shared.InstallPanelHooks()
+    if panelHooksInstalled then return end
+
+    local ACD = LibStub and LibStub("AceConfigDialog-3.0", true)
+    if not ACD then return end
+
+    -- Hook ACD:Open - fires AFTER the method completes (posthook)
+    hooksecurefunc(ACD, "Open", function(_, appName)
+        if appName ~= "ArcUI" then return end
+        SetPanelState(true)
+        -- Hook the widget frame on first open (frame doesn't exist until first Open)
+        HookWidgetFrame(ACD)
+    end)
+
+    -- Hook ACD:Close
+    hooksecurefunc(ACD, "Close", function(_, appName)
+        if appName == "ArcUI" then
+            SetPanelState(false)
+        end
+    end)
+
+    -- Hook ACD:CloseAll (Escape key path)
+    if ACD.CloseAll then
+        hooksecurefunc(ACD, "CloseAll", function()
+            SetPanelState(false)
+        end)
+    end
+
+    -- Combat auto-close: force close ArcUI panel on combat start
+    local combatFrame = CreateFrame("Frame")
+    combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    combatFrame:SetScript("OnEvent", function()
+        if ns.optionsPanelOpen then
+            ACD:Close("ArcUI")
+        end
+    end)
+
+    panelHooksInstalled = true
+    Shared._panelHooksInstalled = true
+end
+
+-- Install hooks AFTER all addons are loaded (PLAYER_LOGIN).
+-- Hooking at file-load time is unsafe: other addons that load after us
+-- may bundle a newer AceConfigDialog-3.0 which re-initializes ACD.Open,
+-- silently destroying any posthooks installed before them.
+local hookInstallFrame = CreateFrame("Frame")
+hookInstallFrame:RegisterEvent("PLAYER_LOGIN")
+hookInstallFrame:SetScript("OnEvent", function(self)
+    self:UnregisterAllEvents()
+    -- Small delay to let any post-LOGIN initialization settle
+    C_Timer.After(0.1, function()
+        Shared.InstallPanelHooks()
+    end)
+end)
 
 -- ===================================================================
 -- LIBPLEEBUG FUNCTION WRAPPING
@@ -806,7 +906,7 @@ if P then
   -- DB Access (17ms @ 42/sec - most called function!)
   Shared.GetCDMGroupsDB = P:Def("GetCDMGroupsDB", Shared.GetCDMGroupsDB, "DB")
   
-  -- Options Panel State (cached now but still track it)
+  -- Options Panel State (hook-based now, trivial cost but still track it)
   Shared.IsOptionsPanelOpen = P:Def("IsOptionsPanelOpen", Shared.IsOptionsPanelOpen, "State")
   Shared.IsCDMStylingEnabled = P:Def("IsCDMStylingEnabled", Shared.IsCDMStylingEnabled, "State")
 end

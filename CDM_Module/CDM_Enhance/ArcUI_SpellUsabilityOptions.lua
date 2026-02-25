@@ -109,7 +109,8 @@ local function BuildUsabilityEntries(orderBase, mode, hideSection)
     desc = "Tint spell icons based on whether they can be cast.\n\n"
         .. "|cff8080ffBlue|r = Not enough resource (mana, energy, etc.)\n"
         .. "|cff999999Gray|r = Not usable (wrong stance, missing buff, etc.)\n\n"
-        .. "When disabled, icons use default white when no custom tint is set.",
+        .. "When disabled, icons use default white when no custom tint is set.\n\n"
+        .. "|cffaaaaaa(Ready and On Cooldown tint/desat options are in the Icon State Visuals sections above.)|r",
     get = function()
       local c = GetCfg(mode)
       return not c or not c.spellUsability or c.spellUsability.enabled ~= false
@@ -124,6 +125,9 @@ local function BuildUsabilityEntries(orderBase, mode, hideSection)
     order = orderBase + 0.001, width = 1.2,
     hidden = hideSection,
   }
+
+  -- (Ready/Normal tint + desat and On Cooldown tint + desat have been moved
+  --  to the Ready State and On Cooldown State sections in Icon State Visuals.)
 
   -- ───────────────────────────────────────────────────────────────────
   -- NOT ENOUGH RESOURCE  (mana, energy, maelstrom, etc.)
@@ -174,6 +178,24 @@ local function BuildUsabilityEntries(orderBase, mode, hideSection)
     hidden = hideSection,
   }
 
+  entries["spellUsabilityResourceDesat"] = {
+    type = "toggle", name = "Desaturate",
+    desc = "Desaturate (grayscale) the icon when you don't have enough resource.",
+    get = function()
+      local c = GetCfg(mode)
+      return c and c.spellUsability and c.spellUsability.notEnoughResourceDesaturate or false
+    end,
+    set = function(_, v)
+      ApplySetting(mode, function(c)
+        if not c.spellUsability then c.spellUsability = {} end
+        c.spellUsability.notEnoughResourceDesaturate = v
+      end)
+      Refresh()
+    end,
+    order = orderBase + 0.013, width = 0.6,
+    hidden = hideSection,
+  }
+
   -- ───────────────────────────────────────────────────────────────────
   -- NOT USABLE  (wrong stance, missing buff, etc.)
   -- Layout: [Description full] → [Tint Color] [Opacity Slider] on same row
@@ -220,6 +242,24 @@ local function BuildUsabilityEntries(orderBase, mode, hideSection)
       Refresh()
     end,
     order = orderBase + 0.022, width = 0.8,
+    hidden = hideSection,
+  }
+
+  entries["spellUsabilityNotUsableDesat"] = {
+    type = "toggle", name = "Desaturate",
+    desc = "Desaturate (grayscale) the icon when the spell can't be cast.",
+    get = function()
+      local c = GetCfg(mode)
+      return c and c.spellUsability and c.spellUsability.notUsableDesaturate or false
+    end,
+    set = function(_, v)
+      ApplySetting(mode, function(c)
+        if not c.spellUsability then c.spellUsability = {} end
+        c.spellUsability.notUsableDesaturate = v
+      end)
+      Refresh()
+    end,
+    order = orderBase + 0.023, width = 0.6,
     hidden = hideSection,
   }
 
@@ -456,39 +496,9 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 function ns.SpellUsabilityOptions.GetAuraArgs()
-  local args = {}
-  local mode = "aura"
-
-  -- Header
-  args.spellUsabilityHeader = {
-    type = "toggle",
-    name = function() return H().GetAuraHeaderName("spellUsability", "Spell Usability") end,
-    desc = "Click to expand/collapse. Controls icon tinting, opacity, and glow based on whether the spell can be cast. Purple dot indicates per-icon customizations.",
-    dialogControl = "CollapsibleHeader",
-    get = function() return not H().collapsedSections.spellUsability end,
-    set = function(_, v) H().collapsedSections.spellUsability = not v end,
-    order = 109.65, width = "full",
-    hidden = function() return H().HideIfNoAuraSelection() end,
-  }
-
-  -- All entries
-  for k, v in pairs(BuildUsabilityEntries(109.65, mode, HideAuraUsability)) do
-    args[k] = v
-  end
-
-  -- Reset (after all entries)
-  args.resetSpellUsability = {
-    type = "execute", name = "Reset Section",
-    desc = "Reset Spell Usability settings to defaults for selected icon(s)",
-    order = 109.699, width = 0.7,
-    hidden = HideAuraUsability,
-    func = function()
-      H().ResetAuraSectionSettings("spellUsability")
-      Refresh()
-    end,
-  }
-
-  return args
+  -- Spell Usability is COOLDOWN FRAMES ONLY - aura frames don't have usability state
+  -- This function is kept for backward compatibility but returns empty
+  return {}
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -277,11 +277,11 @@ local UpdateProcGlow    -- Proc glow state
 -- All APIs used here return non-secret values — safe for direct comparison.
 --
 -- Returns: state ("usable"|"notEnoughResource"|"notUsable"|"outOfRange"),
---          color {r,g,b,a}, alphaOverride (number or nil)
+--          color {r,g,b,a}, alphaOverride (number or nil), desat (boolean)
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local function GetUsabilityState(fd, settings)
-    if not fd or not fd.spellID then return "usable", USABLE_COLOR, nil end
+    if not fd or not fd.spellID then return "usable", USABLE_COLOR, nil, false end
 
     local su = settings and settings.spellUsability
     local suEnabled = not su or su.enabled ~= false  -- default: enabled
@@ -291,7 +291,7 @@ local function GetUsabilityState(fd, settings)
         local ri = settings and settings.rangeIndicator
         local rangeEnabled = not ri or ri.enabled ~= false
         if rangeEnabled then
-            return "outOfRange", OUT_OF_RANGE_COLOR, nil
+            return "outOfRange", OUT_OF_RANGE_COLOR, nil, false
         end
     end
 
@@ -299,20 +299,22 @@ local function GetUsabilityState(fd, settings)
     local isUsable, notEnoughMana = C_Spell.IsSpellUsable(fd.spellID)
 
     if isUsable then
-        return "usable", USABLE_COLOR, nil
+        return "usable", USABLE_COLOR, nil, false
     elseif not suEnabled then
         -- Usability tinting disabled — return white (no tint applied)
-        return "usable", USABLE_COLOR, nil
+        return "usable", USABLE_COLOR, nil, false
     elseif notEnoughMana then
         local color = (su and su.notEnoughResourceColor) or NOT_ENOUGH_MANA
         if not color.a then color = { r = color.r, g = color.g, b = color.b, a = 1.0 } end
         local alpha = su and su.notEnoughResourceAlpha  -- nil = don't override
-        return "notEnoughResource", color, alpha
+        local desat = su and su.notEnoughResourceDesaturate or false
+        return "notEnoughResource", color, alpha, desat
     else
         local color = (su and su.notUsableColor) or NOT_USABLE_COLOR
         if not color.a then color = { r = color.r, g = color.g, b = color.b, a = 1.0 } end
         local alpha = su and su.notUsableAlpha  -- nil = don't override
-        return "notUsable", color, alpha
+        local desat = su and su.notUsableDesaturate or false
+        return "notUsable", color, alpha, desat
     end
 end
 
@@ -343,8 +345,8 @@ function ArcAurasCooldown.ApplySpellStateVisuals(fd, isOnCD)
         settings = ArcAuras.GetCachedSettings(arcID)
     end
 
-    -- Compute usability state once (used for tint, alpha, glow decisions)
-    local usabilityState, usabilityColor, usabilityAlpha = GetUsabilityState(fd, settings)
+    -- Compute usability state once (used for tint, alpha, glow, desat decisions)
+    local usabilityState, usabilityColor, usabilityAlpha, usabilityDesat = GetUsabilityState(fd, settings)
 
     -- Get state visuals from settings
     local csv = settings and settings.cooldownStateVisuals or {}
@@ -497,10 +499,11 @@ function ArcAurasCooldown.ApplySpellStateVisuals(fd, isOnCD)
 
     else
         -- ═══════════════════════════════════════════════════════════════
-        -- READY: Clear desat, restore alpha
+        -- READY: Desat from usability (OOM/not-usable), restore alpha
         -- ═══════════════════════════════════════════════════════════════
 
-        iconTex:SetDesaturated(false)
+        -- Usability desat: notEnoughResourceDesaturate / notUsableDesaturate
+        iconTex:SetDesaturated(usabilityDesat)
 
         -- Reset preserve duration text (was set during cooldown state)
         if frame._arcPreservingDurationText then
@@ -1068,23 +1071,22 @@ function ArcAurasCooldown.ShowContextMenu(frame)
     local config = db and db.trackedSpells and db.trackedSpells[arcID]
     local isForceShow = config and config.forceShow or false
     
-    local menuList = {
-        {text = spellName, isTitle = true},
-        {text = "Configure in CDM Icons", func = function()
+    MenuUtil.CreateContextMenu(frame, function(ownerRegion, rootDescription)
+        rootDescription:CreateTitle(spellName)
+        rootDescription:CreateButton("Configure in CDM Icons", function()
             if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.SelectIcon then
                 ns.CDMEnhanceOptions.SelectIcon(arcID, false)
             end
-        end},
-        {text = isForceShow and "|cff00FF00✓|r Always Show (bypass spec check)" or "Always Show (bypass spec check)", func = function()
+        end)
+        local forceLabel = isForceShow and "|cff00FF00✓|r Always Show (bypass spec check)" or "Always Show (bypass spec check)"
+        rootDescription:CreateButton(forceLabel, function()
             if config then
                 config.forceShow = not config.forceShow
                 if config.forceShow then
                     print("|cff00CCFF[Arc Auras]|r " .. spellName .. " will now always show regardless of spec.")
-                    -- If frame was hidden, show it now
                     if frame._arcHiddenNotInSpec then
                         ArcAurasCooldown.ShowFrame(arcID)
                     end
-                    -- If frame doesn't exist yet, create it
                     if not ArcAurasCooldown.spellData[arcID] and ArcAuras.isEnabled then
                         local spellConfig = {
                             type = "spell",
@@ -1105,16 +1107,14 @@ function ArcAurasCooldown.ShowContextMenu(frame)
                     ArcAurasCooldown.RefreshSpecVisibility()
                 end
             end
-        end},
-        {text = "Change Icon...", func = function()
+        end)
+        rootDescription:CreateButton("Change Icon...", function()
             ArcAurasCooldown.ShowIconOverridePicker(arcID, frame)
-        end},
-        {text = "Remove Spell", func = function()
+        end)
+        rootDescription:CreateButton("Remove Spell", function()
             StaticPopup_Show("ARCAURAS_CD_REMOVE_SPELL", spellName, nil, {arcID = arcID})
-        end},
-    }
-    local menuFrame = CreateFrame("Frame", "ArcAurasCDContextMenu", UIParent, "UIDropDownMenuTemplate")
-    EasyMenu(menuList, menuFrame, "cursor", 0, 0, "MENU")
+        end)
+    end)
 end
 
 StaticPopupDialogs["ARCAURAS_CD_REMOVE_SPELL"] = {

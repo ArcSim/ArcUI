@@ -229,6 +229,23 @@ ns.DB_DEFAULTS = {
           durationColorCurveMidColor = {r=1, g=1, b=0, a=1},   -- Mid color for gradient mode (yellow)
           durationBarFillMode = "drain",   -- "drain" (shrinks as time passes) or "fill" (grows as time passes)
           
+          -- Multi-threshold duration bar settings (v2 migration adds these)
+          -- Must be in defaults so compaction can strip them when unchanged
+          durationThreshold2Enabled = false,
+          durationThreshold2Value = 75,
+          durationThreshold2Color = {r=0.8, g=0.8, b=0, a=1},
+          durationThreshold3Enabled = false,
+          durationThreshold3Value = 50,
+          durationThreshold3Color = {r=1, g=0.5, b=0, a=1},
+          durationThreshold4Enabled = false,
+          durationThreshold4Value = 25,
+          durationThreshold4Color = {r=1, g=0.3, b=0, a=1},
+          durationThreshold5Enabled = false,
+          durationThreshold5Value = 10,
+          durationThreshold5Color = {r=1, g=0, b=0, a=1},
+          durationThresholdAsSeconds = false,
+          durationThresholdMaxDuration = 30,
+          
           showName = false,
           nameFont = "2002 Bold",
           nameFontSize = 14,
@@ -247,6 +264,7 @@ ns.DB_DEFAULTS = {
           barIconBorderColor = {r=0, g=0, b=0, a=1},
           barMovable = true,
           textMovable = true,
+          textLocked = true,
           barPosition = {
             point = "CENTER",
             relPoint = "CENTER",
@@ -300,7 +318,7 @@ ns.DB_DEFAULTS = {
           enabled = false,
           resourceCategory = "primary",  -- "primary" or "secondary"
           powerType = 0,                 -- For primary resources (Enum.PowerType)
-          secondaryType = nil,           -- For secondary: "comboPoints", "holyPower", "chi", "runes", "soulShards", "essence", "arcaneCharges", "stagger", "soulFragments"
+          secondaryType = nil,           -- "comboPoints", "holyPower", "chi", "runes", "soulShards", "essence", "arcaneCharges", "stagger", "soulFragments", "soulFragmentsDevourer", "maelstromWeapon", "mana"
           powerName = "",
           maxValue = 100,
           overrideMax = false,
@@ -349,6 +367,7 @@ ns.DB_DEFAULTS = {
           textAnchorOffsetY = 0,
           barMovable = true,
           textMovable = true,
+          textLocked = true,
           barPosition = {
             point = "CENTER",
             relPoint = "CENTER",
@@ -369,8 +388,11 @@ ns.DB_DEFAULTS = {
           hideOutOfCombat = false,
           hideWhenFull = false,
           hideWhenEmpty = false,
+          hideBlizzardFrame = false,  -- Hide corresponding Blizzard resource frame
           showOnSpec = 0,
-          showOnSpecs = {}
+          showOnSpecs = {},
+          talentConditions = nil,
+          talentMatchMode = nil,
         }
       }
     },
@@ -468,6 +490,7 @@ ns.DB_DEFAULTS = {
           -- Position
           barMovable = true,
           textMovable = true,
+          textLocked = true,
           barPosition = {
             point = "CENTER",
             relPoint = "CENTER",
@@ -547,7 +570,7 @@ ns.ThresholdPresets = DEFAULT_THRESHOLDS
 -- HELPER: Get Bar Config (Buff/Debuff bars)
 -- ===================================================================
 function ns.API.GetBarConfig(barNumber)
-  local db = ns.API.GetDB()
+  local db = ns.db and ns.db.char  -- Inline GetDB() to avoid function call overhead
   if not db or not db.bars then return nil end
   
   barNumber = barNumber or db.selectedBar or 1
@@ -561,20 +584,21 @@ function ns.API.GetBarConfig(barNumber)
   
   local barConfig = db.bars[barNumber]
   
+  -- FAST PATH: Already migrated = most common case during combat (400+ calls/sec)
+  local CURRENT_MIGRATION_VERSION = 2
+  local migrated = barConfig._migrated
+  if migrated == CURRENT_MIGRATION_VERSION or (type(migrated) == "number" and migrated >= CURRENT_MIGRATION_VERSION) then
+    return barConfig
+  end
+  
   -- Migration versioning: _migrated was originally a boolean (true).
   -- Now uses a version number to allow incremental migrations.
   -- Old _migrated = true is treated as version 1.
-  local CURRENT_MIGRATION_VERSION = 2
   local currentVersion = 0
-  if barConfig._migrated == true then
+  if migrated == true then
     currentVersion = 1  -- Old boolean flag = version 1
-  elseif type(barConfig._migrated) == "number" then
-    currentVersion = barConfig._migrated
-  end
-  
-  -- Skip if already at current version
-  if currentVersion >= CURRENT_MIGRATION_VERSION then
-    return barConfig
+  elseif type(migrated) == "number" then
+    currentVersion = migrated
   end
   
   -- ═══════════════════════════════════════════════════════════════════
@@ -726,8 +750,10 @@ function ns.API.GetResourceBarConfig(barNumber)
   end
   
   -- Migration: ensure new fields exist
-  -- FORCE resourceCategory to primary (secondary resources not ready yet)
-  db.resourceBars[barNumber].tracking.resourceCategory = "primary"
+  local tracking = db.resourceBars[barNumber].tracking
+  if not tracking.resourceCategory then
+    tracking.resourceCategory = "primary"
+  end
   
   return db.resourceBars[barNumber]
 end
@@ -935,6 +961,28 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
       cfg.tracking.secondaryType = secondaryType
       cfg.tracking.powerName = powerName
       
+      -- ═══════════════════════════════════════════════════════════
+      -- CRITICAL: Reset display mode when reusing a slot.
+      -- A previously deleted bar (e.g. Runes in "fragmented" mode)
+      -- would contaminate the new bar if we don't reset this.
+      -- ═══════════════════════════════════════════════════════════
+      cfg.display.thresholdMode = "simple"
+      cfg.display.showTickMarks = false
+      cfg.display.enableActiveCountColors = nil
+      cfg.display.activeCountColors = nil
+      cfg.display.fragmentedColors = nil
+      cfg.display.fragmentedChargingColor = nil
+      cfg.display.fragmentedSpecColors = nil
+      cfg.display.smartChargingColor = nil
+      cfg.display.colorCurveEnabled = false
+      cfg.display.chargedComboColor = nil
+      cfg.display.showInForms = nil
+      cfg.display.iconsLayout = nil
+      cfg.display.iconShape = nil
+      cfg.display.iconsBorderStyle = nil
+      cfg.stackColors = nil
+      cfg.colorRanges = nil
+      
       -- Get max value based on resource type
       if resourceCategory == "secondary" and secondaryType then
         cfg.tracking.maxValue = ns.Resources and ns.Resources.GetSecondaryMaxValue(secondaryType) or 5
@@ -957,7 +1005,8 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
       if resourceCategory == "secondary" then
         local discreteTypes = {
           comboPoints = true, holyPower = true, chi = true,
-          runes = true, soulShards = true, essence = true, arcaneCharges = true
+          runes = true, soulShards = true, essence = true, arcaneCharges = true,
+          soulFragments = true, maelstromWeapon = true,
         }
         if discreteTypes[secondaryType] then
           cfg.display.showTickMarks = true
@@ -976,11 +1025,8 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
           if not cfg.display.fragmentedColors then cfg.display.fragmentedColors = {} end
           
           if secondaryType == "runes" then
-            -- DK Rune colors - each rune gets the same dark red by default
-            local runeColor = {r=0.77, g=0.12, b=0.23, a=1}
-            for j = 1, 6 do
-              cfg.display.fragmentedColors[j] = {r=runeColor.r, g=runeColor.g, b=runeColor.b, a=runeColor.a}
-            end
+            -- DK Rune colors: handled dynamically by GetFragmentedReadyColor via DK_SPEC_DEFAULT_COLORS
+            -- Don't set fragmentedColors here — per-segment overrides would block the spec color system
             cfg.display.fragmentedChargingColor = {r=0.4, g=0.4, b=0.4, a=1}
           elseif secondaryType == "essence" then
             -- Evoker Essence colors - bright teal
@@ -998,6 +1044,23 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
           
           return i
         end
+      end
+      
+      -- Set bar color to match resource type color
+      if secondaryType and ns.Resources and ns.Resources.SecondaryTypesLookup then
+        local typeInfo = ns.Resources.SecondaryTypesLookup[secondaryType]
+        if typeInfo and typeInfo.color then
+          cfg.display.barColor = {r=typeInfo.color.r, g=typeInfo.color.g, b=typeInfo.color.b, a=1}
+          -- Also update threshold[1] color for simple mode
+          if cfg.thresholds and cfg.thresholds[1] then
+            cfg.thresholds[1].color = {r=typeInfo.color.r, g=typeInfo.color.g, b=typeInfo.color.b, a=1}
+          end
+        end
+      end
+      
+      -- Auto-enable hideBlizzardFrame for secondary resources
+      if cfg.behavior then
+        cfg.behavior.hideBlizzardFrame = true
       end
       
       ns.API.ApplyThresholdPreset(i, "threeTone", cfg.tracking.maxValue)

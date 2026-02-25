@@ -267,11 +267,17 @@ end
 -- ===================================================================
 local UpdateAllBars
 local UpdateBarBuffInfo
+local StartDurationBarTicker
 
 -- ===================================================================
--- HOOK-BASED STACK UPDATES (v2.10.0)
--- Instead of polling, we hook CDM frame's RefreshData method
--- This gives us instant updates when stacks change
+-- EVENT-DRIVEN CDM FRAME HOOKS (v2.11.0)
+-- Instead of listening to UNIT_AURA and scanning all bars, we hook
+-- CDM's per-frame RefreshData method. CDM already dispatches UNIT_AURA
+-- events to individual frames via its auraInstanceID map, so each bar
+-- only updates when its own CDM frame's data actually changes.
+-- This eliminates: UNIT_AURA handler, auraToBarMap, legacy polling,
+-- ThrottledUpdateAllBars, and 2-3x duplicate UpdateBarBuffInfo calls
+-- from sub-hooks (RefreshApplications, SetAuraInstanceInfo).
 -- ===================================================================
 local hookedCDMFrames = {}  -- [frame] = { barNumbers = {barNum = true, ...} }
 local frameToBarMapping = {}  -- [frame] = {barNum1, barNum2, ...}
@@ -284,10 +290,18 @@ local function OnCDMFrameRefreshData(frame)
     for _, barNumber in ipairs(bars) do
       UpdateBarBuffInfo(barNumber)
     end
+    -- Ensure duration ticker is running for any duration-based bars
+    if StartDurationBarTicker then
+      StartDurationBarTicker()
+    end
   end
 end
 
--- Hook a CDM frame for instant stack updates
+-- Hook a CDM frame for event-driven updates
+-- RefreshData is the single definitive hook point: CDM calls it for ALL
+-- aura lifecycle events (added, updated, removed, target change).
+-- Previous sub-hooks on RefreshApplications and SetAuraInstanceInfo caused
+-- 2-3x UpdateBarBuffInfo calls per event since they fire within RefreshData.
 local function HookCDMFrameForStackUpdates(frame, barNumber)
   if not frame then return end
   
@@ -296,23 +310,14 @@ local function HookCDMFrameForStackUpdates(frame, barNumber)
     hookedCDMFrames[frame] = { barNumbers = {} }
     frameToBarMapping[frame] = {}
     
-    -- Hook RefreshData - this is called when aura data (including stacks) changes
+    -- Hook RefreshData - fires for ALL aura changes:
+    --   OnUnitAuraRemovedEvent → ClearAuraInstanceInfo + RefreshData
+    --   OnUnitAuraUpdatedEvent → RefreshData
+    --   OnUnitAuraAddedEvent   → RefreshData (if matching)
+    --   RefreshActiveFramesForTargetChange → RefreshData (target switch)
+    --   OnSpellUpdateCooldownEvent → RefreshData (cooldown frames)
     if frame.RefreshData then
       hooksecurefunc(frame, "RefreshData", function(self)
-        OnCDMFrameRefreshData(self)
-      end)
-    end
-    
-    -- Also hook RefreshApplications for extra safety (called within RefreshData)
-    if frame.RefreshApplications then
-      hooksecurefunc(frame, "RefreshApplications", function(self)
-        OnCDMFrameRefreshData(self)
-      end)
-    end
-    
-    -- Hook SetAuraInstanceInfo - fires when aura data becomes available
-    if frame.SetAuraInstanceInfo then
-      hooksecurefunc(frame, "SetAuraInstanceInfo", function(self, auraData)
         OnCDMFrameRefreshData(self)
       end)
     end
@@ -344,36 +349,6 @@ local function ClearAllFrameHookRegistrations()
   for frame in pairs(hookedCDMFrames) do
     hookedCDMFrames[frame].barNumbers = {}
     frameToBarMapping[frame] = {}
-  end
-end
-
--- ===================================================================
--- LEGACY POLLING (kept for fallback/compatibility)
--- Only used for bars without direct CDM frame hooks
--- ===================================================================
-local updatePollTimers = {}
-
-local function SchedulePolls(barNumber)
-  if updatePollTimers[barNumber] then
-    for _, timer in ipairs(updatePollTimers[barNumber]) do
-      if timer then timer:Cancel() end
-    end
-  end
-  updatePollTimers[barNumber] = {}
-  local pollTimes = {0.05, 0.1, 0.2}
-  for _, delay in ipairs(pollTimes) do
-    local timer = C_Timer.NewTimer(delay, function()
-      UpdateBarBuffInfo(barNumber)
-    end)
-    table.insert(updatePollTimers[barNumber], timer)
-  end
-end
-
-local function SchedulePollsForAllBars()
-  if not ns.API.GetActiveBars then return end
-  local activeBars = ns.API.GetActiveBars()
-  for _, barNumber in ipairs(activeBars) do
-    SchedulePolls(barNumber)
   end
 end
 
@@ -493,11 +468,6 @@ function ns.API.GetActiveCooldownIDForBar(barNum, validCooldownIDs)
   
   local tracking = barConfig.tracking
   local trackType = tracking.trackType
-  
-  -- Skip non-aura bars (cooldownCharge bars don't need this)
-  if trackType == "cooldownCharge" then
-    return tracking.cooldownID, "primary"
-  end
   
   -- If validCooldownIDs not provided, check bar state for what's currently active
   -- This is used by UI to display which cooldownID is currently working
@@ -1034,13 +1004,7 @@ ClearBarState = function(barNumber)
 end
 
 local function IsOptionsOpen()
-  local AceConfigDialog = LibStub and LibStub("AceConfigDialog-3.0", true)
-  if AceConfigDialog and AceConfigDialog.OpenFrames then
-    for appName, _ in pairs(AceConfigDialog.OpenFrames) do
-      if appName == "ArcUI" then return true end
-    end
-  end
-  return false
+  return ns.optionsPanelOpen
 end
 
 -- ===================================================================
@@ -1190,18 +1154,12 @@ local function UpdateDurationBars()
       
       local needsPolling = barConfig.tracking.useDurationBar or 
                            isBarWithDuration or
-                           (barConfig.tracking.trackType == "cooldownCharge" and barConfig.display.showDuration) or
                            hasTrackedSpell or
                            isIconWithDuration
       if needsPolling then
         local state = GetBarState(barNum)
-        local trackType = barConfig.tracking.trackType
         
-        -- CooldownCharge bars: always update and keep ticker alive
-        if trackType == "cooldownCharge" then
-          hasActiveDurationBars = true
-          UpdateBarBuffInfo(barNum)
-        elseif state.active or hasTrackedSpell then
+        if state.active or hasTrackedSpell then
           -- Also keep polling if trackedSpellID is set (might need to re-cache)
           hasActiveDurationBars = true
           UpdateBarBuffInfo(barNum)
@@ -1212,7 +1170,7 @@ local function UpdateDurationBars()
   return hasActiveDurationBars
 end
 
-local function StartDurationBarTicker()
+StartDurationBarTicker = function()
   if durationBarTicker then return end
   -- PERFORMANCE TEST: Changed from 0.12s to 0.5s (2/sec instead of 8/sec)
   durationBarTicker = C_Timer.NewTicker(0.5, function()
@@ -1424,111 +1382,6 @@ local function GetAllBarFrames()
   return allFrames, nil
 end
 
--- Get cooldown frames from Essential and Utility viewers (for cooldown charge tracking)
-local function GetAllCooldownFrames()
-  local allFrames = {}
-  local seenFrames = {}
-  local seenCdIDs = {}
-  
-  -- Essential cooldowns
-  local essential = _G["EssentialCooldownViewer"]
-  if essential then
-    local children = {essential:GetChildren()}
-    for _, child in ipairs(children) do
-      local cdID = child.cooldownID
-      -- Handle both numeric CDM IDs and string Arc Aura IDs
-      local isValidCdID = cdID and ((type(cdID) == "number" and cdID > 0) or type(cdID) == "string")
-      if isValidCdID then
-        table.insert(allFrames, child)
-        seenFrames[child] = true
-        seenCdIDs[cdID] = true
-      end
-    end
-  end
-  
-  -- Utility cooldowns
-  local utility = _G["UtilityCooldownViewer"]
-  if utility then
-    local children = {utility:GetChildren()}
-    for _, child in ipairs(children) do
-      local cdID = child.cooldownID
-      -- Handle both numeric CDM IDs and string Arc Aura IDs
-      local isValidCdID = cdID and ((type(cdID) == "number" and cdID > 0) or type(cdID) == "string")
-      if isValidCdID and not seenFrames[child] then
-        table.insert(allFrames, child)
-        seenFrames[child] = true
-        seenCdIDs[cdID] = true
-      end
-    end
-  end
-  
-  -- Include detached frames (reparented to UIParent for free positioning)
-  if ns.CDMEnhance and ns.CDMEnhance.GetDetachedFrames then
-    local detached = ns.CDMEnhance.GetDetachedFrames()
-    for cdID, data in pairs(detached) do
-      if data.frame and not seenFrames[data.frame] then
-        if data.viewerType == "cooldown" then
-          -- Check if originally from EssentialCooldownViewer
-          if data.viewerName == "EssentialCooldownViewer" or data.frame._arcOriginalParent == essential then
-            table.insert(allFrames, data.frame)
-            seenFrames[data.frame] = true
-            seenCdIDs[cdID] = true
-          end
-        elseif data.viewerType == "utility" then
-          -- Check if originally from UtilityCooldownViewer
-          if data.viewerName == "UtilityCooldownViewer" or data.frame._arcOriginalParent == utility then
-            table.insert(allFrames, data.frame)
-            seenFrames[data.frame] = true
-            seenCdIDs[cdID] = true
-          end
-        end
-      end
-    end
-  end
-  
-  -- FALLBACK: Search enhancedFrames for any cooldown/utility frames we might have missed
-  if ns.CDMEnhance then
-    local enhancedFrames = ns.CDMEnhance.GetEnhancedFrames and ns.CDMEnhance.GetEnhancedFrames()
-    if enhancedFrames then
-      for cdID, data in pairs(enhancedFrames) do
-        if (data.viewerType == "cooldown" or data.viewerType == "utility") and data.frame and not seenFrames[data.frame] then
-          -- CRITICAL: Use cdID (the key) not frame.cooldownID
-          -- Handle both numeric CDM IDs and string Arc Aura IDs
-          local isValidCdID = cdID and ((type(cdID) == "number" and cdID > 0) or type(cdID) == "string")
-          if isValidCdID and not seenCdIDs[cdID] then
-            table.insert(allFrames, data.frame)
-            seenFrames[data.frame] = true
-            seenCdIDs[cdID] = true
-          end
-        end
-      end
-    end
-    
-    -- Also check freePositionFrames
-    local freeFrames = ns.CDMEnhance.GetFreePositionFrames and ns.CDMEnhance.GetFreePositionFrames()
-    if freeFrames then
-      for cdID, frame in pairs(freeFrames) do
-        if frame and not seenFrames[frame] then
-          local frameCdID = frame.cooldownID
-          -- Verify it's a cooldown/utility frame
-          local origParent = frame._arcOriginalParent
-          local origParentName = origParent and origParent:GetName()
-          if origParentName == "EssentialCooldownViewer" or origParentName == "UtilityCooldownViewer" then
-            -- Handle both numeric CDM IDs and string Arc Aura IDs
-            local isValidCdID = frameCdID and ((type(frameCdID) == "number" and frameCdID > 0) or type(frameCdID) == "string")
-            if isValidCdID and not seenCdIDs[frameCdID] then
-              table.insert(allFrames, frame)
-              seenFrames[frame] = true
-              seenCdIDs[frameCdID] = true
-            end
-          end
-        end
-      end
-    end
-  end
-  
-  return allFrames
-end
 
 local function FindBarFrameByCooldownID(cooldownID)
   if not cooldownID then return nil end
@@ -1634,15 +1487,6 @@ local function FindBuffFrameByCooldownID(cooldownID)
   return nil
 end
 
--- Find cooldown frame from Essential/Utility viewers by cooldownID
-local function FindCooldownFrameByCooldownID(cooldownID)
-  if not cooldownID then return nil end
-  local frames = GetAllCooldownFrames()
-  for _, frame in ipairs(frames) do
-    if frame.cooldownID == cooldownID then return frame end
-  end
-  return nil
-end
 
 local function GetBuffStacks(frame, unit)
   if not frame or not HasAuraInstanceID(frame.auraInstanceID) then return 0 end
@@ -1897,14 +1741,7 @@ function ns.API.ValidateAllBarTracking(validCooldownIDs, debugMode)
         local configSourceType = barConfig.tracking.sourceType or "icon"
         local trackType = barConfig.tracking.trackType
         
-        -- Skip cooldownCharge bars - they use EssentialCooldownViewer/UtilityCooldownViewer
-        -- not BuffIconCooldownViewer/BarCooldownViewer, so validCooldownIDs won't have them
-        if trackType == "cooldownCharge" then
-          -- Don't reset cachedCooldownFrame or trackingOK - let UpdateBarBuffInfo handle it
-          state.cooldownID = barConfig.tracking.cooldownID
-          debugPrint(string.format("  Bar %d: cooldownCharge, using cdID %d", barNum, state.cooldownID or 0))
-        else
-          -- Restore visibility of old cached frames before clearing them
+        -- Restore visibility of old cached frames before clearing them
           -- (in case hideBuffIcon was enabled and frames were hidden)
           if state.cachedFrame then AllowCDMFrameVisible(state.cachedFrame) end
           if state.cachedBarFrame then AllowCDMFrameVisible(state.cachedBarFrame) end
@@ -2073,7 +1910,6 @@ function ns.API.ValidateAllBarTracking(validCooldownIDs, debugMode)
           
           debugPrint(string.format("  Bar %d RESULT: trackingOK=%s, cachedFrame=%s",
             barNum, tostring(state.trackingOK), state.cachedFrame and "YES" or "nil"))
-        end
         
         -- Setup multi-icon textures out of combat
         if not InCombatLockdown() then
@@ -2221,29 +2057,18 @@ UpdateBarBuffInfo = function(barNumber)
     return
   end
   
-  local currentSpec = GetSpecialization() or 0
-  local showOnSpecs = barConfig.behavior.showOnSpecs
-  local specAllowed = true
-  
+  -- Skip frame scan for wrong-spec bars to avoid setting trackingOK=false
+  -- (Display.UpdateBar handles visibility; we just don't want to pollute state)
+  local showOnSpecs = barConfig.behavior and barConfig.behavior.showOnSpecs
   if showOnSpecs and #showOnSpecs > 0 then
-    specAllowed = false
+    local currentSpec = GetSpecialization() or 0
+    local specOK = false
     for _, spec in ipairs(showOnSpecs) do
-      if spec == currentSpec then specAllowed = true; break end
+      if spec == currentSpec then specOK = true; break end
     end
-  elseif barConfig.behavior.showOnSpec and barConfig.behavior.showOnSpec > 0 then
-    specAllowed = (currentSpec == barConfig.behavior.showOnSpec)
-  end
-  
-  if not specAllowed then
-    if ns.Display and ns.Display.HideBar then ns.Display.HideBar(barNumber) end
-    -- Clean up CDM hide request: bar is not shown, shouldn't control CDM visibility
-    local wasHidingCD = UnregisterCDMHideRequest(barNumber)
-    if wasHidingCD and not AnyCDMHideRequestForCD(wasHidingCD, barNumber) then
-      -- No other bar wants this cdID hidden - restore CDM frame
-      local cdmFrame = FindCDMFrameForCooldownID(wasHidingCD)
-      if cdmFrame then AllowCDMFrameVisible(cdmFrame) end
-    end
-    return
+    if not specOK then return end
+  elseif barConfig.behavior and barConfig.behavior.showOnSpec and barConfig.behavior.showOnSpec > 0 then
+    if (GetSpecialization() or 0) ~= barConfig.behavior.showOnSpec then return end
   end
   
   local trackType = barConfig.tracking.trackType or "buff"
@@ -2441,97 +2266,15 @@ UpdateBarBuffInfo = function(barNumber)
     state.cooldownID = barConfig.tracking.cooldownID
     state.cachedFrame = nil
     state.cachedBarFrame = nil
-    state.cachedCooldownFrame = nil  -- For cooldown charge tracking
-    state.cachedIcon = nil
   end
   
-  -- Handle cooldown charge tracking separately (uses different viewer frames)
-  if trackType == "cooldownCharge" then
-    local freshCooldownFrame = FindCooldownFrameByCooldownID(state.cooldownID)
-    if freshCooldownFrame then
-      state.trackingOK = true
-      state.cachedCooldownFrame = freshCooldownFrame
-    else
-      state.trackingOK = false
-      state.cachedCooldownFrame = nil
-    end
-  else
-    -- For buff/debuff tracking, find both bar and icon frames
-    local freshBarFrame = FindBarFrameByCooldownID(state.cooldownID)
-    local freshFrame = FindBuffFrameByCooldownID(state.cooldownID)
+  -- For buff/debuff tracking, find both bar and icon frames
+  local freshBarFrame = FindBarFrameByCooldownID(state.cooldownID)
+  local freshFrame = FindBuffFrameByCooldownID(state.cooldownID)
     
-    -- DEBUG: Log when we can't find a frame for a configured cooldownID
-    if ns.debugMode and state.cooldownID and state.cooldownID > 0 then
-      if not freshFrame and not freshBarFrame then
-        print(string.format("|cffFF6600[ArcUI Debug]|r Bar %d: Cannot find frame for cooldownID %d", 
-          barNumber, state.cooldownID))
-        -- Try to get more info about what CDM knows about this cooldownID
-        if C_CooldownViewer then
-          local info = type(state.cooldownID) == "number" and C_CooldownViewer.GetCooldownViewerCooldownInfo(state.cooldownID)
-          if info then
-            local spellName = info.spellID and C_Spell.GetSpellName(info.spellID)
-            print(string.format("  CDM knows this cooldownID: spellID=%s (%s)", 
-              tostring(info.spellID), spellName or "?"))
-          else
-            print("  CDM does NOT know this cooldownID (removed from tracking?)")
-          end
-        end
-        -- Check all viewers for any frames
-        local viewerNames = {"BuffIconCooldownViewer", "BuffBarCooldownViewer"}
-        for _, vName in ipairs(viewerNames) do
-          local viewer = _G[vName]
-          if viewer then
-            local children = {viewer:GetChildren()}
-            local cdIDs = {}
-            for _, child in ipairs(children) do
-              local cdID = child._arcFreeCdID or child.cooldownID
-              -- Handle both numeric CDM IDs and string Arc Aura IDs
-              local isValidCdID = cdID and ((type(cdID) == "number" and cdID > 0) or type(cdID) == "string")
-              if isValidCdID then
-                table.insert(cdIDs, string.format("%s(%s)", tostring(cdID), child._arcFreeCdID and "arc" or "cdm"))
-              end
-            end
-            print(string.format("  %s has %d children with cdIDs: %s", 
-              vName, #cdIDs, table.concat(cdIDs, ", ")))
-          end
-        end
-        -- Check CDMEnhance tracking
-        if ns.CDMEnhance then
-          local enhanced = ns.CDMEnhance.GetEnhancedFrames and ns.CDMEnhance.GetEnhancedFrames()
-          if enhanced and enhanced[state.cooldownID] then
-            local data = enhanced[state.cooldownID]
-            print(string.format("  enhancedFrames[%d]: frame=%s, cooldownID=%s, _arcFreeCdID=%s, parent=%s", 
-              state.cooldownID,
-              tostring(data.frame), 
-              data.frame and tostring(data.frame.cooldownID) or "nil",
-              data.frame and tostring(data.frame._arcFreeCdID) or "nil",
-              data.frame and (data.frame:GetParent() and data.frame:GetParent():GetName() or "UIParent?") or "nil"))
-          else
-            print(string.format("  enhancedFrames has NO entry for cooldownID %d", state.cooldownID))
-          end
-          
-          local free = ns.CDMEnhance.GetFreePositionFrames and ns.CDMEnhance.GetFreePositionFrames()
-          if free and free[state.cooldownID] then
-            local frame = free[state.cooldownID]
-            print(string.format("  freePositionFrames[%d]: frame=%s, cooldownID=%s, _arcFreeCdID=%s, parent=%s", 
-              state.cooldownID,
-              tostring(frame), 
-              frame and tostring(frame.cooldownID) or "nil",
-              frame and tostring(frame._arcFreeCdID) or "nil",
-              frame and (frame:GetParent() and frame:GetParent():GetName() or "UIParent?") or "nil"))
-          else
-            print(string.format("  freePositionFrames has NO entry for cooldownID %d", state.cooldownID))
-          end
-        end
-      elseif freshFrame then
-        -- We found a frame - log its properties for debug
-        print(string.format("|cff00FF00[ArcUI Debug]|r Bar %d: Found frame for cdID %d - cooldownID=%s, _arcFreeCdID=%s, auraInstanceID=%s",
-          barNumber, state.cooldownID,
-          tostring(freshFrame.cooldownID),
-          tostring(freshFrame._arcFreeCdID),
-          tostring(freshFrame.auraInstanceID)))
-      end
-    end
+  if ns.debugMode and state.cooldownID and state.cooldownID > 0 and not freshFrame and not freshBarFrame then
+    print(string.format("|cffFF6600[ArcUI Debug]|r Bar %d: No frame for cdID %d", barNumber, state.cooldownID))
+  end
     
     -- We can get stacks/duration from ANY CDM frame using auraInstanceID
     -- and C_UnitAuras APIs, so accept either bar OR icon source
@@ -2544,20 +2287,18 @@ UpdateBarBuffInfo = function(barNumber)
       state.cachedBarFrame = nil
       state.cachedFrame = nil
     end
-  end
   
   -- Check if we're in the spec change grace period
   local inGracePeriod = GetTime() < specChangeGraceUntil
   
-  -- For cooldownCharge, skip this check - it has its own fallback via C_Spell.GetSpellCharges
-  -- Also skip during spec change grace period to allow CDM frames time to load
-  if not state.trackingOK and not IsOptionsOpen() and not inGracePeriod and trackType ~= "cooldownCharge" then
+  -- Skip during spec change grace period to allow CDM frames time to load
+  if not state.trackingOK and not IsOptionsOpen() and not inGracePeriod then
     if ns.Display and ns.Display.HideBar then ns.Display.HideBar(barNumber) end
     return
   end
   
   local hasCooldownID = barConfig.tracking.cooldownID and barConfig.tracking.cooldownID > 0
-  if not state.trackingOK and IsOptionsOpen() and hasCooldownID and trackType ~= "cooldownCharge" then
+  if not state.trackingOK and IsOptionsOpen() and hasCooldownID then
     local maxStacks = barConfig.tracking.maxStacks or 10
     if useDurationBar then
       if ns.Display and ns.Display.UpdateDurationBar then
@@ -2580,89 +2321,9 @@ UpdateBarBuffInfo = function(barNumber)
   
   local frame = state.cachedFrame
   local barFrame = state.cachedBarFrame
-  local cooldownFrame = state.cachedCooldownFrame  -- For cooldown charge tracking
   local active = false
   local stacks = 0
   
-  -- ═══════════════════════════════════════════════════════════════════
-  -- COOLDOWN CHARGE TRACKING - Read charge count from CDM cooldown frame
-  -- Primary: cooldownChargesCount property (secret value passthrough)
-  -- Fallback: C_Spell.GetSpellCharges(spellID).currentCharges
-  -- ═══════════════════════════════════════════════════════════════════
-  if trackType == "cooldownCharge" then
-    -- Find the cooldown frame if not cached
-    if not cooldownFrame then
-      cooldownFrame = FindCooldownFrameByCooldownID(state.cooldownID)
-      state.cachedCooldownFrame = cooldownFrame
-    end
-    
-    -- Track if we got stacks from CDM (can't compare secret values)
-    local gotStacksFromCDM = false
-    
-    if cooldownFrame then
-      state.trackingOK = true
-      active = true  -- Always active if we found the frame
-      
-      -- Primary: Read charge count from CDM frame property
-      if cooldownFrame.cooldownChargesCount ~= nil then
-        stacks = cooldownFrame.cooldownChargesCount  -- Secret value passthrough
-        gotStacksFromCDM = true
-      end
-      
-      -- Get icon texture from cooldown frame
-      if cooldownFrame.Icon and cooldownFrame.Icon.GetTexture then
-        state.cachedIcon = cooldownFrame.Icon:GetTexture()
-      elseif not state.cachedIcon and barConfig.tracking.spellID then
-        state.cachedIcon = C_Spell.GetSpellTexture(barConfig.tracking.spellID)
-      end
-    end
-    
-    -- Fallback: Use spell API if no CDM frame OR no stacks from CDM
-    if barConfig.tracking.spellID then
-      local chargeInfo = C_Spell.GetSpellCharges(barConfig.tracking.spellID)
-      if chargeInfo then
-        -- If we didn't get stacks from CDM, use spell API
-        if not gotStacksFromCDM then
-          stacks = chargeInfo.currentCharges or 0  -- Secret value in combat
-          state.trackingOK = true
-          active = true
-        end
-        
-        -- Get icon texture if we don't have one from CDM
-        if not state.cachedIcon then
-          state.cachedIcon = C_Spell.GetSpellTexture(barConfig.tracking.spellID)
-        end
-        
-        -- Always update maxCharges when out of combat AND value is not secret
-        -- In WoW 12.0 instances, some spell data can be secret even out of combat
-        -- SKIP if user has locked maxStacks (manual override)
-        if not InCombatLockdown() and chargeInfo.maxCharges and not barConfig.tracking.lockMaxStacks then
-          local safeMaxCharges = chargeInfo.maxCharges
-          -- Check if it's a secret value - if so, don't store it
-          if issecretvalue and issecretvalue(safeMaxCharges) then
-            -- Secret value - keep existing config or use fallback
-            if not barConfig.tracking.maxStacks or barConfig.tracking.maxStacks == 0 then
-              barConfig.tracking.maxStacks = 3  -- Default for charge abilities
-            end
-          else
-            -- Safe non-secret value - store it
-            local numVal = tonumber(safeMaxCharges)
-            if numVal and numVal > 0 then
-              barConfig.tracking.maxStacks = numVal
-            end
-          end
-        end
-      elseif not cooldownFrame then
-        -- No CDM frame and no spell charges = not trackable yet
-        state.trackingOK = false
-        active = false
-        stacks = 0
-      end
-    elseif not cooldownFrame then
-      state.trackingOK = false
-      active = false
-      stacks = 0
-    end
   -- ═══════════════════════════════════════════════════════════════════
   -- PET/TOTEM/GROUND EFFECT TRACKING - Use preferredTotemUpdateSlot from CDM frame
   -- WoW 12.0: frame.totemData AND GetTotemInfo() returns are SECRET!
@@ -2671,7 +2332,7 @@ UpdateBarBuffInfo = function(barNumber)
   -- "totem" = actual totems (Healing Stream, Capacitor, etc.)
   -- "ground" = ground effects (Consecration, Efflorescence, Death and Decay, etc.)
   -- ═══════════════════════════════════════════════════════════════════
-  elseif trackType == "pet" or trackType == "totem" or trackType == "ground" then
+  if trackType == "pet" or trackType == "totem" or trackType == "ground" then
     local cdmFrame = sourceType == "bar" and barFrame or frame or barFrame
     
     -- WoW 12.0: totemData ONLY EXISTS when totem/pet is currently active
@@ -2946,63 +2607,36 @@ UpdateBarBuffInfo = function(barNumber)
   -- Get duration FontString from CDM frame (fallback for icon source)
   local durationFontString = nil
   if active and frame then
-    if frame.Cooldown then
-      local regions = {frame.Cooldown:GetRegions()}
-      for _, region in ipairs(regions) do
-        if region:GetObjectType() == "FontString" then
-          durationFontString = region
-          break
+    -- Cache: same frame object = same regions, skip GetRegions() table allocs
+    if state._cachedDurationFSFrame == frame then
+      durationFontString = state._cachedDurationFS
+    else
+      if frame.Cooldown then
+        local regions = {frame.Cooldown:GetRegions()}
+        for _, region in ipairs(regions) do
+          if region:GetObjectType() == "FontString" then
+            durationFontString = region
+            break
+          end
         end
       end
-    end
-    if not durationFontString then
-      local children = {frame:GetChildren()}
-      for _, child in ipairs(children) do
-        if child:GetObjectType() == "Cooldown" then
-          local regions = {child:GetRegions()}
-          for _, region in ipairs(regions) do
-            if region:GetObjectType() == "FontString" then
-              durationFontString = region
-              break
+      if not durationFontString then
+        local children = {frame:GetChildren()}
+        for _, child in ipairs(children) do
+          if child:GetObjectType() == "Cooldown" then
+            local regions = {child:GetRegions()}
+            for _, region in ipairs(regions) do
+              if region:GetObjectType() == "FontString" then
+                durationFontString = region
+                break
+              end
             end
+            if durationFontString then break end
           end
-          if durationFontString then break end
         end
       end
-    end
-  end
-  
-  -- Create duration wrapper for cooldownCharge bars
-  -- Simple passthrough - just use the FontString text directly
-  local cooldownDurationRef = nil
-  if trackType == "cooldownCharge" and cooldownFrame then
-    local cooldownFlash = cooldownFrame.CooldownFlash
-    local cooldownWidget = cooldownFrame.Cooldown
-    local durationFS = nil
-    
-    if cooldownWidget then
-      local regions = {cooldownWidget:GetRegions()}
-      for _, region in ipairs(regions) do
-        if region:GetObjectType() == "FontString" then
-          durationFS = region
-          break
-        end
-      end
-    end
-    
-    if durationFS then
-      cooldownDurationRef = {
-        GetText = function()
-          return durationFS:GetText() or ""
-        end,
-        IsShown = function()
-          -- Use CooldownFlash for visibility - stays true until fully recharged
-          if cooldownFlash then
-            return cooldownFlash:IsShown()
-          end
-          return durationFS:IsShown()
-        end
-      }
+      state._cachedDurationFS = durationFontString
+      state._cachedDurationFSFrame = frame
     end
   end
   
@@ -3056,12 +2690,6 @@ UpdateBarBuffInfo = function(barNumber)
         end
       end
     end
-    if not iconTexture and cooldownFrame then
-      -- For cooldownCharge bars, get icon from cooldown frame
-      if cooldownFrame.Icon and cooldownFrame.Icon.GetTexture then
-        iconTexture = cooldownFrame.Icon:GetTexture()
-      end
-    end
   else
     -- useBaseSpell enabled: use base spellID from cooldownInfo, not override
     -- Respect sourceType preference
@@ -3078,9 +2706,6 @@ UpdateBarBuffInfo = function(barNumber)
         iconTexture = C_Spell.GetSpellTexture(frame.cooldownInfo.spellID)
       end
     end
-    if not iconTexture and cooldownFrame and cooldownFrame.cooldownInfo and cooldownFrame.cooldownInfo.spellID then
-      iconTexture = C_Spell.GetSpellTexture(cooldownFrame.cooldownInfo.spellID)
-    end
   end
   
   -- Fallback to saved iconTextureID or spellID
@@ -3089,10 +2714,6 @@ UpdateBarBuffInfo = function(barNumber)
   end
   if not iconTexture and barConfig.tracking.spellID then
     iconTexture = C_Spell.GetSpellTexture(barConfig.tracking.spellID)
-  end
-  -- Fallback to cached icon from tracking (for cooldownCharge)
-  if not iconTexture and state.cachedIcon then
-    iconTexture = state.cachedIcon
   end
   
   -- ═══════════════════════════════════════════════════════════════════
@@ -3462,13 +3083,6 @@ UpdateBarBuffInfo = function(barNumber)
       end
       ns.Display.UpdateDurationBar(barNumber, stacks, barConfig.tracking.maxStacks, active, 
                                     durationSource, durationStacksRef, iconTexture, auraName)
-    elseif trackType == "cooldownCharge" and cooldownDurationRef then
-      -- Cooldown charge bar - pass cooldown duration wrapper for duration TEXT display
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, cooldownDurationRef, iconTexture, auraName)
-    elseif trackType == "cooldownCharge" then
-      -- Cooldown charge bar WITHOUT CDM frame (using spell API fallback)
-      -- No duration text available, but stacks are from C_Spell.GetSpellCharges
-      ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, nil, iconTexture, auraName)
     elseif effectiveDurationRef then
       -- We have an auraInstanceID wrapper - use it for duration display
       ns.Display.UpdateBar(barNumber, stacks, barConfig.tracking.maxStacks, active, effectiveDurationRef, iconTexture, auraName)
@@ -3558,83 +3172,30 @@ UpdateAllBars = function()
   end
 end
 
--- UPDATE ONLY COOLDOWN CHARGE BARS (for SPELL_UPDATE_COOLDOWN efficiency)
-local function UpdateCooldownChargeBars()
-  local db = ns.API.GetDB()
-  if not db or not db.bars then return end
-  
-  for barNum = 1, 30 do
-    local barConfig = db.bars[barNum]
-    if barConfig and barConfig.tracking and barConfig.tracking.enabled then
-      if barConfig.tracking.trackType == "cooldownCharge" then
-        UpdateBarBuffInfo(barNum)
-      end
-    end
-  end
-end
-
 -- ===================================================================
 -- EVENT HANDLING
 -- ===================================================================
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("UNIT_AURA")
+-- NOTE: UNIT_AURA no longer registered here. CDM handles UNIT_AURA internally
+-- and dispatches per-frame via RefreshData, which our hooks catch. This
+-- eliminates the entire UNIT_AURA → scan-all-bars → UpdateBarBuffInfo path.
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")  -- For cooldown bars
-eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")   -- For charge-based abilities
-
--- ═══════════════════════════════════════════════════════════════════════════
--- EVENT THROTTLING (v2.10.0): Reduced importance since hooks handle instant updates
--- This is now just a safety net for events that don't trigger hooks directly
--- ═══════════════════════════════════════════════════════════════════════════
-local lastUpdateTime = 0
-local UPDATE_THROTTLE = 0.1  -- 10 updates/sec max (hooks provide instant updates)
-local pendingUpdate = false
-
-local function ThrottledUpdateAllBars()
-  local now = GetTime()
-  if now - lastUpdateTime >= UPDATE_THROTTLE then
-    lastUpdateTime = now
-    pendingUpdate = false
-    UpdateAllBars()
-  elseif not pendingUpdate then
-    -- Schedule one update after throttle period
-    pendingUpdate = true
-    C_Timer.After(UPDATE_THROTTLE - (now - lastUpdateTime), function()
-      if pendingUpdate then
-        pendingUpdate = false
-        lastUpdateTime = GetTime()
-        UpdateAllBars()
-      end
-    end)
-  end
-  -- else: update already pending, skip
-end
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-  if event == "UNIT_AURA" then
-    local unit = ...
-    if unit == "player" or unit == "target" then
-      ThrottledUpdateAllBars()  -- Throttled!
-      SchedulePollsForAllBars()
-      StartDurationBarTicker()
-    end
-  elseif event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
-    -- Cooldown/charge changed - throttle these too (fires every GCD)
-    ThrottledUpdateAllBars()
-    StartDurationBarTicker()
-  elseif event == "PLAYER_TARGET_CHANGED" then
-    ThrottledUpdateAllBars()  -- Throttled!
-    SchedulePollsForAllBars()
+  if event == "PLAYER_TARGET_CHANGED" then
+    -- CDM handles UNIT_TARGET → RefreshActiveFramesForTargetChange → RefreshData
+    -- on all frames, which fires our hooks. This is a safety net for debuff bars
+    -- that may need to re-scan the new target immediately.
+    UpdateAllBars()
   elseif event == "PLAYER_ENTERING_WORLD" then
     -- Bars stay hidden until initialization completes (prevents flash on reload)
     -- Delay allows frames to be created and positioned before showing
     C_Timer.After(0.5, function() 
       ns.API.ValidateAllBarTracking()
-      UpdateCooldownChargeBars()
       -- Mark initialization complete - bars can now show
       if ns.Display and ns.Display.MarkInitializationComplete then
         ns.Display.MarkInitializationComplete()
@@ -4710,10 +4271,20 @@ if P then
   ns.API.GetActiveBars = P:Def("GetActiveBars", ns.API.GetActiveBars, "Config")
   ns.API.GetActiveResourceBars = P:Def("GetActiveResourceBars", ns.API.GetActiveResourceBars, "Config")
   
-  -- Tracking
-  ns.API.UpdateAllBars = P:Def("UpdateAllBars", ns.API.UpdateAllBars, "Tracking")
+  -- Tracking (RefreshAll wraps UpdateAllBars; it's the public API)
+  if ns.API.RefreshAll then
+    ns.API.RefreshAll = P:Def("RefreshAll", ns.API.RefreshAll, "Tracking")
+  end
   ns.API.ValidateAllBarTracking = P:Def("ValidateAllBarTracking", ns.API.ValidateAllBarTracking, "Tracking")
 end
+
+-- ===================================================================
+-- GLOBAL BRIDGE - Expose API for external debugger addons
+-- ArcUI_Debugger is a separate addon with its own namespace,
+-- it needs a global reference to access barStates, GetDB, etc.
+-- ===================================================================
+_G.ArcUI_API = ns.API
+_G.ArcUI_Display = ns.Display
 
 -- ===================================================================
 -- END OF ArcUI_Core.lua

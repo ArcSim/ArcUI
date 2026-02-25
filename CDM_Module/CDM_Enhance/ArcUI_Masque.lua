@@ -686,9 +686,9 @@ function ns.Masque.ReapplyCooldownPositioning()
             -- If Masque is actively skinning this frame, don't apply inset positioning.
             -- CDMEnhance already set SetAllPoints correctly - don't overwrite with TOPLEFT/BOTTOMRIGHT.
             if frame.Cooldown._arcMasqueActive then
-                -- Just ensure it fills the frame (Masque-compatible)
+                -- Anchor to Icon so cooldown matches Masque's inset icon area
                 frame.Cooldown:ClearAllPoints()
-                frame.Cooldown:SetAllPoints(frame)
+                frame.Cooldown:SetAllPoints(frame.Icon or frame)
             else
                 local padX = frame.Cooldown._arcPaddingX or 0
                 local padY = frame.Cooldown._arcPaddingY or 0
@@ -713,8 +713,9 @@ function ns.Masque.ReapplyCooldownPositioning()
             if frame and frame.Cooldown then
                 -- Same check for Arc Auras
                 if frame.Cooldown._arcMasqueActive then
+                    -- Anchor to Icon so cooldown matches Masque's inset icon area
                     frame.Cooldown:ClearAllPoints()
-                    frame.Cooldown:SetAllPoints(frame)
+                    frame.Cooldown:SetAllPoints(frame.Icon or frame)
                 else
                     local padX = frame.Cooldown._arcPaddingX or 0
                     local padY = frame.Cooldown._arcPaddingY or 0

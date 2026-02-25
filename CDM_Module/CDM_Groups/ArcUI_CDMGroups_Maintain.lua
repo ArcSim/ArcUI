@@ -176,7 +176,7 @@ local function HookFrameSize(frame, targetSize)
     frame._cdmgSizeHooked = true
 end
 
--- Hook SetFrameStrata - force strata back to MEDIUM
+-- Hook SetFrameStrata - force strata back to group's configured strata
 local function HookFrameStrata(frame)
     if frame._cdmgStrataHooked then return end
     
@@ -190,10 +190,12 @@ local function HookFrameStrata(frame)
         
         if not isInContainer and not isFreeIcon then return end
         
-        -- Force strata to MEDIUM
-        if strata ~= "MEDIUM" then
+        -- Determine expected strata: container's configured strata, or MEDIUM for free icons
+        local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
+        
+        if strata ~= expectedStrata then
             self._cdmgSettingStrata = true
-            self:SetFrameStrata("MEDIUM")
+            self:SetFrameStrata(expectedStrata)
             self._cdmgSettingStrata = false
             ns.CDMGroups.fightStats.strata = ns.CDMGroups.fightStats.strata + 1
         end

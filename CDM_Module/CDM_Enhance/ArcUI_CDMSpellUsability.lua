@@ -42,6 +42,32 @@ end
 
 local NOT_ENOUGH_MANA  = { r = 0.5, g = 0.5, b = 1.0, a = 1.0 }
 local NOT_USABLE_COLOR = { r = 0.4, g = 0.4, b = 0.4, a = 1.0 }
+local ON_CD_COLOR      = { r = 0.4, g = 0.4, b = 0.4, a = 1.0 }
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DESATURATION HELPER
+-- Uses the bypass flag so CDMEnhance's desat hooks don't intercept.
+-- Also stores the request so CooldownState can respect it on next pass.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function ApplyUsabilityDesat(frame, iconTex, desaturate)
+    -- Store request for CooldownState + CDMEnhance hooks to read
+    frame._arcUsabilityDesatRequest = desaturate and true or nil
+
+    -- ONLY touch desaturation when explicitly configured (true/false)
+    -- When nil (not configured), leave desat alone so CDM's native
+    -- cooldown desaturation isn't wiped by our hook.
+    if desaturate == nil then return end
+
+    if not iconTex then return end
+    frame._arcBypassDesatHook = true
+    if iconTex.SetDesaturation then
+        iconTex:SetDesaturation(desaturate and 1 or 0)
+    elseif iconTex.SetDesaturated then
+        iconTex:SetDesaturated(desaturate and true or false)
+    end
+    frame._arcBypassDesatHook = false
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- OPTIONS PANEL STATE
@@ -77,11 +103,23 @@ end
 -- CDM's own desaturation makes colors subtle during cooldown anyway.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Bypass keepBright hook when SpellUsability writes vertex color.
+-- SpellUsability is the authority for ready-state tinting (OOM, not-usable,
+-- normal) so keepBright must not override its writes.
+local function SetVertexColorBypassed(frame, iconTex, r, g, b, a)
+    frame._arcBypassVertexHook = true
+    iconTex:SetVertexColor(r, g, b, a or 1)
+    frame._arcBypassVertexHook = false
+end
+
 function ns.CDMSpellUsability.OnRefreshIconColor(frame)
     if frame._arcBypassUsabilityHook then return end
 
     -- Skip Arc Auras frames (they handle their own usability)
     if frame._arcConfig or frame._arcAuraID then return end
+    
+    -- COOLDOWN FRAMES ONLY: Aura frames don't have spell usability state
+    if frame._arcViewerType == "aura" then return end
 
     -- Get settings
     local cfg
@@ -114,6 +152,10 @@ function ns.CDMSpellUsability.OnRefreshIconColor(frame)
         end
         -- Reset to full brightness (ITEM_USABLE_COLOR equivalent)
         iconTex:SetVertexColor(1, 1, 1, 1)
+        -- Pass nil (not false!) so ApplyUsabilityDesat returns early and
+        -- does NOT clear desaturation.  CDM / CooldownState own desat when
+        -- usability tinting is disabled.
+        ApplyUsabilityDesat(frame, iconTex, nil)
         return
     end
 
@@ -121,26 +163,64 @@ function ns.CDMSpellUsability.OnRefreshIconColor(frame)
     if frame.spellOutOfRange then
         local ri = cfg.rangeIndicator
         local rangeEnabled = not ri or ri.enabled ~= false
-        if rangeEnabled then return end
+        if rangeEnabled then
+            -- Clear our desat request — range indicator owns visuals now
+            frame._arcUsabilityDesatRequest = nil
+            return
+        end
     end
 
     local spellID = GetSpellIDFromFrame(frame)
     if not spellID then return end
 
-    -- C_Spell.IsSpellUsable returns non-secret booleans
+    -- ── Priority 1: On Cooldown (all charges depleted) ──────────────
+    -- Shadow CD converts secret duration into non-secret boolean.
+    -- IsShown()=true → all charges depleted / full CD active.
+    local shadowCD = frame._arcCDMShadowCooldown
+    local allDepleted = shadowCD and shadowCD:IsShown() or false
+
+    if allDepleted and su.useOnCooldownColor then
+        -- CooldownState's cooldownTint takes priority (enforced via _arcDesiredVertexColor).
+        -- Only set usability's on-CD color when CooldownState isn't enforcing.
+        if not frame._arcDesiredVertexColor then
+            local c = su.onCooldownColor or ON_CD_COLOR
+            SetVertexColorBypassed(frame, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+        end
+        ApplyUsabilityDesat(frame, iconTex, nil)  -- CooldownState owns desat during cooldown
+        return
+    elseif allDepleted then
+        -- Spell is fully depleted but user hasn't enabled custom on-cooldown color.
+        -- Bail out: CDM / CooldownState own desat + visuals during cooldown.
+        -- Without this, C_Spell.IsSpellUsable (resource check, not CD check)
+        -- returns true and the "normal/usable" path below would force desat=0,
+        -- wiping CDM's native cooldown desaturation.
+        ApplyUsabilityDesat(frame, iconTex, nil)  -- clear request, don't touch desat
+        return
+    end
+
+    -- ── Priority 2: Resource / Usability checks (non-secret bools) ──
+    -- These ONLY apply in READY state (not on cooldown). Follows ABE pattern:
+    -- on-CD → CD tint only. Ready → usability tints.
     local isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
 
     if isUsable then
-        -- Usable → CDM already set ITEM_USABLE_COLOR, nothing to override
+        -- ── Priority 3: Normal / Usable state ──────────────────────
+        if su.useNormalColor then
+            local c = su.normalColor or { r = 1, g = 1, b = 1 }
+            SetVertexColorBypassed(frame, iconTex, c.r or 1, c.g or 1, c.b or 1, 1)
+        end
+        ApplyUsabilityDesat(frame, iconTex, su.normalDesaturate)
         return
     elseif notEnoughMana then
         local c = su.notEnoughResourceColor or NOT_ENOUGH_MANA
-        iconTex:SetVertexColor(c.r or 0.5, c.g or 0.5, c.b or 1.0, c.a or 1.0)
+        SetVertexColorBypassed(frame, iconTex, c.r or 0.5, c.g or 0.5, c.b or 1.0, c.a or 1.0)
+        ApplyUsabilityDesat(frame, iconTex, su.notEnoughResourceDesaturate)
         -- NOTE: Alpha is handled by CooldownState.ApplyReadyState which merges
         -- usability alpha into readyAlpha (single-writer pattern, no fighting).
     else
         local c = su.notUsableColor or NOT_USABLE_COLOR
-        iconTex:SetVertexColor(c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+        SetVertexColorBypassed(frame, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+        ApplyUsabilityDesat(frame, iconTex, su.notUsableDesaturate)
         -- NOTE: Alpha is handled by CooldownState.ApplyReadyState (single-writer).
     end
 end
@@ -155,11 +235,44 @@ function ns.CDMSpellUsability.HookFrame(frame)
     if not frame then return end
     if frame._arcUsabilityTintHooked then return end
     if not frame.RefreshIconColor then return end
+    
+    -- COOLDOWN FRAMES ONLY: Aura frames don't have spell usability state
+    if frame._arcViewerType == "aura" then return end
 
     frame._arcUsabilityTintHooked = true
 
+    -- ── Per-button RefreshIconColor hook ──────────────────────────────
+    -- Blizzard's CDM calls RefreshIconColor on each button when
+    -- SPELL_UPDATE_USABLE fires. We ride that dispatch (like ABE)
+    -- instead of registering our own event + iterating all frames.
+    --
+    -- This hook handles ALL usability visuals for this button:
+    --   1. Tinting (OnRefreshIconColor)
+    --   2. Glow   (UpdateGlow)
+    --   3. Alpha  (OnCooldownEvent — ONLY when usability actually flips)
     hooksecurefunc(frame, "RefreshIconColor", function(self)
+        -- 1. Tinting — always runs (cheap)
         ns.CDMSpellUsability.OnRefreshIconColor(self)
+
+        -- 2. Glow — always runs (cheap: just a boolean check + optional LCG call)
+        ns.CDMSpellUsability.UpdateGlow(self)
+
+        -- 3. Alpha — ONLY when usability state actually changed.
+        --    OnCooldownEvent is expensive (config lookup + state visuals + apply).
+        --    Usability flips are rare (resource gain/spend, form swap).
+        --    Cache previous state so we skip the cascade 90%+ of the time.
+        local spellID = GetSpellIDFromFrame(self)
+        if spellID then
+            local isUsable = C_Spell.IsSpellUsable(spellID)
+            local prev = self._arcPrevUsable
+            if prev ~= isUsable then
+                -- State flipped (or first fire: nil ~= bool) — update alpha
+                if ns.CDMEnhance and ns.CDMEnhance.OnCooldownEvent then
+                    ns.CDMEnhance.OnCooldownEvent(self)
+                end
+                self._arcPrevUsable = isUsable
+            end
+        end
     end)
 
     -- Shadow cooldown frame is now created and managed by CooldownState.
@@ -288,6 +401,24 @@ function ns.CDMSpellUsability.UpdateGlow(frame, cfg)
             local shadowCD = frame._arcCDMShadowCooldown
             local allDepleted = shadowCD and shadowCD:IsShown() or false
 
+            -- GCD GUARD: When CDM's hook fires before CooldownState feeds
+            -- the shadow, shadow can briefly show "depleted" from the GCD.
+            -- The GCD cache (_arcCachedIsOnGCD) may also be stale since
+            -- event handler ordering between frames is undefined — CDM's
+            -- hook can fire before CooldownState's handler caches isOnGCD.
+            -- Query isOnGCD LIVE from the API (non-secret, safe in combat).
+            -- Matches ArcAuras: isOnGCD → clear shadow → not on CD.
+            if allDepleted then
+                local isOnGCD = false
+                local cdOK, cdInfo = pcall(C_Spell.GetSpellCooldown, spellID)
+                if cdOK and cdInfo then
+                    isOnGCD = cdInfo.isOnGCD or false
+                end
+                if isOnGCD then
+                    allDepleted = false
+                end
+            end
+
             -- IsSpellUsable checks resources (mana/energy/etc) — non-secret
             local isUsable = C_Spell.IsSpellUsable(spellID)
 
@@ -302,13 +433,27 @@ function ns.CDMSpellUsability.UpdateGlow(frame, cfg)
         local glowSu = su or {}
         local glowType = glowSu.usableGlowType or "button"
         if glowType == "blizzard" then glowType = "glow" end  -- migrate
-        -- Only restart if type changed or not active
-        if not frame._arcCDMUsableGlowActive or frame._arcCDMUsableGlowType ~= glowType then
-            -- Stop old glow if type changed
+
+        -- Build settings signature (matches ready glow pattern in EnsureGlowHooked)
+        -- CRITICAL: Include frame dimensions — LCG glow textures are sized at creation
+        -- time. If frame resizes (spec change, CDMGroups enforce), glow stays old size.
+        local gc = glowSu.usableGlowColor
+        local cr, cg, cb, ca = 1, 0.85, 0.1, 1
+        if gc then cr = gc.r or 1; cg = gc.g or 0.85; cb = gc.b or 0.1; ca = gc.a or 1 end
+        local frameW = math.floor((frame:GetWidth() or 36) + 0.5)
+        local frameH = math.floor((frame:GetHeight() or 36) + 0.5)
+        local glowSig = string.format("%s_%.2f_%.2f_%.2f_%.2f_%d_%d_%.2f_%d_%dx%d",
+            glowType, cr, cg, cb, ca,
+            glowSu.usableGlowLines or 8, glowSu.usableGlowThickness or 2,
+            glowSu.usableGlowSpeed or 0.25, glowSu.usableGlowParticles or 4,
+            glowSu.usableGlowScale or 1, frameW, frameH)
+
+        -- Only restart if settings changed or not active (signature mismatch)
+        if not frame._arcCDMUsableGlowActive or frame._arcCDMUsableGlowSig ~= glowSig then
+            -- Stop old glow if active
             if frame._arcCDMUsableGlowActive then
                 StopUsableGlow(frame)
             end
-            local gc = glowSu.usableGlowColor
             local overlay = GetUsableGlowOverlay(frame)
             overlay:Show()
             overlay:SetAlpha(1)
@@ -322,11 +467,13 @@ function ns.CDMSpellUsability.UpdateGlow(frame, cfg)
             })
             frame._arcCDMUsableGlowActive = true
             frame._arcCDMUsableGlowType = glowType
+            frame._arcCDMUsableGlowSig = glowSig
         end
     elseif frame._arcCDMUsableGlowActive then
         StopUsableGlow(frame)
         frame._arcCDMUsableGlowActive = false
         frame._arcCDMUsableGlowType = nil
+        frame._arcCDMUsableGlowSig = nil
     end
 end
 
@@ -345,6 +492,7 @@ function ns.CDMSpellUsability.StopAllGlows()
             StopUsableGlow(frame)
             frame._arcCDMUsableGlowActive = false
             frame._arcCDMUsableGlowType = nil
+            frame._arcCDMUsableGlowSig = nil
         end
     end
 end
@@ -357,11 +505,17 @@ function ns.CDMSpellUsability.RefreshAll()
     if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
     local enhanced = ns.CDMEnhance.GetEnhancedFrames()
     if not enhanced then return end
-    for _, entry in pairs(enhanced) do
+    for cdID, entry in pairs(enhanced) do
         local frame = entry.frame
         if frame then
             ns.CDMSpellUsability.OnRefreshIconColor(frame)
             ns.CDMSpellUsability.UpdateGlow(frame)
+            -- Re-run CooldownState so usability alpha gets applied
+            -- Route through OnCooldownEvent for proper guards (hidden-by-bar,
+            -- spec-change protection) instead of direct ApplyCooldownStateVisuals
+            if ns.CDMEnhance.OnCooldownEvent then
+                ns.CDMEnhance.OnCooldownEvent(frame)
+            end
         end
     end
 end
@@ -378,10 +532,16 @@ function ns.CDMSpellUsability.RefreshFrame(cdID)
             StopUsableGlow(frame)
             frame._arcCDMUsableGlowActive = false
             frame._arcCDMUsableGlowType = nil
+            frame._arcCDMUsableGlowSig = nil
         end
         -- Re-evaluate
         ns.CDMSpellUsability.UpdateGlow(frame)
         ns.CDMSpellUsability.OnRefreshIconColor(frame)
+        -- Re-run CooldownState so usability alpha gets applied
+        -- Route through OnCooldownEvent for proper guards
+        if ns.CDMEnhance.OnCooldownEvent then
+            ns.CDMEnhance.OnCooldownEvent(frame)
+        end
     end
 end
 
@@ -398,9 +558,9 @@ C_Timer.NewTicker(0.5, function()
     end
 end)
 
--- SPELL_UPDATE_USABLE fires on resource change, form/stance swap, etc.
-local usabilityEventFrame = CreateFrame("Frame")
-usabilityEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
-usabilityEventFrame:SetScript("OnEvent", function()
-    ns.CDMSpellUsability.RefreshAll()
-end)
+-- SPELL_UPDATE_USABLE: No longer needs its own event handler.
+-- Blizzard's CDM calls RefreshIconColor on each affected button when this
+-- event fires. Our per-button hooksecurefunc (installed in HookFrame) rides
+-- that dispatch and handles tinting, glow, and alpha-on-flip per-button.
+-- This eliminates the O(N) RefreshAll() that was the #1 source of stutter
+-- on multi-spell-change abilities like DH Metamorphosis.

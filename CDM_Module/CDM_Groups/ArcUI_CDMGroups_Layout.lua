@@ -245,7 +245,7 @@ local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
     frame._cdmgFreeTargetSize = nil
     
     frame:SetParent(container)
-    frame:SetFrameStrata("MEDIUM")
+    frame:SetFrameStrata(container._cdmgFrameStrata or "MEDIUM")
     frame:SetScale(1)
     
     -- CRITICAL: Clear old position immediately (especially important for free icons joining groups)
@@ -253,8 +253,10 @@ local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
     
     -- CRITICAL: MUST show frame initially - CDMEnhance will hide if inactive LATER
     -- EXCEPT: Skip showing if frame is hidden due to hideWhenUnequipped setting or hidden by bar tracking
+    -- NOTE: We do NOT set alpha here - state visuals (readyState, cooldown) are the
+    -- authority for alpha and have already been applied by CDMEnhance/ArcAurasCooldown.
+    -- Blindly setting alpha=1 would stomp readyState alpha=0 ("hide when ready" icons).
     if not frame._arcHiddenUnequipped and not frame._arcHiddenByBar then
-        frame:SetAlpha(1)
         frame:Show()
     end
     frame._arcRecoveryProtection = GetTime() + 0.5
@@ -841,9 +843,46 @@ local function ResolveGridConflicts(group)
     
     local conflictsResolved = 0
     
+    -- Get slot partner map for mutually exclusive talent detection
+    local partnerMap = ns.CDMGroups._slotPartnerMap
+    
     -- Find and resolve conflicts (ONLY between non-placeholder members)
     for key, cdIDs in pairs(positionMap) do
         if #cdIDs > 1 then
+            -- SLOT-PARTNER CHECK: Filter out slot-sharing pairs before resolving
+            -- Mutually exclusive talents intentionally share positions
+            local skipConflict = false
+            if partnerMap and #cdIDs == 2 then
+                local a, b = cdIDs[1], cdIDs[2]
+                local isPartnerPair = false
+                if partnerMap[a] then
+                    for _, partner in ipairs(partnerMap[a]) do
+                        if partner.partnerCdID == b then
+                            isPartnerPair = true
+                            break
+                        end
+                    end
+                end
+                if isPartnerPair then
+                    -- Not a conflict - slot-sharing pair. Skip.
+                    -- Ensure grid points to the one with a frame
+                    local memberA = group.members[a]
+                    local memberB = group.members[b]
+                    local row, col = (memberA and memberA.row) or 0, (memberA and memberA.col) or 0
+                    if memberA and memberA.frame then
+                        if group.grid and group.grid[row] then
+                            group.grid[row][col] = a
+                        end
+                    elseif memberB and memberB.frame then
+                        if group.grid and group.grid[row] then
+                            group.grid[row][col] = b
+                        end
+                    end
+                    skipConflict = true
+                end
+            end
+            
+            if not skipConflict then
             -- Multiple NON-PLACEHOLDER members at same position - resolve
             -- Sort by priority: has frame > first encountered (lower cdID)
             table.sort(cdIDs, function(a, b)
@@ -977,6 +1016,7 @@ local function ResolveGridConflicts(group)
                     end
                 end
             end
+            end -- if not skipConflict
         end
     end
     

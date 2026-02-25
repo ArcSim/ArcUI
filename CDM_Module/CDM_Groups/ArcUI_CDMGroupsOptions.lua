@@ -110,14 +110,12 @@ local DEFAULT_GROUPS = {
 -- UI STATE FOR OPTIONS (ns.CDMGroups.selectedGroup stored globally)
 
 local collapsedSections = {
-    groupLayouts = false,  -- Start expanded - primary feature
-    glLoadLayout = true,   -- Load Layout subsection
-    glSaveLayout = true,   -- Save Layout subsection
-    glDefaultNewSpecs = true, -- Default for new specs
-    glLinkTemplate = true,  -- Link Template (Auto-Save)
+    groupLayouts = true,   -- Load Group Layout - start collapsed
+    placeholders = true,   -- Placeholders section - start collapsed
     globalOptions = true,
     grid = false,
     layout = false,
+    frameStrata = true,    -- Frame Strata section - start collapsed
     position = true,
     appearance = true,
     tools = true,
@@ -434,7 +432,7 @@ local function GetOptionsTable()
                 name = "|cff00ff00Edit Mode|r",
                 desc = "Enable dragging individual icons within groups.\n\nAuto-enables when options panel opens.",
                 order = 0,
-                width = 0.55,
+                width = 0.65,
                 get = function() return ns.CDMGroups.dragModeEnabled end,
                 set = function(_, val) 
                     -- Disable auto-enable when manually toggling off
@@ -452,7 +450,7 @@ local function GetOptionsTable()
                 name = "|cff00ccffDrag Groups|r",
                 desc = "Show drag overlays on groups to reposition them.\n\nDoes NOT auto-enable when panel opens.",
                 order = 0.05,
-                width = 0.7,
+                width = 0.8,
                 get = function() 
                     return ns.EditModeContainers and ns.EditModeContainers.IsOverlaysEnabled and ns.EditModeContainers.IsOverlaysEnabled()
                 end,
@@ -468,7 +466,7 @@ local function GetOptionsTable()
                 name = "|cff00ff00Enable CDM Styling|r",
                 desc = "Master toggle to enable/disable all CDM icon styling and group management.\n\n|cffffaa00Reload recommended after changing.|r\n\nWhen disabled, icons stay under default CDM control.",
                 order = 0.1,
-                width = 1.0,
+                width = 1.3,
                 get = function() 
                     -- Use centralized function from CDM_Shared
                     local S = ns.CDMShared
@@ -496,7 +494,7 @@ local function GetOptionsTable()
                 name = "|cff88ff88+ Default Groups|r",
                 desc = "Create the 3 default groups (Buffs, Essential, Utility) if they don't exist.\n\nThis does NOT delete any existing groups or positions.",
                 order = 22.5,
-                width = 0.85,
+                width = 1.1,
                 func = function()
                     if InCombatLockdown() then
                         PrintMsg("|cffff0000Cannot create groups in combat|r")
@@ -529,7 +527,7 @@ local function GetOptionsTable()
                 name = "Show Borders",
                 desc = "Show group borders and backgrounds when in edit mode. Disable to see true layout without borders.",
                 order = 1.5,
-                width = 0.7,
+                width = 0.85,
                 get = function()
                     -- Use shared DB accessor (reads from char.cdmGroups)
                     local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
@@ -557,7 +555,7 @@ local function GetOptionsTable()
                 name = "Show Layout Arrows",
                 desc = "Show the row/column add/remove arrow buttons on group edges when in edit mode.",
                 order = 1.6,
-                width = 0.9,
+                width = 1.2,
                 get = function()
                     -- Use shared DB accessor (reads from char.cdmGroups)
                     local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
@@ -579,7 +577,7 @@ local function GetOptionsTable()
                 name = "Show Drag Handle",
                 desc = "Show the drag handle icon on groups when in edit mode. You can still move groups via the Edit Mode overlay even with this hidden.",
                 order = 1.65,
-                width = 0.9,
+                width = 1.1,
                 get = function()
                     local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
                     if not db then return true end
@@ -603,31 +601,13 @@ local function GetOptionsTable()
                     end
                 end,
             },
-            showPlaceholders = {
-                type = "toggle",
-                name = "Show Placeholders",
-                desc = "Show placeholder icons for saved positions that don't have an active cooldown. Disabled by default.",
-                order = 1.7,
-                width = 0.9,
-                get = function()
-                    -- Return actual editing mode state
-                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.IsEditingMode then
-                        return ns.CDMGroups.Placeholders.IsEditingMode()
-                    end
-                    return false
-                end,
-                set = function(_, val)
-                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.SetEditingMode then
-                        ns.CDMGroups.Placeholders.SetEditingMode(val)
-                    end
-                end,
-            },
+
             scanBtn = {
                 type = "execute",
                 name = "Scan & Assign",
                 desc = "Clean invalid positions and re-assign icons. Icons pointing to deleted groups get reassigned to defaults.",
                 order = 2,
-                width = 0.65,
+                width = 0.9,
                 func = function()
                     -- First ensure default groups exist
                     local defaults = { "Buffs", "Essential", "Utility" }
@@ -689,7 +669,7 @@ local function GetOptionsTable()
                 name = "|cffff8800Emergency Rescue|r",
                 desc = "EMERGENCY: Find ALL frames with cooldownID that aren't being tracked and create them as FREE ICONS. Use this if icons are stuck/missing. Rescued icons appear on screen and can be dragged.",
                 order = 2.1,
-                width = 0.85,
+                width = 1.1,
                 func = function()
                     if ns.CDMGroups.EmergencyRescue then
                         local rescued, tracked, errors = ns.CDMGroups.EmergencyRescue()
@@ -701,29 +681,13 @@ local function GetOptionsTable()
                     end
                 end,
             },
-            addPlaceholderBtn = {
-                type = "execute",
-                name = "Placeholder Catalog",
-                desc = "Open the cooldown catalog to add a placeholder for an ability you don't currently have.",
-                order = 2.5,
-                width = 0.95,
-                func = function()
-                    -- NOTE: We no longer auto-enable placeholder mode here
-                    -- User must manually toggle "Show Placeholders" if they want to see them
-                    -- Open the catalog picker (it's called ShowCooldownPicker in Placeholders module)
-                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ShowCooldownPicker then
-                        ns.CDMGroups.Placeholders.ShowCooldownPicker()
-                    else
-                        PrintMsg("Placeholder picker not available. Use /arcuiph picker")
-                    end
-                end,
-            },
+
             openCDM = {
                 type = "execute",
                 name = "Open CD Manager",
                 desc = "Open the Cooldown Manager settings panel",
                 order = 2.7,
-                width = 0.95,
+                width = 1.05,
                 func = function()
                     local frame = _G["CooldownViewerSettings"]
                     if frame and frame.Show then
@@ -732,15 +696,7 @@ local function GetOptionsTable()
                     end
                 end,
             },
-            helpText = {
-                type = "description",
-                name = "|cffaaaaaa" ..
-                    "Tip: If an icon is stuck in CDM's original location, click |cff00ff00Scan|r to grab it.\n" ..
-                    "Use |cff00ff00Placeholder Catalog|r to reserve a slot for abilities you don't currently have.|r",
-                order = 2.9,
-                width = "full",
-                fontSize = "small",
-            },
+
             spacer1 = {
                 type = "description",
                 name = "",
@@ -749,11 +705,176 @@ local function GetOptionsTable()
             },
             
             -- ════════════════════════════════════════════════════════════════
-            -- GROUP LAYOUTS SECTION (account-wide templates)
+            -- PLACEHOLDERS SECTION (collapsible)
+            -- ════════════════════════════════════════════════════════════════
+            placeholdersToggle = {
+                type = "toggle",
+                name = "Placeholders",
+                desc = "Click to expand/collapse",
+                dialogControl = "CollapsibleHeader",
+                order = 4,
+                width = "full",
+                get = function() return not collapsedSections.placeholders end,
+                set = function(_, v) collapsedSections.placeholders = not v end,
+            },
+            phShowPlaceholders = {
+                type = "toggle",
+                name = "Show Placeholders",
+                desc = "Show placeholder icons for saved positions that don't have an active cooldown.\nPlaceholders are visible in Edit Mode and can be dragged to new positions.",
+                order = 4.1,
+                width = 1.15,
+                hidden = function() return collapsedSections.placeholders end,
+                get = function()
+                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.GetShowPlaceholdersDB then
+                        return ns.CDMGroups.Placeholders.GetShowPlaceholdersDB()
+                    end
+                    return false
+                end,
+                set = function(_, val)
+                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.SetEditingMode then
+                        ns.CDMGroups.Placeholders.SetEditingMode(val)
+                    end
+                end,
+            },
+            phCatalogBtn = {
+                type = "execute",
+                name = "Placeholder Catalog",
+                desc = "Open the cooldown catalog to add a placeholder for an ability you don't currently have.",
+                order = 4.2,
+                width = 1.25,
+                hidden = function() return collapsedSections.placeholders end,
+                func = function()
+                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ShowCooldownPicker then
+                        ns.CDMGroups.Placeholders.ShowCooldownPicker()
+                    else
+                        PrintMsg("Placeholder picker not available. Use /arcuiph picker")
+                    end
+                end,
+            },
+            phRefreshBtn = {
+                type = "execute",
+                name = "Refresh",
+                desc = "Refresh all placeholder positions and visibility.",
+                order = 4.3,
+                width = 0.5,
+                hidden = function() return collapsedSections.placeholders end,
+                func = function()
+                    if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.RefreshAllPlaceholders then
+                        ns.CDMGroups.Placeholders.RefreshAllPlaceholders()
+                        PrintMsg("Placeholders refreshed")
+                    end
+                end,
+            },
+            phClearAllBtn = {
+                type = "execute",
+                name = "|cffff6666Clear All|r",
+                desc = "Remove ALL placeholders from all groups. This clears saved placeholder positions.\n\n|cffffaa00This cannot be undone.|r",
+                order = 4.4,
+                width = 0.65,
+                hidden = function() return collapsedSections.placeholders end,
+                confirm = true,
+                confirmText = "Remove ALL placeholders from all groups?\n\nThis clears their saved positions and cannot be undone.",
+                func = function()
+                    local removed = 0
+                    -- Clear placeholder members from all groups
+                    for groupName, group in pairs(ns.CDMGroups.groups or {}) do
+                        if group.members then
+                            local toRemove = {}
+                            for cdID, member in pairs(group.members) do
+                                if member.isPlaceholder then
+                                    table.insert(toRemove, cdID)
+                                end
+                            end
+                            for _, cdID in ipairs(toRemove) do
+                                -- Hide visual placeholder
+                                if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.HidePlaceholder then
+                                    ns.CDMGroups.Placeholders.HidePlaceholder(cdID)
+                                end
+                                -- Clear from grid
+                                if group.grid and group.members[cdID] then
+                                    local m = group.members[cdID]
+                                    if m.row and m.col and group.grid[m.row] and group.grid[m.row][m.col] == cdID then
+                                        group.grid[m.row][m.col] = nil
+                                    end
+                                end
+                                -- Remove member
+                                group.members[cdID] = nil
+                                -- Clear saved position
+                                if ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID] then
+                                    if ns.CDMGroups.savedPositions[cdID].isPlaceholder then
+                                        ns.CDMGroups.savedPositions[cdID] = nil
+                                        ClearPositionFromSpec(cdID)
+                                    end
+                                end
+                                removed = removed + 1
+                            end
+                        end
+                    end
+                    -- Also clear any savedPositions marked as placeholder that aren't in groups
+                    for cdID, saved in pairs(ns.CDMGroups.savedPositions or {}) do
+                        if saved.isPlaceholder then
+                            ns.CDMGroups.savedPositions[cdID] = nil
+                            ClearPositionFromSpec(cdID)
+                            removed = removed + 1
+                        end
+                    end
+                    PrintMsg("Cleared " .. removed .. " placeholder(s)")
+                    -- Refresh UI
+                    ns.CDMGroups.UpdateGroupSelectionVisuals()
+                    LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+                end,
+            },
+            phCountInfo = {
+                type = "description",
+                name = function()
+                    local count = 0
+                    for _, group in pairs(ns.CDMGroups.groups or {}) do
+                        if group.members then
+                            for _, member in pairs(group.members) do
+                                if member.isPlaceholder then
+                                    count = count + 1
+                                end
+                            end
+                        end
+                    end
+                    -- Also count savedPositions placeholders not in groups
+                    for cdID, saved in pairs(ns.CDMGroups.savedPositions or {}) do
+                        if saved.isPlaceholder then
+                            local found = false
+                            for _, group in pairs(ns.CDMGroups.groups or {}) do
+                                if group.members and group.members[cdID] then
+                                    found = true
+                                    break
+                                end
+                            end
+                            if not found then count = count + 1 end
+                        end
+                    end
+                    if count == 0 then
+                        return "|cff888888No placeholders active.|r"
+                    else
+                        return string.format("|cff00ff00%d placeholder(s) active.|r", count)
+                    end
+                end,
+                order = 4.5,
+                width = "full",
+                fontSize = "small",
+                hidden = function() return collapsedSections.placeholders end,
+            },
+            phSpacer = {
+                type = "description",
+                name = " ",
+                order = 4.9,
+                width = "full",
+                hidden = function() return collapsedSections.placeholders end,
+            },
+            
+            -- ════════════════════════════════════════════════════════════════
+            -- LOAD GROUP LAYOUT SECTION
             -- ════════════════════════════════════════════════════════════════
             groupLayoutsToggle = {
                 type = "toggle",
-                name = "Group Layouts",
+                name = "Load Group Layout",
                 desc = "Click to expand/collapse",
                 dialogControl = "CollapsibleHeader",
                 order = 5,
@@ -761,237 +882,14 @@ local function GetOptionsTable()
                 get = function() return not collapsedSections.groupLayouts end,
                 set = function(_, v) collapsedSections.groupLayouts = not v end,
             },
-            groupLayoutsDesc = {
-                type = "description",
-                name = "|cffaaaaaaSave and load group layouts. Layouts are account-wide and contain group structure (positions, sizes, colors). Icons auto-assign after loading.|r",
-                order = 5.1,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return collapsedSections.groupLayouts end,
-            },
-            
-            -- Current Layout Info
-            currentLayoutInfo = {
-                type = "description",
-                name = function()
-                    local groupNames = {}
-                    if ns.CDMGroups and ns.CDMGroups.groups then
-                        for gName in pairs(ns.CDMGroups.groups) do
-                            table.insert(groupNames, gName)
-                        end
-                    end
-                    table.sort(groupNames)
-                    
-                    if #groupNames == 0 then
-                        return "|cffffd100Current Layout:|r  |cff666666No groups loaded|r"
-                    end
-                    
-                    local groupList = table.concat(groupNames, ", ")
-                    
-                    -- Check for loaded/linked template
-                    local IE = ns.CDMImportExport
-                    local loadedName = IE and IE.GetLoadedTemplateName and IE.GetLoadedTemplateName()
-                    local linkedName = IE and IE.GetLinkedTemplateName and IE.GetLinkedTemplateName()
-                    
-                    -- Build display - template name is primary when available
-                    if linkedName then
-                        -- Linked: show template name prominently with linked indicator
-                        return "|cffffd100Current Layout:|r |cff00ccff" .. linkedName .. "|r |cff00ff00[Linked]|r  |cff888888(" .. #groupNames .. " groups: " .. groupList .. ")|r"
-                    elseif loadedName then
-                        -- Based on template but not linked
-                        return "|cffffd100Current Layout:|r |cffffffff" .. loadedName .. "|r  |cff888888(" .. #groupNames .. " groups: " .. groupList .. ")|r"
-                    else
-                        -- No template
-                        return "|cffffd100Current Layout:|r  |cff00ff00" .. #groupNames .. " groups|r  |cff888888(" .. groupList .. ")|r"
-                    end
-                end,
-                order = 5.15,
-                width = "full",
-                fontSize = "medium",
-                hidden = function() return collapsedSections.groupLayouts end,
-            },
-            
-            -- Unlink button (shown when linked)
-            unlinkTemplateBtn = {
-                type = "execute",
-                name = "|cffff8888Unlink|r",
-                desc = "Stop auto-saving changes to the linked template",
-                order = 5.16,
-                width = 0.5,
-                hidden = function()
-                    if collapsedSections.groupLayouts then return true end
-                    local IE = ns.CDMImportExport
-                    local linkedName = IE and IE.GetLinkedTemplateName and IE.GetLinkedTemplateName()
-                    return not linkedName
-                end,
-                func = function()
-                    local IE = ns.CDMImportExport
-                    if IE and IE.UnlinkTemplate then
-                        IE.UnlinkTemplate()
-                        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                        if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                    end
-                end,
-            },
-            
-            -- ═══════════════════════════════════════════════════════════════════
-            -- SUBSECTION: Load Group Layout
-            -- ═══════════════════════════════════════════════════════════════════
-            glLoadLayoutToggle = {
-                type = "toggle",
-                name = "    Load Group Layout",
-                desc = "Click to expand/collapse",
-                dialogControl = "CollapsibleHeader",
-                order = 5.2,
-                width = "full",
-                hidden = function() return collapsedSections.groupLayouts end,
-                get = function() return not collapsedSections.glLoadLayout end,
-                set = function(_, v) collapsedSections.glLoadLayout = not v end,
-            },
-            glLoadLayoutDesc = {
-                type = "description",
-                name = "|cff888888Select a saved layout or profile to load.|r",
-                order = 5.21,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return collapsedSections.groupLayouts or collapsedSections.glLoadLayout end,
-            },
-            
-            -- === GROUP LAYOUTS DROPDOWN === (UNDER CONSTRUCTION)
-            glLayoutsLabel = {
-                type = "description",
-                name = "|cffffd100Group Layouts|r |cffff6666[Under Construction]|r\n|cff888888This feature is being reworked to integrate better with Arc Manager Profiles.\nUse 'Arc Manager Profiles' below to import layouts.|r",
-                order = 5.215,
-                width = "full",
-                fontSize = "medium",
-                hidden = function() return collapsedSections.groupLayouts or collapsedSections.glLoadLayout end,
-            },
-            glLayoutSelect = {
-                type = "select",
-                name = "",
-                desc = "Select a Group Layout to load",
-                order = 5.22,
-                width = 1.4,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                values = function()
-                    local vals = { [""] = "|cff666666Select a layout...|r" }
-                    local IE = ns.CDMImportExport
-                    if IE and IE.GetGroupTemplates then
-                        local templates = IE.GetGroupTemplates()
-                        for _, t in ipairs(templates) do
-                            local groupInfo = t.groupCount > 0 and (" |cff888888(" .. t.groupCount .. " groups)|r") or ""
-                            vals[t.name] = "|cff00ccff" .. t.displayName .. "|r" .. groupInfo
-                        end
-                    end
-                    return vals
-                end,
-                sorting = function()
-                    local order = { "" }
-                    local IE = ns.CDMImportExport
-                    if IE and IE.GetGroupTemplates then
-                        local templates = IE.GetGroupTemplates()
-                        for _, t in ipairs(templates) do
-                            order[#order + 1] = t.name
-                        end
-                    end
-                    return order
-                end,
-                get = function() return ns.CDMGroupsOptions_selectedLayout or "" end,
-                set = function(_, val) ns.CDMGroupsOptions_selectedLayout = val ~= "" and val or nil end,
-            },
-            glLoadBtn = {
-                type = "execute",
-                name = "|cff00ff00Load|r",
-                desc = "Load selected layout",
-                order = 5.23,
-                width = 0.4,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                disabled = function() return not ns.CDMGroupsOptions_selectedLayout or ns.CDMGroupsOptions_selectedLayout == "" end,
-                func = function()
-                    if not ns.CDMGroupsOptions_selectedLayout then return end
-                    StaticPopupDialogs["ARCUI_GROUPS_LOAD_LAYOUT"] = {
-                        text = "Load Group Layout '" .. ns.CDMGroupsOptions_selectedLayout .. "'?\n\nThis will REPLACE your current group layout.\nIcons will be auto-assigned.",
-                        button1 = "Load",
-                        button2 = "Cancel",
-                        OnAccept = function()
-                            local IE = ns.CDMImportExport
-                            if IE and IE.LoadGroupTemplate then
-                                IE.LoadGroupTemplate(ns.CDMGroupsOptions_selectedLayout)
-                            end
-                            ns.CDMGroupsOptions_selectedLayout = nil
-                            local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                        end,
-                        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-                    }
-                    StaticPopup_Show("ARCUI_GROUPS_LOAD_LAYOUT")
-                end,
-            },
-            glDeleteBtn = {
-                type = "execute",
-                name = "|cffff6666Delete|r",
-                desc = "Delete selected layout",
-                order = 5.24,
-                width = 0.45,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                disabled = function() return not ns.CDMGroupsOptions_selectedLayout or ns.CDMGroupsOptions_selectedLayout == "" end,
-                func = function()
-                    if not ns.CDMGroupsOptions_selectedLayout then return end
-                    StaticPopupDialogs["ARCUI_GROUPS_DELETE_LAYOUT"] = {
-                        text = "Delete Group Layout '" .. ns.CDMGroupsOptions_selectedLayout .. "'?\n\nThis cannot be undone.",
-                        button1 = "Delete",
-                        button2 = "Cancel",
-                        OnAccept = function()
-                            local IE = ns.CDMImportExport
-                            if IE and IE.DeleteGroupTemplate then
-                                IE.DeleteGroupTemplate(ns.CDMGroupsOptions_selectedLayout)
-                            end
-                            ns.CDMGroupsOptions_selectedLayout = nil
-                            local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                        end,
-                        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-                    }
-                    StaticPopup_Show("ARCUI_GROUPS_DELETE_LAYOUT")
-                end,
-            },
-            glNoLayoutsNote = {
-                type = "description",
-                name = "|cff666666No layouts saved yet. Use 'Save Current Layout' below.|r",
-                order = 5.25,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            
-            -- === ARC MANAGER PROFILES DROPDOWN ===
-            glProfilesLabel = {
-                type = "description",
-                name = "\n|cffffd100Arc Manager Profiles|r |cff888888(from any character/spec)|r",
-                order = 5.30,
-                width = "full",
-                fontSize = "medium",
-                hidden = function() return collapsedSections.groupLayouts or collapsedSections.glLoadLayout end,
-            },
-            glProfilesNote = {
-                type = "description",
-                name = function()
-                    local activeProfile = (ns.CDMGroups and ns.CDMGroups.GetActiveProfileName) and ns.CDMGroups.GetActiveProfileName() or "Default"
-                    return "|cff666666Current profile '|cff00ff00" .. activeProfile .. "|cff666666' not shown.|r"
-                end,
-                order = 5.31,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return collapsedSections.groupLayouts or collapsedSections.glLoadLayout end,
-            },
             glProfilesSelect = {
                 type = "select",
-                name = "",
-                desc = "Select an Arc Manager Profile to load",
-                order = 5.32,
+                name = "Arc Manager Profile",
+                desc = "Select a profile from any character/spec to load as your group layout.",
+                order = 5.1,
                 width = 1.4,
                 hidden = function()
-                    if collapsedSections.groupLayouts or collapsedSections.glLoadLayout then return true end
+                    if collapsedSections.groupLayouts then return true end
                     local IE = ns.CDMImportExport
                     if not IE or not IE.GetAvailableProfiles then return true end
                     local profiles = IE.GetAvailableProfiles()
@@ -1025,11 +923,11 @@ local function GetOptionsTable()
             glProfilesLoadBtn = {
                 type = "execute",
                 name = "|cff00ff00Load|r",
-                desc = "Load selected profile",
-                order = 5.33,
+                desc = "Load selected profile. This replaces your current group layout and requires a reload.",
+                order = 5.2,
                 width = 0.4,
                 hidden = function()
-                    if collapsedSections.groupLayouts or collapsedSections.glLoadLayout then return true end
+                    if collapsedSections.groupLayouts then return true end
                     local IE = ns.CDMImportExport
                     if not IE or not IE.GetAvailableProfiles then return true end
                     local profiles = IE.GetAvailableProfiles()
@@ -1089,269 +987,17 @@ local function GetOptionsTable()
             },
             glProfilesNoData = {
                 type = "description",
-                name = "|cff666666No other profiles available.\n• Create profiles in Import/Export → Arc Manager Profiles\n• Play other specs to generate layouts|r",
-                order = 5.34,
+                name = "|cff666666No other profiles available. Play other specs or characters to generate layouts.|r",
+                order = 5.3,
                 width = "full",
                 fontSize = "small",
                 hidden = function()
-                    if collapsedSections.groupLayouts or collapsedSections.glLoadLayout then return true end
+                    if collapsedSections.groupLayouts then return true end
                     local IE = ns.CDMImportExport
                     if not IE or not IE.GetAvailableProfiles then return false end
                     local profiles = IE.GetAvailableProfiles()
                     return #profiles > 0
                 end,
-            },
-            
-            -- ═══════════════════════════════════════════════════════════════════
-            -- SUBSECTION: Save Current Layout (UNDER CONSTRUCTION)
-            -- ═══════════════════════════════════════════════════════════════════
-            glSaveLayoutToggle = {
-                type = "toggle",
-                name = "    Save Current Layout |cffff6666[Under Construction]|r",
-                desc = "This feature is being reworked",
-                dialogControl = "CollapsibleHeader",
-                order = 6.0,
-                width = "full",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                get = function() return not collapsedSections.glSaveLayout end,
-                set = function(_, v) collapsedSections.glSaveLayout = not v end,
-            },
-            glSaveLayoutDesc = {
-                type = "description",
-                name = "|cff888888Save your current group layout as a new template.|r",
-                order = 6.01,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            glSaveName = {
-                type = "input",
-                name = "Layout Name",
-                desc = "Name for the new layout",
-                order = 6.02,
-                width = 1.0,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                get = function() return ns.CDMGroupsOptions_newLayoutName or "" end,
-                set = function(_, val) ns.CDMGroupsOptions_newLayoutName = val end,
-            },
-            glSaveBtn = {
-                type = "execute",
-                name = "|cff00ff00Save|r",
-                desc = "Save current groups as a new layout",
-                order = 6.03,
-                width = 0.4,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                disabled = function() return not ns.CDMGroupsOptions_newLayoutName or ns.CDMGroupsOptions_newLayoutName == "" end,
-                func = function()
-                    local name = ns.CDMGroupsOptions_newLayoutName
-                    if not name or name == "" then return end
-                    
-                    local IE = ns.CDMImportExport
-                    local Shared = ns.CDMShared
-                    
-                    -- Check for existing
-                    local templates = Shared and Shared.GetGroupTemplatesDB()
-                    if templates and templates[name] then
-                        StaticPopupDialogs["ARCUI_GROUPS_OVERWRITE_LAYOUT"] = {
-                            text = "Layout '" .. name .. "' already exists.\n\nOverwrite it?",
-                            button1 = "Overwrite",
-                            button2 = "Cancel",
-                            OnAccept = function()
-                                if IE and IE.SaveGroupTemplate then
-                                    IE.SaveGroupTemplate(name)
-                                end
-                                ns.CDMGroupsOptions_newLayoutName = ""
-                                local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                                if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                            end,
-                            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-                        }
-                        StaticPopup_Show("ARCUI_GROUPS_OVERWRITE_LAYOUT")
-                    else
-                        if IE and IE.SaveGroupTemplate then
-                            IE.SaveGroupTemplate(name)
-                        end
-                        ns.CDMGroupsOptions_newLayoutName = ""
-                        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                        if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                    end
-                end,
-            },
-            
-            -- ═══════════════════════════════════════════════════════════════════
-            -- SUBSECTION: Default for New Specs (UNDER CONSTRUCTION)
-            -- ═══════════════════════════════════════════════════════════════════
-            glDefaultToggle = {
-                type = "toggle",
-                name = "    Default for New Specs |cffff6666[Under Construction]|r",
-                desc = "This feature is being reworked",
-                dialogControl = "CollapsibleHeader",
-                order = 6.5,
-                width = "full",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                get = function() return not collapsedSections.glDefaultNewSpecs end,
-                set = function(_, v) collapsedSections.glDefaultNewSpecs = not v end,
-            },
-            glDefaultDesc = {
-                type = "description",
-                name = "|cff888888When you switch to a spec for the first time, it will use this layout.|r",
-                order = 6.51,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            glDefaultSelect = {
-                type = "select",
-                name = "Default Layout",
-                desc = "Layout to use when initializing a new spec",
-                order = 6.52,
-                width = 1.3,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                values = function()
-                    local vals = { ["_BUILTIN_"] = "|cff666666None|r |cff888888- use built-in 3-group layout|r" }
-                    local IE = ns.CDMImportExport
-                    if IE and IE.GetGroupTemplates then
-                        local templates = IE.GetGroupTemplates()
-                        for _, t in ipairs(templates) do
-                            local groupInfo = t.groupCount > 0 and (" |cff888888(" .. t.groupCount .. " groups)|r") or ""
-                            vals[t.name] = "|cff00ccff" .. t.displayName .. "|r" .. groupInfo
-                        end
-                    end
-                    return vals
-                end,
-                get = function()
-                    local Shared = ns.CDMShared
-                    if Shared then
-                        local name = Shared.GetDefaultTemplateName()
-                        return name or "_BUILTIN_"
-                    end
-                    return "_BUILTIN_"
-                end,
-                set = function(_, val)
-                    local Shared = ns.CDMShared
-                    if Shared then
-                        local newVal = (val ~= "_BUILTIN_") and val or nil
-                        Shared.SetDefaultTemplateName(newVal)
-                        PrintMsg(newVal and ("New specs will use '" .. newVal .. "' layout") or "New specs will use built-in default layout")
-                    end
-                end,
-            },
-            
-            -- ═══════════════════════════════════════════════════════════════════
-            -- SUBSECTION: Link Template (Auto-Save) (UNDER CONSTRUCTION)
-            -- ═══════════════════════════════════════════════════════════════════
-            glLinkToggle = {
-                type = "toggle",
-                name = "    Link Template (Auto-Save) |cffff6666[Under Construction]|r",
-                desc = "This feature is being reworked",
-                dialogControl = "CollapsibleHeader",
-                order = 6.7,
-                width = "full",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                get = function() return not collapsedSections.glLinkTemplate end,
-                set = function(_, v) collapsedSections.glLinkTemplate = not v end,
-            },
-            glLinkDesc = {
-                type = "description",
-                name = "|cff888888Link to a template to automatically save changes as you make them.|r",
-                order = 6.71,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            glLinkCurrentStatus = {
-                type = "description",
-                name = function()
-                    local IE = ns.CDMImportExport
-                    local linkedName = IE and IE.GetLinkedTemplateName and IE.GetLinkedTemplateName()
-                    if linkedName then
-                        return "|cff00ff00Currently linked to:|r |cffffffff" .. linkedName .. "|r"
-                    end
-                    return "|cff888888Not currently linked to any template.|r"
-                end,
-                order = 6.72,
-                width = "full",
-                fontSize = "medium",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            glLinkSelect = {
-                type = "select",
-                name = "Link To",
-                desc = "Select a template to link to. Changes will be auto-saved to this template.",
-                order = 6.73,
-                width = 1.3,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                values = function()
-                    local vals = { [""] = "|cff666666Select a template to link...|r" }
-                    local IE = ns.CDMImportExport
-                    if IE and IE.GetGroupTemplates then
-                        local templates = IE.GetGroupTemplates()
-                        for _, t in ipairs(templates) do
-                            vals[t.name] = "|cff00ccff" .. t.displayName .. "|r"
-                        end
-                    end
-                    return vals
-                end,
-                get = function() return ns.CDMGroupsOptions_linkTemplate or "" end,
-                set = function(_, val) ns.CDMGroupsOptions_linkTemplate = val ~= "" and val or nil end,
-            },
-            glLinkBtn = {
-                type = "execute",
-                name = "|cff00ccffLink|r",
-                desc = "Link to the selected template",
-                order = 6.74,
-                width = 0.5,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                disabled = function() return not ns.CDMGroupsOptions_linkTemplate or ns.CDMGroupsOptions_linkTemplate == "" end,
-                func = function()
-                    local name = ns.CDMGroupsOptions_linkTemplate
-                    if not name or name == "" then return end
-                    
-                    local IE = ns.CDMImportExport
-                    if IE and IE.SetLinkedTemplateName then
-                        IE.SetLinkedTemplateName(name)
-                        -- Also save current state to the template immediately
-                        if IE.SaveGroupTemplate then
-                            IE.SaveGroupTemplate(name, nil, true)
-                        end
-                        ns.CDMGroupsOptions_linkTemplate = nil
-                        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                        if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                    end
-                end,
-            },
-            glUnlinkBtn = {
-                type = "execute",
-                name = "|cffff8888Unlink|r",
-                desc = "Stop auto-saving changes to the linked template",
-                order = 6.75,
-                width = 0.5,
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-                func = function()
-                    local IE = ns.CDMImportExport
-                    if IE and IE.UnlinkTemplate then
-                        IE.UnlinkTemplate()
-                        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-                        if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
-                    end
-                end,
-            },
-            glLinkNote = {
-                type = "description",
-                name = "|cff666666When linked, any changes to group positions, sizes, colors, or settings will automatically save to the linked template after a short delay.|r",
-                order = 6.76,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return true end,  -- UNDER CONSTRUCTION
-            },
-            
-            glAdvancedNote = {
-                type = "description",
-                name = "\n|cffff6666Note: Group Layout Templates are being reworked.\nUse 'Arc Manager Profiles' above to import group layouts from other specs/characters.|r",
-                order = 7,
-                width = "full",
-                fontSize = "small",
-                hidden = function() return collapsedSections.groupLayouts end,
             },
             
             -- ════════════════════════════════════════════════════════════════
@@ -1380,7 +1026,7 @@ local function GetOptionsTable()
                 name = "Click-Through",
                 desc = "When enabled, icons cannot be clicked - mouse clicks pass through to whatever is behind them.\n\nThis also disables tooltips since mouse events don't register.\n\nUseful if icons overlap clickable UI elements.",
                 order = 16.2,
-                width = 0.7,
+                width = 0.9,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
                     -- Use shared DB accessor (reads from char.cdmGroups)
@@ -1426,7 +1072,7 @@ local function GetOptionsTable()
                 name = "Sync Buffs",
                 desc = "Anchor the BuffIcon CDM viewer to the Buffs group proxy.",
                 order = 16.5,
-                width = 0.6,
+                width = 0.7,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
                     return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Buffs") or false
@@ -1442,7 +1088,7 @@ local function GetOptionsTable()
                 name = "Sync Essential",
                 desc = "Anchor the Essential CDM viewer to the Essential group proxy.",
                 order = 16.6,
-                width = 0.7,
+                width = 0.9,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
                     return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Essential") or false
@@ -1458,7 +1104,7 @@ local function GetOptionsTable()
                 name = "Sync Utility",
                 desc = "Anchor the Utility CDM viewer to the Utility group proxy.",
                 order = 16.7,
-                width = 0.6,
+                width = 0.8,
                 hidden = function() return collapsedSections.globalOptions end,
                 get = function()
                     return ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled("Utility") or false
@@ -1512,7 +1158,7 @@ local function GetOptionsTable()
                 name = "|cff88ff88+ New Group|r",
                 desc = "Create a new group",
                 order = 22,
-                width = 0.65,
+                width = 0.8,
                 func = function()
                     -- Generate unique name (check runtime groups, authoritative for existence)
                     local baseName = "Group"
@@ -1581,7 +1227,7 @@ local function GetOptionsTable()
                 name = "|cffffaa00Repair|r",
                 desc = "Attempt to recreate this broken group",
                 order = 24.5,
-                width = 0.45,
+                width = 0.5,
                 hidden = function()
                     -- Only show for broken groups
                     return not IsSelectedGroupBroken()
@@ -1679,7 +1325,7 @@ local function GetOptionsTable()
                 name = "Col Growth",
                 desc = "Column growth direction - where new columns are added when grid expands",
                 order = 33,
-                width = 0.55,
+                width = 0.7,
                 hidden = function() return HideIfNoGroup() or collapsedSections.grid end,
                 values = { RIGHT = "Right", LEFT = "Left" },
                 get = function()
@@ -1710,7 +1356,7 @@ local function GetOptionsTable()
                 name = "Row Growth",
                 desc = "Row growth direction - where new rows are added when grid expands",
                 order = 33.5,
-                width = 0.6,
+                width = 0.7,
                 hidden = function() return HideIfNoGroup() or collapsedSections.grid end,
                 values = { DOWN = "Down", UP = "Up" },
                 get = function()
@@ -1741,7 +1387,7 @@ local function GetOptionsTable()
                 name = "Lock Grid Size",
                 desc = "Prevent grid expansion when dragging icons in this group (prevents accidental row/column creation)",
                 order = 34,
-                width = 0.8,
+                width = 0.95,
                 hidden = function() return HideIfNoGroup() or collapsedSections.grid end,
                 get = function() 
                     local g = GetSelectedGroup()
@@ -1764,7 +1410,7 @@ local function GetOptionsTable()
                 name = "Container Padding",
                 desc = "Space around icons inside the container.\n\n|cffffd700-6|r = Tight (Masque-friendly)\n|cffffd7000|r = Compact\n|cffffd7004|r = Default\n|cffffd7008+|r = Spacious",
                 order = 35,
-                width = 1.0,
+                width = 1.15,
                 min = -6,
                 max = 12,
                 step = 1,
@@ -2015,7 +1661,7 @@ local function GetOptionsTable()
                 name = "Dynamic Container",
                 desc = "When enabled, the group container shrinks to fit only the visible icons. When disabled, container stays at full grid size. Only applies when Dynamic Layout is enabled and options panel is closed.",
                 order = 36.8,
-                width = 1.0,
+                width = 1.15,
                 hidden = function() 
                     local g = GetSelectedGroup()
                     return HideIfNoGroup() or collapsedSections.grid or not (g and g.autoReflow)
@@ -2345,6 +1991,65 @@ local function GetOptionsTable()
                 end,
             },
             
+            -- FRAME STRATA SECTION
+            frameStrataHeader = {
+                type = "toggle",
+                name = "Frame Strata",
+                desc = "Click to expand/collapse",
+                dialogControl = "CollapsibleHeader",
+                order = 45,
+                width = "full",
+                get = function() return not collapsedSections.frameStrata end,
+                set = function(_, v) collapsedSections.frameStrata = not v end,
+            },
+            frameStrata = {
+                type = "select",
+                name = "Strata",
+                desc = "Rendering layer. Higher strata = on top.",
+                order = 45.1,
+                width = 0.8,
+                hidden = function() return HideIfNoGroup() or collapsedSections.frameStrata end,
+                values = {
+                    BACKGROUND = "Background",
+                    LOW = "Low",
+                    MEDIUM = "Medium (Default)",
+                    HIGH = "High",
+                    DIALOG = "Dialog",
+                },
+                sorting = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+                get = function()
+                    local g = GetSelectedGroup()
+                    return g and (g.frameStrata or "MEDIUM") or "MEDIUM"
+                end,
+                set = function(_, val)
+                    local g = GetSelectedGroup()
+                    if g and g.SetGroupFrameStrata then
+                        g:SetGroupFrameStrata(val)
+                    end
+                end,
+            },
+            frameLevel = {
+                type = "input",
+                name = "Level",
+                desc = "Z-order within the same strata. Higher = on top.",
+                dialogControl = "ArcUI_EditBox",
+                order = 45.2,
+                width = 0.5,
+                hidden = function() return HideIfNoGroup() or collapsedSections.frameStrata end,
+                get = function()
+                    local g = GetSelectedGroup()
+                    return tostring(g and (g.frameLevel or 1) or 1)
+                end,
+                set = function(_, val)
+                    local g = GetSelectedGroup()
+                    local num = tonumber(val)
+                    if g and num and g.SetGroupFrameLevel then
+                        num = math.max(1, math.floor(num))
+                        g:SetGroupFrameLevel(num)
+                    end
+                end,
+            },
+            
             -- POSITION SETTINGS SECTION
             positionHeader = {
                 type = "toggle",
@@ -2466,7 +2171,7 @@ local function GetOptionsTable()
                 name = "Background",
                 desc = "Show container background (always visible in edit mode)",
                 order = 62,
-                width = 0.6,
+                width = 0.7,
                 hidden = function() return HideIfNoGroup() or collapsedSections.appearance end,
                 get = function()
                     local g = GetSelectedGroup()
@@ -2483,7 +2188,7 @@ local function GetOptionsTable()
                 desc = "Color of the container border and title",
                 order = 63,
                 hasAlpha = true,
-                width = 0.6,
+                width = 0.85,
                 hidden = function() return HideIfNoGroup() or collapsedSections.appearance end,
                 get = function()
                     local g = GetSelectedGroup()
@@ -2503,7 +2208,7 @@ local function GetOptionsTable()
                 desc = "Color of the container background",
                 order = 64,
                 hasAlpha = true,
-                width = 0.55,
+                width = 0.6,
                 hidden = function() return HideIfNoGroup() or collapsedSections.appearance end,
                 get = function()
                     local g = GetSelectedGroup()
@@ -2522,7 +2227,7 @@ local function GetOptionsTable()
                 name = "Hide When...",
                 desc = "Select conditions that will HIDE this group.\nIf none selected, group is always visible.\nNote: Groups are always shown when editing or options panel is open.",
                 order = 65,
-                width = "full",
+                width = 1.5,
                 hidden = function() return HideIfNoGroup() or collapsedSections.appearance end,
                 values = {
                     ["hideOOC"] = "Out of Combat",
@@ -2539,6 +2244,13 @@ local function GetOptionsTable()
                     ["hideInPetBattle"] = "In Pet Battle",
                     ["hidePvP"] = "PvP Flagged",
                     ["hideDragonriding"] = "Skyriding",
+                    ["hideNoTarget"] = "No Target",
+                    ["hideHasTarget"] = "Has Target",
+                    ["hideNotCasting"] = "Not Casting",
+                    ["hideCasting"] = "While Casting",
+                    ["hideStealthed"] = "Stealthed",
+                    ["hideFlying"] = "Flying",
+                    ["hideSwimming"] = "Swimming",
                     ["hideAlways"] = "Always (Disabled)",
                 },
                 get = function(_, key)
@@ -2599,6 +2311,13 @@ local function GetOptionsTable()
                             g.visibility.hideInEncounter = nil
                             g.visibility.hidePvP = nil
                             g.visibility.hideDragonriding = nil
+                            g.visibility.hideNoTarget = nil
+                            g.visibility.hideHasTarget = nil
+                            g.visibility.hideNotCasting = nil
+                            g.visibility.hideCasting = nil
+                            g.visibility.hideStealthed = nil
+                            g.visibility.hideFlying = nil
+                            g.visibility.hideSwimming = nil
                         elseif val and g.visibility.hideAlways then
                             -- If setting another option, clear hideAlways
                             g.visibility.hideAlways = nil
@@ -2636,7 +2355,7 @@ local function GetOptionsTable()
                 name = "Reflow Icons",
                 desc = "Redistribute icons to fill grid sequentially (removes gaps)",
                 order = 71,
-                width = 0.7,
+                width = 0.85,
                 hidden = function() return HideIfNoGroup() or collapsedSections.tools end,
                 func = function()
                     local g = GetSelectedGroup()
@@ -2648,7 +2367,7 @@ local function GetOptionsTable()
                 name = "Cleanup Empty",
                 desc = "Remove empty trailing rows and columns",
                 order = 72,
-                width = 0.7,
+                width = 0.9,
                 hidden = function() return HideIfNoGroup() or collapsedSections.tools end,
                 func = function()
                     local g = GetSelectedGroup()

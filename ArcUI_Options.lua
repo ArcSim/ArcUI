@@ -280,17 +280,17 @@ local function GetOptionsTable()
           
           defaults = {
             type = "group",
-            name = "Defaults",
+            name = "Globals",
             order = 3,
             childGroups = "tab",
             args = {
               auraDefaults = (function()
                 local tbl = ns.GetCDMGlobalAuraDefaultsOptionsTable and ns.GetCDMGlobalAuraDefaultsOptionsTable() or {
                   type = "group",
-                  name = "Aura Defaults",
+                  name = "Aura Globals",
                   args = { loading = { type = "description", name = "Loading...", order = 1 } }
                 }
-                tbl.name = "Aura Defaults"
+                tbl.name = "Aura Globals"
                 tbl.order = 1
                 return tbl
               end)(),
@@ -298,10 +298,10 @@ local function GetOptionsTable()
               cooldownDefaults = (function()
                 local tbl = ns.GetCDMGlobalCooldownDefaultsOptionsTable and ns.GetCDMGlobalCooldownDefaultsOptionsTable() or {
                   type = "group",
-                  name = "Cooldown Defaults",
+                  name = "Cooldown Globals",
                   args = { loading = { type = "description", name = "Loading...", order = 1 } }
                 }
-                tbl.name = "Cooldown Defaults"
+                tbl.name = "Cooldown Globals"
                 tbl.order = 2
                 return tbl
               end)(),
@@ -361,10 +361,10 @@ local function GetOptionsTable()
           timerBars = (function()
             local tbl = ns.TimerBarOptions and ns.TimerBarOptions.GetOptionsTable() or {
               type = "group",
-              name = "Timer Bars",
+              name = "Custom Bars",
               args = { loading = { type = "description", name = "Loading...", order = 1 } }
             }
-            tbl.name = "Timer Bars"
+            tbl.name = "Custom Bars"
             tbl.order = 2.5
             return tbl
           end)(),

@@ -908,18 +908,21 @@ function IE.Import(importString, options)
         
         local arcAuras = ns.db.char.arcAuras
         
-        -- Add tracked items
+        -- Add tracked items (REPLACE existing - wipe first to prevent duplicates from old items surviving)
         if data.arcAuras.trackedItems then
+        wipe(arcAuras.trackedItems)
         for arcID, config in pairs(data.arcAuras.trackedItems) do
             arcAuras.trackedItems[arcID] = DeepCopy(config)
             importedCounts.arcAuras = importedCounts.arcAuras + 1
         end
         end
         
-        -- Add tracked spell cooldowns
+        -- Add tracked spell cooldowns (REPLACE existing)
         if data.arcAuras.trackedSpells then
             if not arcAuras.trackedSpells then
                 arcAuras.trackedSpells = {}
+            else
+                wipe(arcAuras.trackedSpells)
             end
             for arcID, config in pairs(data.arcAuras.trackedSpells) do
                 arcAuras.trackedSpells[arcID] = DeepCopy(config)
@@ -927,8 +930,9 @@ function IE.Import(importString, options)
             end
         end
         
-        -- Add positions
+        -- Add positions (REPLACE existing)
         if data.arcAuras.positions then
+            wipe(arcAuras.positions)
             for arcID, pos in pairs(data.arcAuras.positions) do
                 arcAuras.positions[arcID] = DeepCopy(pos)
             end

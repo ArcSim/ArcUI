@@ -154,10 +154,56 @@ local function SyncAllAnchorProxies()
 end
 ns.CDMGroups.SyncAllAnchorProxies = SyncAllAnchorProxies
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- COMBAT-SAFE VISIBILITY
+-- CDM icon frames (secure action buttons) get parented to group containers,
+-- which makes containers protected in combat. Show()/Hide() are blocked by
+-- Blizzard during InCombatLockdown(). We use alpha-based visibility as an
+-- immediate visual stand-in, then flush proper Show/Hide when combat ends.
+-- ═══════════════════════════════════════════════════════════════════════════
+local pendingVisibility = {}  -- [container] = true/false (show/hide)
+
+-- Combat-safe Show/Hide for group containers.
+-- If not in combat lockdown, calls Show()/Hide() directly.
+-- If in combat lockdown, uses SetAlpha(0/1) for immediate visual effect
+-- and queues proper Show()/Hide() for PLAYER_REGEN_ENABLED.
+local function SafeShowContainer(container, shouldShow)
+    if not container then return end
+    if InCombatLockdown() then
+        -- Visual stand-in: alpha-based visibility
+        container:SetAlpha(shouldShow and 1 or 0)
+        -- Queue proper Show/Hide for after combat
+        pendingVisibility[container] = shouldShow
+    else
+        -- Not in combat - direct call is safe
+        if shouldShow then
+            container:SetAlpha(1)
+            container:Show()
+        else
+            container:Hide()
+        end
+        pendingVisibility[container] = nil
+    end
+end
+ns.CDMGroups.SafeShowContainer = SafeShowContainer
+
 -- Flush pending container sizes and sync proxies after combat ends
 local combatFlushFrame = CreateFrame("Frame")
 combatFlushFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 combatFlushFrame:SetScript("OnEvent", function()
+    -- ═══ FLUSH PENDING VISIBILITY (Show/Hide deferred from combat) ═══
+    for container, shouldShow in pairs(pendingVisibility) do
+        if container then
+            if shouldShow then
+                container:SetAlpha(1)
+                pcall(container.Show, container)
+            else
+                pcall(container.Hide, container)
+            end
+        end
+    end
+    wipe(pendingVisibility)
+    
     -- Apply all queued container sizes
     for container, size in pairs(pendingContainerSizes) do
         if container and container.SetSize then
@@ -200,15 +246,8 @@ end)
 -- Fixes: 276KB allocations from 1.5K calls per profiler session
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- Cache LibStub result ONCE at load time (not every call!)
+-- Cache LibStub result ONCE at load time (for programmatic Open/Close/SelectGroup calls)
 local _cachedAceConfigDialog = LibStub("AceConfigDialog-3.0", true)
-
--- Time-based cache for options panel state
-local _optionsPanelCacheTime = 0
-local _optionsPanelCacheValue = false
-local _arcUIOpenCacheTime = 0
-local _arcUIOpenCacheValue = false
-local OPTIONS_PANEL_CACHE_DURATION = 0.1  -- 100ms
 
 local function ShouldDisableTooltips()
     return ns.CDMGroups.ShouldDisableTooltips()
@@ -831,6 +870,36 @@ ns.CDMGroups.isResting = false     -- Track resting (city/inn) state for visibil
 ns.CDMGroups.inEncounter = false   -- Track boss encounter state for visibility
 ns.CDMGroups.isPvP = false         -- Track PvP flag state for visibility
 ns.CDMGroups.isDragonriding = false -- Track skyriding state for visibility
+ns.CDMGroups.hasTarget = false     -- Track target existence for visibility
+ns.CDMGroups.isCasting = false     -- Track casting/channeling state for visibility
+ns.CDMGroups.isStealthed = false   -- Track stealth state for visibility
+ns.CDMGroups.isFlying = false      -- Track flying state for visibility
+ns.CDMGroups.isSwimming = false    -- Track swimming state for visibility
+
+-- Flying/swimming state poller: WoW has NO event for takeoff/landing transitions.
+-- IsFlying() changes silently while mounted. We poll at 0.5s when mounted to catch it.
+local flyingPollTicker = nil
+local function StartFlyingPoll()
+  if flyingPollTicker then return end
+  flyingPollTicker = C_Timer.NewTicker(0.5, function()
+    local wasFlying = ns.CDMGroups.isFlying
+    local wasSwimming = ns.CDMGroups.isSwimming
+    ns.CDMGroups.isFlying = IsFlying() or false
+    ns.CDMGroups.isSwimming = IsSwimming() or false
+    if wasFlying ~= ns.CDMGroups.isFlying or wasSwimming ~= ns.CDMGroups.isSwimming then
+      ns.CDMGroups.UpdateGroupVisibility()
+    end
+  end)
+end
+local function StopFlyingPoll()
+  if flyingPollTicker then
+    flyingPollTicker:Cancel()
+    flyingPollTicker = nil
+  end
+  -- Clear states on dismount
+  ns.CDMGroups.isFlying = false
+  ns.CDMGroups.isSwimming = IsSwimming() or false
+end
 ns.CDMGroups.fightStats = { parent = 0, strata = 0, scale = 0, size = 0, show = 0, alpha = 0, position = 0, lastReport = 0 }
 
 -- NOTE: Hook functions moved to ArcUI_CDMGroups_Maintain.lua
@@ -941,6 +1010,9 @@ local function SerializeDefaultGroupToLayoutData(groupData)
         bgColor = groupData.bgColor and DeepCopy(groupData.bgColor),
         -- Visibility
         visibility = groupData.visibility or "always",
+        -- Frame strata
+        frameStrata = groupData.frameStrata,
+        frameLevel = groupData.frameLevel,
     }
 end
 
@@ -1259,8 +1331,7 @@ function ns.CDMGroups.SetupFreeIconDrag(cooldownID)
         
         -- CRITICAL: If options panel is already open, show the button immediately
         -- (UpdateEditButtonVisibility cache may skip this new button)
-        local ACD = LibStub("AceConfigDialog-3.0", true)
-        if ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] then
+        if ns.optionsPanelOpen then
             editBtn:Show()
         end
     else
@@ -1279,8 +1350,7 @@ function ns.CDMGroups.SetupFreeIconDrag(cooldownID)
         if self._freeDragging then return end
         
         -- Check if options panel is open (REQUIRED for both right-click and left-click selection)
-        local ACD = LibStub("AceConfigDialog-3.0", true)
-        local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+        local optionsPanelOpen = ns.optionsPanelOpen
         
         -- Only process clicks when options panel is open
         if not optionsPanelOpen then return end
@@ -1647,62 +1717,29 @@ end
 -- Check if ANY options panel is open (ArcUI or CDM)
 -- When either panel is open, we should show gaps (no reflow)
 -- This is the SINGLE SOURCE OF TRUTH for all reflow decisions
--- OPTIMIZED: Time-based caching (100ms) - fixes 276KB allocations
+-- ZERO-COST: Reads ns.optionsPanelOpen (set by hooks in Shared) + CDM panel + EditMode
 function ns.CDMGroups.IsOptionsPanelOpen()
-    local now = GetTime()
+    -- ArcUI panel (hook-driven via Shared)
+    if ns.optionsPanelOpen then return true end
     
-    -- Return cached result if still valid (within 100ms)
-    if (now - _optionsPanelCacheTime) < OPTIONS_PANEL_CACHE_DURATION then
-        return _optionsPanelCacheValue
-    end
+    -- CDM options panel (hook-driven via OnShow/OnHide)
+    if ns.CDMGroups.cdmOptionsPanelOpen then return true end
     
-    -- Check ArcUI options panel (uses cached value from Shared - cheap!)
-    local arcUIOpen = Shared.IsOptionsPanelOpen()
+    -- Blizzard Edit Mode (only check if nothing else is open)
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return true end
     
-    -- Check CDM options panel (CooldownViewerSettings) - already cached by hooks
-    local cdmOpen = ns.CDMGroups.cdmOptionsPanelOpen
-    
-    -- Check Blizzard Edit Mode - only if not already open (skip expensive call)
-    local blizzEditMode = false
-    if not arcUIOpen and not cdmOpen then
-        blizzEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() or false
-    end
-    
-    -- Cache combined result
-    local result = arcUIOpen or cdmOpen or blizzEditMode
-    _optionsPanelCacheTime = now
-    _optionsPanelCacheValue = result
-    
-    return result
+    return false
 end
 
--- Force next IsOptionsPanelOpen() call to re-check instead of using cache.
--- Called by DynamicLayout when panel open/close state changes immediately.
+-- No-op for backward compatibility (no cache to invalidate anymore)
 function ns.CDMGroups.InvalidateOptionsPanelCache()
-    _optionsPanelCacheTime = 0
+    -- Hook-based system has no cache. Kept for API compatibility.
 end
 
 -- Separate check for just ArcUI panel (for edit mode features like edit buttons)
--- OPTIMIZED: Uses cached LibStub, time-based caching
+-- ZERO-COST: Just reads ns.optionsPanelOpen flag
 function ns.CDMGroups.IsArcUIOptionsPanelOpen()
-    local now = GetTime()
-    
-    -- Return cached result if still valid
-    if (now - _arcUIOpenCacheTime) < OPTIONS_PANEL_CACHE_DURATION then
-        return _arcUIOpenCacheValue
-    end
-    
-    -- Compute fresh result using cached ACD (no LibStub call!)
-    local result = _cachedAceConfigDialog 
-        and _cachedAceConfigDialog.OpenFrames 
-        and _cachedAceConfigDialog.OpenFrames["ArcUI"] 
-        and true or false
-    
-    -- Cache it
-    _arcUIOpenCacheTime = now
-    _arcUIOpenCacheValue = result
-    
-    return result
+    return ns.optionsPanelOpen
 end
 
 -- Check if dragging should be allowed
@@ -1805,8 +1842,7 @@ end
 function ns.CDMGroups.UpdateSingleEditButton(frame)
     if not frame or not frame._arcEditButton then return end
     
-    local ACD = LibStub("AceConfigDialog-3.0", true)
-    local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] and true or false
+    local optionsPanelOpen = ns.optionsPanelOpen
     
     if optionsPanelOpen then
         frame._arcEditButton:EnableMouse(true)
@@ -1817,8 +1853,7 @@ function ns.CDMGroups.UpdateSingleEditButton(frame)
 end
 
 function ns.CDMGroups.UpdateEditButtonVisibility()
-    local ACD = LibStub("AceConfigDialog-3.0", true)
-    local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] and true or false
+    local optionsPanelOpen = ns.optionsPanelOpen
     
     -- OPTIMIZATION: Skip if state hasn't changed
     if optionsPanelOpen == lastEditButtonState then
@@ -1960,7 +1995,11 @@ function ns.CDMGroups.ReleaseAllIcons()
         -- Hide and orphan container last (children should be cleaned first)
         if group.container then
             group.container:ClearAllPoints()
-            group.container:Hide()
+            if InCombatLockdown() then
+                group.container:SetAlpha(0)
+                pendingVisibility[group.container] = nil  -- Clear any pending, it's being destroyed
+            end
+            pcall(group.container.Hide, group.container)
             group.container:SetParent(nil)
         end
         
@@ -2588,8 +2627,7 @@ local function HookCDMOptionsPanel()
                         end
                         
                         -- Check if ArcUI panel is open
-                        local ACD = LibStub("AceConfigDialog-3.0", true)
-                        local arcUIOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+                        local arcUIOpen = ns.optionsPanelOpen
                         
                         if arcUIOpen then
                             -- ArcUI still open - restore to saved positions (show gaps)
@@ -2610,6 +2648,14 @@ local function HookCDMOptionsPanel()
                         if ns.CDMGroups.UpdateGroupVisibility then
                             ns.CDMGroups.UpdateGroupVisibility()
                         end
+                        
+                        -- Force-refresh visual states after CDM panel close
+                        -- CDM panel edits can change which auras are tracked, affecting state visuals
+                        C_Timer.After(0.15, function()
+                            if ns.CDMEnhance and ns.CDMEnhance.ForceRefreshAllVisualStates then
+                                ns.CDMEnhance.ForceRefreshAllVisualStates()
+                            end
+                        end)
                     end)
                 end
             end)
@@ -2649,6 +2695,8 @@ local function SerializeGroupToData(group, overrideLayout)
         visibility = type(group.visibility) == "table" and DeepCopy(group.visibility) or (group.visibility or "always"),
         borderColor = DeepCopy(group.borderColor),
         bgColor = DeepCopy(group.bgColor),
+        frameStrata = group.frameStrata,
+        frameLevel = group.frameLevel,
         layout = overrideLayout or DeepCopy(group.layout),
         grid = {},
     }
@@ -2700,6 +2748,9 @@ local function SerializeGroupToLayoutData(group)
         borderColor = group.borderColor and DeepCopy(group.borderColor),
         bgColor = group.bgColor and DeepCopy(group.bgColor),
         visibility = type(group.visibility) == "table" and DeepCopy(group.visibility) or (group.visibility or "always"),
+        -- Frame strata
+        frameStrata = group.frameStrata,
+        frameLevel = group.frameLevel,
     }
     -- NOTE: Does NOT include grid, members, container - those are runtime only
 end
@@ -2937,6 +2988,8 @@ GetDefaultSpecData = function()
                             lockGridSize = layoutData.lockGridSize,
                             containerPadding = layoutData.containerPadding,
                             visibility = layoutData.visibility or "always",
+                            frameStrata = layoutData.frameStrata,
+                            frameLevel = layoutData.frameLevel,
                             borderColor = layoutData.borderColor and DeepCopy(layoutData.borderColor) or { r = 0.5, g = 0.5, b = 0.5, a = 1 },
                             bgColor = layoutData.bgColor and DeepCopy(layoutData.bgColor) or { r = 0, g = 0, b = 0, a = 0.6 },
                             layout = {
@@ -3187,6 +3240,8 @@ local function EnsureLayoutProfiles(specData)
                         borderColor = group.borderColor and DeepCopy(group.borderColor),
                         bgColor = group.bgColor and DeepCopy(group.bgColor),
                         visibility = group.visibility,
+                        frameStrata = group.frameStrata,
+                        frameLevel = group.frameLevel,
                     }
                 end
             end
@@ -3535,6 +3590,9 @@ function ns.CDMGroups.CreateProfile(profileName)
                 bgColor = group.bgColor and DeepCopy(group.bgColor),
                 -- Visibility
                 visibility = group.visibility,
+                -- Frame strata
+                frameStrata = group.frameStrata,
+                frameLevel = group.frameLevel,
             }
         end
     end
@@ -3841,6 +3899,9 @@ function ns.CDMGroups.SaveCurrentToProfile(profileName)
                 bgColor = group.bgColor and DeepCopy(group.bgColor),
                 -- Visibility
                 visibility = group.visibility,
+                -- Frame strata
+                frameStrata = group.frameStrata,
+                frameLevel = group.frameLevel,
             }
         end
     end
@@ -4185,7 +4246,11 @@ function ns.CDMGroups.LoadProfile(profileName, skipActivation)
             -- Hide and orphan container last
             if group.container then
                 group.container:ClearAllPoints()
-                group.container:Hide()
+                if InCombatLockdown() then
+                    group.container:SetAlpha(0)
+                    pendingVisibility[group.container] = nil
+                end
+                pcall(group.container.Hide, group.container)
                 group.container:SetParent(nil)
             end
             
@@ -4532,6 +4597,34 @@ function ns.CDMGroups.LoadProfile(profileName, skipActivation)
                 end
                 if layoutData.containerPadding ~= nil then
                     group.containerPadding = layoutData.containerPadding
+                end
+                -- Frame strata
+                if layoutData.frameStrata ~= nil then
+                    group.frameStrata = layoutData.frameStrata
+                    if group.container then
+                        group.container:SetFrameStrata(layoutData.frameStrata)
+                        group.container._cdmgFrameStrata = layoutData.frameStrata
+                    end
+                    if group.anchorProxy then
+                        group.anchorProxy:SetFrameStrata(layoutData.frameStrata)
+                    end
+                    if group.titleFrame then
+                        group.titleFrame:SetFrameStrata(layoutData.frameStrata)
+                    end
+                    if group.edgeArrows then
+                        for _, arrow in pairs(group.edgeArrows) do
+                            arrow:SetFrameStrata(layoutData.frameStrata)
+                        end
+                    end
+                    if group.dragToggleBtn then
+                        group.dragToggleBtn:SetFrameStrata(layoutData.frameStrata)
+                    end
+                end
+                if layoutData.frameLevel ~= nil then
+                    group.frameLevel = layoutData.frameLevel
+                    if group.container then
+                        group.container:SetFrameLevel(layoutData.frameLevel)
+                    end
                 end
                 -- Visibility
                 if layoutData.visibility ~= nil then
@@ -5644,7 +5737,11 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
             group.grid = {}
             -- Pool the group container for reuse on next spec (prevents duplicate frames)
             if group.container then
-                group.container:Hide()
+                if InCombatLockdown() then
+                    group.container:SetAlpha(0)
+                    pendingVisibility[group.container] = nil
+                end
+                pcall(group.container.Hide, group.container)
                 PoolContainer(groupName, {
                     container = group.container,
                     anchorProxy = group.anchorProxy,
@@ -5806,7 +5903,7 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
     -- This catches containers from previous visits to this spec
     for groupName, group in pairs(ns.CDMGroups.specGroups[newSpec] or {}) do
         if group.container then
-            group.container:Hide()
+            SafeShowContainer(group.container, false)
             -- Also explicitly clear backdrop to prevent flash of old settings
             group.container:SetBackdropBorderColor(0, 0, 0, 0)
             group.container:SetBackdropColor(0, 0, 0, 0)
@@ -5816,7 +5913,7 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
     -- Also hide current groups (in case specGroups reference is different)
     for groupName, group in pairs(ns.CDMGroups.groups or {}) do
         if group.container then
-            group.container:Hide()
+            SafeShowContainer(group.container, false)
             group.container:SetBackdropBorderColor(0, 0, 0, 0)
             group.container:SetBackdropColor(0, 0, 0, 0)
         end
@@ -5866,6 +5963,8 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
                         lockGridSize = layoutData.lockGridSize,
                         containerPadding = layoutData.containerPadding,
                         visibility = layoutData.visibility or "always",
+                        frameStrata = layoutData.frameStrata,
+                        frameLevel = layoutData.frameLevel,
                         borderColor = layoutData.borderColor and DeepCopy(layoutData.borderColor) or { r = 0.5, g = 0.5, b = 0.5, a = 1 },
                         bgColor = layoutData.bgColor and DeepCopy(layoutData.bgColor) or { r = 0, g = 0, b = 0, a = 0.6 },
                         -- Grid settings
@@ -5929,7 +6028,7 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
     -- Step 6: Groups are now fresh from DB, just show containers
     -- DON'T call Layout() here - specChangeInProgress is still true and groups are empty anyway
     for groupName, group in pairs(ns.CDMGroups.groups) do
-        if group.container then group.container:Show() end
+        if group.container then SafeShowContainer(group.container, true) end
         if group.UpdateAppearance then group.UpdateAppearance() end
         if group.UpdateDragBarPosition then group.UpdateDragBarPosition() end
         if ns.CDMGroups.dragModeEnabled then
@@ -6236,9 +6335,17 @@ local function OnSpecChange(newSpec, oldSpecOverride, skipSave)
             end
             DebugPrint("|cffff00ff[OnSpecChange]|r Post-restoration reflow complete")
             
+            -- Clean out any placeholders from the previous spec before resolving
+            if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ClearWrongSpecPlaceholders then
+                local cleaned = ns.CDMGroups.Placeholders.ClearWrongSpecPlaceholders()
+                if cleaned > 0 then
+                    DebugPrint("|cffff00ff[OnSpecChange]|r Cleaned", cleaned, "wrong-spec placeholders")
+                end
+            end
+            
             -- Try to resolve any placeholders that now have real frames
-            if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ResolvePlaceholders then
-                local resolved = ns.CDMGroups.Placeholders.ResolvePlaceholders()
+            if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ResolveAllPlaceholders then
+                local resolved = ns.CDMGroups.Placeholders.ResolveAllPlaceholders()
                 if resolved > 0 then
                     DebugPrint("|cffff00ff[OnSpecChange]|r Resolved", resolved, "placeholders")
                 end
@@ -6394,6 +6501,8 @@ function ns.CDMGroups.CreateGroup(name)
         visibility = layoutData.visibility or "always",
         borderColor = layoutData.borderColor,
         bgColor = layoutData.bgColor,
+        frameStrata = layoutData.frameStrata,
+        frameLevel = layoutData.frameLevel,
     }
     
     local color = GROUP_COLORS[name] or { r = 0.5, g = 0.5, b = 0.5 }
@@ -6413,6 +6522,8 @@ function ns.CDMGroups.CreateGroup(name)
         dynamicContainerSize = db.dynamicContainerSize,
         lockGridSize = db.lockGridSize,
         containerPadding = db.containerPadding,
+        frameStrata = db.frameStrata or "MEDIUM",
+        frameLevel = db.frameLevel or 1,
         visibility = db.visibility,  -- "always", "combat", or "ooc"
         showBorder = db.showBorder,
         showBackground = db.showBackground,
@@ -6529,8 +6640,9 @@ function ns.CDMGroups.CreateGroup(name)
         })
         container:SetBackdropColor(0, 0, 0, 0.6)
         container:SetBackdropBorderColor(color.r, color.g, color.b, 1)
-        container:SetFrameStrata("MEDIUM")
-        container:SetFrameLevel(1)
+        container:SetFrameStrata(group.frameStrata or "MEDIUM")
+        container._cdmgFrameStrata = group.frameStrata or "MEDIUM"
+        container:SetFrameLevel(group.frameLevel or 1)
         
         -- ═══════════════════════════════════════════════════════════════════════════
         -- ANCHOR PROXY: Taint-safe frame for external addons to anchor to.
@@ -6540,7 +6652,7 @@ function ns.CDMGroups.CreateGroup(name)
         -- Usage: externalFrame:SetPoint("TOP", CDMGroups_Essential_Anchor, "BOTTOM")
         -- ═══════════════════════════════════════════════════════════════════════════
         anchorProxy = CreateFrame("Frame", "CDMGroups_" .. name .. "_Anchor", UIParent)
-        anchorProxy:SetFrameStrata("MEDIUM")
+        anchorProxy:SetFrameStrata(group.frameStrata or "MEDIUM")
         anchorProxy:EnableMouse(false)               -- Fully transparent to interaction
         anchorProxy._isCDMGAnchorProxy = true        -- Marker for identification
         anchorProxy._sourceContainer = container     -- Reference back to real container
@@ -6566,8 +6678,7 @@ function ns.CDMGroups.CreateGroup(name)
     container:EnableMouse(false)
     container:SetScript("OnMouseDown", function(self, button)
         -- Check if options panel is open
-        local ACD = LibStub("AceConfigDialog-3.0", true)
-        local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+        local optionsPanelOpen = ns.optionsPanelOpen
         
         if button == "LeftButton" then
             if optionsPanelOpen then
@@ -6607,6 +6718,7 @@ function ns.CDMGroups.CreateGroup(name)
         titleFrame._groupName = name
         titleFrame._titleColor = titleColor
         titleFrame._container = container
+        titleFrame:SetFrameStrata(group.frameStrata or "MEDIUM")
         if titleFrame.text then
             titleFrame.text:SetText(name)
             titleFrame.text:SetTextColor(titleColor.r, titleColor.g, titleColor.b)
@@ -6617,7 +6729,7 @@ function ns.CDMGroups.CreateGroup(name)
     titleFrame = CreateFrame("Frame", nil, container)
     titleFrame:SetHeight(16)
     titleFrame:SetPoint("CENTER", container, "TOP", 0, -3)  -- Overlapping the top border
-    titleFrame:SetFrameStrata("HIGH")
+    titleFrame:SetFrameStrata(group.frameStrata or "MEDIUM")
     titleFrame:SetFrameLevel(200)
     
     -- Make titleFrame clickable and draggable
@@ -6711,7 +6823,7 @@ function ns.CDMGroups.CreateGroup(name)
     -- ═══════════════════════════════════════════════════════════════════
     local dragToggleBtn = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
     dragToggleBtn:SetSize(16, 16)
-    dragToggleBtn:SetFrameStrata("HIGH")  -- Below options panel
+    dragToggleBtn:SetFrameStrata(group.frameStrata or "MEDIUM")
     dragToggleBtn:SetFrameLevel(100)
     dragToggleBtn._container = container
     dragToggleBtn._groupName = name
@@ -6953,8 +7065,8 @@ function ns.CDMGroups.CreateGroup(name)
         
         btn:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], 0.9)
         btn:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], 1)
-        btn:SetFrameStrata("LOW")  -- Behind groups (MEDIUM) so arrows don't cover other groups
-        btn:SetFrameLevel(100)
+        btn:SetFrameStrata(group.frameStrata or "MEDIUM")
+        btn:SetFrameLevel(1)  -- Lowest level within the strata
         btn:EnableMouse(true)
         btn:RegisterForClicks("LeftButtonUp")  -- Only fire on mouse up, not down+up
         
@@ -9221,9 +9333,26 @@ function ns.CDMGroups.CreateGroup(name)
                             
                             -- Update saved position with new row/col but preserve sortIndex
                             -- This ensures next reflow puts it in the right order
-                            if not IsRestoring() then
-                                SaveGroupPosition(cdID, self.name, targetRow, targetCol, false, savedSortIndex)
+                            -- CRITICAL FIX: If this icon was displaced from its saved slot
+                            -- (saved [0,3] but placed at [1,0] because slot was occupied),
+                            -- NEVER overwrite savedPositions. The user's dragged position is
+                            -- authoritative. The pending reflow (line 9261) will sort it out
+                            -- using the correct savedPositions.
+                            -- 
+                            -- Previous bug: The slot-partner check only caught SOME displacements
+                            -- (when another cdID shared the saved slot). But displacement can also
+                            -- happen when a REAL icon compacted into the saved slot during reflow.
+                            -- In that case, no slot-partner exists but the displacement still
+                            -- corrupts the saved position.
+                            if targetRow == row and targetCol == col then
+                                -- Icon placed at its saved position — safe to save (confirms position)
+                                if not IsRestoring() then
+                                    SaveGroupPosition(cdID, self.name, targetRow, targetCol, false, savedSortIndex)
+                                end
                             end
+                            -- If displaced (targetRow != row or targetCol != col), intentionally
+                            -- DO NOT save. The pending reflow below will compact properly using
+                            -- the preserved savedPositions as the authoritative source.
                             
                             -- If we had to move to a different slot and autoReflow is on, 
                             -- schedule a reflow to put things in proper sortIndex order
@@ -9411,9 +9540,17 @@ function ns.CDMGroups.CreateGroup(name)
         
         
         if math.abs((currentW or 0) - targetW) > 0.5 or math.abs((currentH or 0) - targetH) > 0.5 then
-            SafeContainerSetSize(self.container, targetW, targetH)
-            -- Sync anchor proxy to match new container size (decoupled, no taint chain)
-            SyncAnchorProxy(self)
+            -- SKIP when dynamic container sizing is active — it computes its own compact
+            -- size below. Without this guard, the full-grid targetW/H gets queued into
+            -- pendingContainerSizes during combat, and when combat drops the flush applies
+            -- the FULL grid size before the next Layout() can shrink it back → visible snap.
+            local dynamicWillOverride = (self.dynamicContainerSize == true) and self.autoReflow
+                and not (ns.CDMGroups.IsOptionsPanelOpen and ns.CDMGroups.IsOptionsPanelOpen())
+            if not dynamicWillOverride then
+                SafeContainerSetSize(self.container, targetW, targetH)
+                -- Sync anchor proxy to match new container size (decoupled, no taint chain)
+                SyncAnchorProxy(self)
+            end
         end
         
         -- Position icons
@@ -9594,10 +9731,11 @@ function ns.CDMGroups.CreateGroup(name)
                 end
                 
                 -- Fight strata
+                local targetStrata = self.frameStrata or "MEDIUM"
                 local currentStrata = frame:GetFrameStrata()
-                if currentStrata ~= "MEDIUM" then
+                if currentStrata ~= targetStrata then
                     ns.CDMGroups.fightStats.strata = ns.CDMGroups.fightStats.strata + 1
-                    frame:SetFrameStrata("MEDIUM")
+                    frame:SetFrameStrata(targetStrata)
                 end
                 
                 -- Fight scale - force to 1 always
@@ -9847,14 +9985,22 @@ function ns.CDMGroups.CreateGroup(name)
             local currentW, currentH = self.container:GetSize()
             local sizeChanged = math.abs((currentW or 0) - compactW) > 0.5 or math.abs((currentH or 0) - compactH) > 0.5
             
-            if sizeChanged then
-                if InCombatLockdown() then
-                    pendingContainerSizes[self.container] = { w = compactW, h = compactH }
-                else
-                    -- Only resize here. Position was already updated at the top
-                    -- of Layout() (EARLY CONTAINER POSITION UPDATE section).
-                    self.container:SetSize(compactW, compactH)
+            if InCombatLockdown() then
+                -- ALWAYS write compact size to pending during combat, even if the actual
+                -- container already shows compact. The static grid sizing path (above) or
+                -- other code may have queued the FULL grid size into pendingContainerSizes.
+                -- We must overwrite it so the combat flush applies compact, not full-grid.
+                pendingContainerSizes[self.container] = { w = compactW, h = compactH }
+                if sizeChanged then
+                    SyncAnchorProxy(self)
+                    if ns.Resources and ns.Resources.OnGroupContainerSizeChanged then
+                        ns.Resources.OnGroupContainerSizeChanged(self.name, compactW, compactH)
+                    end
                 end
+            elseif sizeChanged then
+                -- Only resize here. Position was already updated at the top
+                -- of Layout() (EARLY CONTAINER POSITION UPDATE section).
+                self.container:SetSize(compactW, compactH)
                 
                 -- Sync anchor proxy to match new container geometry
                 SyncAnchorProxy(self)
@@ -10595,6 +10741,61 @@ function ns.CDMGroups.CreateGroup(name)
         if ns.CDMGroups.TriggerTemplateAutoSave then ns.CDMGroups.TriggerTemplateAutoSave() end
     end
     
+    function group:SetGroupFrameStrata(strata)
+        strata = strata or "MEDIUM"
+        self.frameStrata = strata
+        local db = getDB()
+        if db then db.frameStrata = strata end
+        -- Apply to container
+        if self.container then
+            self.container:SetFrameStrata(strata)
+            self.container._cdmgFrameStrata = strata
+            -- WoW resets frame level when strata changes — restore it
+            self.container:SetFrameLevel(self.frameLevel or 1)
+        end
+        -- Apply to anchor proxy
+        if self.anchorProxy then
+            self.anchorProxy:SetFrameStrata(strata)
+        end
+        -- Apply to title frame (uses high frameLevel to stay above icons within same strata)
+        if self.titleFrame then
+            self.titleFrame:SetFrameStrata(strata)
+        end
+        -- Apply to all member icon frames
+        for cdID, member in pairs(self.members) do
+            if member.frame then
+                member.frame._cdmgSettingStrata = true
+                member.frame:SetFrameStrata(strata)
+                member.frame._cdmgSettingStrata = false
+            end
+        end
+        -- Apply to edge arrows (column/row add/remove buttons)
+        if self.edgeArrows then
+            for _, arrow in pairs(self.edgeArrows) do
+                arrow:SetFrameStrata(strata)
+            end
+        end
+        -- Apply to drag handle
+        if self.dragToggleBtn then
+            self.dragToggleBtn:SetFrameStrata(strata)
+        end
+        -- Trigger auto-save to linked template
+        if ns.CDMGroups.TriggerTemplateAutoSave then ns.CDMGroups.TriggerTemplateAutoSave() end
+    end
+    
+    function group:SetGroupFrameLevel(level)
+        level = level or 1
+        self.frameLevel = level
+        local db = getDB()
+        if db then db.frameLevel = level end
+        -- Apply to container
+        if self.container then
+            self.container:SetFrameLevel(level)
+        end
+        -- Trigger auto-save to linked template
+        if ns.CDMGroups.TriggerTemplateAutoSave then ns.CDMGroups.TriggerTemplateAutoSave() end
+    end
+    
     function group:SetShowBorder(show)
         self.showBorder = show
         local db = getDB()
@@ -10655,6 +10856,19 @@ function ns.CDMGroups.CreateGroup(name)
         self.position.y = y
         local db = getDB()
         if db then db.position = self.position end
+        
+        -- CRITICAL: Clear dynamic container offset state.
+        -- SetPosition places the container at exact (x, y) with NO offset.
+        -- If _appliedOffsetX/Y is stale from a previous dynamic layout cycle,
+        -- the next Layout() will compute the wrong delta and move the container
+        -- to a bogus position (e.g. bottom of screen).
+        self._appliedOffsetX = nil
+        self._appliedOffsetY = nil
+        self._contentCenterX = nil
+        self._contentCenterY = nil
+        self._pendingContentCenterX = nil
+        self._pendingContentCenterY = nil
+        
         self.container:ClearAllPoints()
         self.container:SetPoint("CENTER", UIParent, "CENTER", x, y)
         self.UpdateDragBarPosition()
@@ -10861,9 +11075,8 @@ function ns.CDMGroups.CreateGroup(name)
         frame:SetMovable(true)
         frame:RegisterForDrag("LeftButton")
         
-        -- CLICK-THROUGH: Check dragModeEnabled and panel DIRECTLY, not cached
-        local ACD = LibStub("AceConfigDialog-3.0", true)
-        local panelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] and true or false
+        -- CLICK-THROUGH: Check dragModeEnabled and panel state
+        local panelOpen = ns.optionsPanelOpen
         local allowDrag = ns.CDMGroups.dragModeEnabled or panelOpen
         
         if allowDrag then
@@ -10939,8 +11152,7 @@ function ns.CDMGroups.CreateGroup(name)
             
             -- CRITICAL: If options panel is already open, show the button immediately
             -- (UpdateEditButtonVisibility cache may skip this new button)
-            local ACD = LibStub("AceConfigDialog-3.0", true)
-            if ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] then
+            if ns.optionsPanelOpen then
                 editBtn:Show()
             end
         else
@@ -10959,8 +11171,7 @@ function ns.CDMGroups.CreateGroup(name)
             if self._groupDragging then return end
             
             -- Check if options panel is open (REQUIRED for left-click selection)
-            local ACD = LibStub("AceConfigDialog-3.0", true)
-            local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+            local optionsPanelOpen = ns.optionsPanelOpen
             
             -- Only process clicks when options panel is open
             if not optionsPanelOpen then return end
@@ -11030,7 +11241,7 @@ function ns.CDMGroups.CreateGroup(name)
             if self._groupDragging then
                 self:StopMovingOrSizing()
                 self._groupDragging = false
-                self:SetFrameStrata("MEDIUM")
+                self:SetFrameStrata((self._sourceGroup and self._sourceGroup.frameStrata) or "MEDIUM")
                 self:SetScript("OnUpdate", nil)
                 ns.CDMGroups.HideDropIndicator()
                 ns.CDMGroups._dragSourceGroup = nil
@@ -11404,7 +11615,11 @@ function ns.CDMGroups.CreateGroup(name)
         
         -- Hide container (buttons auto-hide since parented to container)
         if self.container then
-            self.container:Hide()
+            if InCombatLockdown() then
+                self.container:SetAlpha(0)
+                pendingVisibility[self.container] = nil
+            end
+            pcall(self.container.Hide, self.container)
         end
         
         ns.CDMGroups.groups[name] = nil
@@ -11458,6 +11673,8 @@ function ns.CDMGroups.CreateGroup(name)
                     borderColor = group.borderColor and DeepCopy(group.borderColor),
                     bgColor = group.bgColor and DeepCopy(group.bgColor),
                     visibility = group.visibility,
+                    frameStrata = group.frameStrata,
+                    frameLevel = group.frameLevel,
                 }
                 DebugPrint("|cff00ff00[CreateGroup]|r Added group '" .. name .. "' to profile '" .. activeProfileName .. "' groupLayouts")
             end
@@ -11574,7 +11791,11 @@ function ns.CDMGroups.DeleteGroup(groupName)
     -- Hide and orphan container last
     if group.container then
         group.container:ClearAllPoints()
-        group.container:Hide()
+        if InCombatLockdown() then
+            group.container:SetAlpha(0)
+            pendingVisibility[group.container] = nil
+        end
+        pcall(group.container.Hide, group.container)
         group.container:SetParent(nil)
         group.container = nil
     end
@@ -11938,9 +12159,8 @@ end
 
 -- Update selection visuals for all groups
 function ns.CDMGroups.UpdateGroupSelectionVisuals()
-    -- Check if options panel is open
-    local ACD = LibStub("AceConfigDialog-3.0", true)
-    local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+    -- Check if options panel is open (hook-driven, zero-cost)
+    local optionsPanelOpen = ns.optionsPanelOpen
     
     -- PANEL CLOSE DETECTION: When panel transitions from open → closed, 
     -- re-apply tooltip/click-through settings based on saved DB values
@@ -11950,6 +12170,13 @@ function ns.CDMGroups.UpdateGroupSelectionVisuals()
         if ns.CDMGroups.RefreshIconSettings then
             ns.CDMGroups.RefreshIconSettings()
         end
+        -- Force-refresh ALL visual states (alpha, desat, glow, tint)
+        -- Without this, frames get stuck at panel-open preview state
+        C_Timer.After(0.15, function()
+            if ns.CDMEnhance and ns.CDMEnhance.ForceRefreshAllVisualStates then
+                ns.CDMEnhance.ForceRefreshAllVisualStates()
+            end
+        end)
     end
     ns.CDMGroups._optionsPanelWasOpen = optionsPanelOpen or false
     
@@ -12051,9 +12278,8 @@ function ns.CDMGroups.UpdateGroupVisibility()
     -- MASTER TOGGLE: Do nothing if CDMGroups is disabled
     if not _cdmGroupsEnabled then return end
     
-    -- Check if options panel is open (always show groups when editing)
-    local ACD = LibStub("AceConfigDialog-3.0", true)
-    local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
+    -- Check if options panel is open (hook-driven, zero-cost)
+    local optionsPanelOpen = ns.optionsPanelOpen
     
     -- ALSO check if CDM options panel is open - keep groups visible while configuring
     local cdmPanelOpen = IsCDMOptionsPanelOpen()
@@ -12118,6 +12344,27 @@ function ns.CDMGroups.UpdateGroupVisibility()
                     if vis.hideDragonriding and ns.CDMGroups.isDragonriding then
                         shouldShow = false  -- Hide when skyriding
                     end
+                    if vis.hideNoTarget and not ns.CDMGroups.hasTarget then
+                        shouldShow = false  -- Hide when no target
+                    end
+                    if vis.hideHasTarget and ns.CDMGroups.hasTarget then
+                        shouldShow = false  -- Hide when has target
+                    end
+                    if vis.hideNotCasting and not ns.CDMGroups.isCasting then
+                        shouldShow = false  -- Hide when not casting
+                    end
+                    if vis.hideCasting and ns.CDMGroups.isCasting then
+                        shouldShow = false  -- Hide when casting
+                    end
+                    if vis.hideStealthed and ns.CDMGroups.isStealthed then
+                        shouldShow = false  -- Hide when stealthed
+                    end
+                    if vis.hideFlying and ns.CDMGroups.isFlying then
+                        shouldShow = false  -- Hide when flying
+                    end
+                    if vis.hideSwimming and ns.CDMGroups.isSwimming then
+                        shouldShow = false  -- Hide when swimming
+                    end
                 end
             else
                 -- OLD: String format (backwards compatibility)
@@ -12140,13 +12387,13 @@ function ns.CDMGroups.UpdateGroupVisibility()
             end
             
             if shouldShow then
-                group.container:Show()
+                SafeShowContainer(group.container, true)
                 -- Also show drag bar if in edit mode
                 if ns.CDMGroups.dragModeEnabled and group.dragBar then
                     group.dragBar:Show()
                 end
             else
-                group.container:Hide()
+                SafeShowContainer(group.container, false)
                 -- Also hide drag bar
                 if group.dragBar then
                     group.dragBar:Hide()
@@ -12278,6 +12525,11 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
             ns.CDMGroups.inInstance = IsInInstance() or false
             ns.CDMGroups.isResting = IsResting()
             ns.CDMGroups.isDragonriding = (UnitPowerBarID("player") == 631)
+            ns.CDMGroups.hasTarget = UnitExists("target") or false
+            ns.CDMGroups.isCasting = false
+            ns.CDMGroups.isStealthed = IsStealthed() or false
+            ns.CDMGroups.isFlying = IsFlying() or false
+            ns.CDMGroups.isSwimming = IsSwimming() or false
             
             return  -- Don't do regular zone change handling
         end
@@ -12299,6 +12551,11 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
         ns.CDMGroups.isResting = IsResting()
         ns.CDMGroups.isPvP = UnitIsPVP("player") or UnitIsPVPFreeForAll("player") or false
         ns.CDMGroups.isDragonriding = (UnitPowerBarID("player") == 631)
+        ns.CDMGroups.hasTarget = UnitExists("target") or false
+        ns.CDMGroups.isCasting = false
+        ns.CDMGroups.isStealthed = IsStealthed() or false
+        ns.CDMGroups.isFlying = IsFlying() or false
+        ns.CDMGroups.isSwimming = IsSwimming() or false
         
         -- Update group visibility with fresh state
         if ns.CDMGroups.UpdateGroupVisibility then
@@ -12319,6 +12576,11 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
             ns.CDMGroups.isResting = IsResting()
             ns.CDMGroups.isPvP = UnitIsPVP("player") or UnitIsPVPFreeForAll("player") or false
             ns.CDMGroups.isDragonriding = (UnitPowerBarID("player") == 631)
+            ns.CDMGroups.hasTarget = UnitExists("target") or false
+            ns.CDMGroups.isStealthed = IsStealthed() or false
+            ns.CDMGroups.isFlying = IsFlying() or false
+            ns.CDMGroups.isSwimming = IsSwimming() or false
+            if ns.CDMGroups.isMounted then StartFlyingPoll() else StopFlyingPoll() end
             if wasMounted ~= ns.CDMGroups.isMounted then
                 DebugPrint("|cff00ccff[ZoneChange]|r Mounted state corrected:", tostring(wasMounted), "->", tostring(ns.CDMGroups.isMounted))
             end
@@ -12710,6 +12972,12 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
                 ns.CDMGroups.inEncounter = false  -- No active encounter on fresh init
                 ns.CDMGroups.isPvP = UnitIsPVP("player") or UnitIsPVPFreeForAll("player") or false
                 ns.CDMGroups.isDragonriding = (UnitPowerBarID("player") == 631)
+                ns.CDMGroups.hasTarget = UnitExists("target") or false
+                ns.CDMGroups.isCasting = false
+                ns.CDMGroups.isStealthed = IsStealthed() or false
+                ns.CDMGroups.isFlying = IsFlying() or false
+                ns.CDMGroups.isSwimming = IsSwimming() or false
+                if ns.CDMGroups.isMounted then StartFlyingPoll() end
                 ns.CDMGroups.UpdateGroupVisibility()
                 
                 -- CRITICAL: Ensure container click-through state is correct on initial load
@@ -13039,10 +13307,8 @@ function ns.CDMGroups.SelectGroupForOptions(groupName)
     local ACD = LibStub("AceConfigDialog-3.0", true)
     if not ACD then return end
     
-    -- Check if panel is already open
-    local panelWasOpen = ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
-    
-    if not panelWasOpen then
+    -- Check if panel is already open (hook-driven flag)
+    if not ns.optionsPanelOpen then
         -- Panel not open - open it first
         ACD:Open("ArcUI")
     end
@@ -13103,6 +13369,14 @@ CDMGroupsInitFrame:RegisterEvent("UNIT_FLAGS")                    -- PvP flag ch
 CDMGroupsInitFrame:RegisterEvent("UNIT_POWER_BAR_SHOW")           -- Skyriding detection
 CDMGroupsInitFrame:RegisterEvent("UNIT_POWER_BAR_HIDE")           -- Skyriding detection
 CDMGroupsInitFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")         -- Instance detection
+CDMGroupsInitFrame:RegisterEvent("PLAYER_TARGET_CHANGED")         -- Target gained/lost
+CDMGroupsInitFrame:RegisterEvent("UPDATE_STEALTH")                -- Stealth state changed
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")       -- Cast start
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")        -- Cast stop
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")      -- Cast failed
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player") -- Cast interrupted
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")  -- Channel start
+CDMGroupsInitFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")   -- Channel stop
 
 CDMGroupsInitFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -13153,6 +13427,13 @@ CDMGroupsInitFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
         -- Mounting or dismounting
         ns.CDMGroups.isMounted = IsMounted()
+        ns.CDMGroups.isFlying = IsFlying() or false
+        -- Start/stop flying poll: no event exists for takeoff/landing transitions
+        if ns.CDMGroups.isMounted then
+            StartFlyingPoll()
+        else
+            StopFlyingPoll()
+        end
         ns.CDMGroups.UpdateGroupVisibility()
     elseif event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" then
         local unit = ...
@@ -13202,6 +13483,21 @@ CDMGroupsInitFrame:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "ZONE_CHANGED_NEW_AREA" then
         ns.CDMGroups.inInstance = IsInInstance() or false
+        ns.CDMGroups.isFlying = IsFlying() or false
+        ns.CDMGroups.isSwimming = IsSwimming() or false
+        ns.CDMGroups.UpdateGroupVisibility()
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        ns.CDMGroups.hasTarget = UnitExists("target") or false
+        ns.CDMGroups.UpdateGroupVisibility()
+    elseif event == "UPDATE_STEALTH" then
+        ns.CDMGroups.isStealthed = IsStealthed() or false
+        ns.CDMGroups.UpdateGroupVisibility()
+    elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+        ns.CDMGroups.isCasting = true
+        ns.CDMGroups.UpdateGroupVisibility()
+    elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
+        or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
+        ns.CDMGroups.isCasting = false
         ns.CDMGroups.UpdateGroupVisibility()
     end
 end)
@@ -13635,41 +13931,40 @@ function ns.CDMGroups.Initialize()
     end
     
     -- Hook ArcUI options panel to auto-enable/disable edit mode
-    local ACD = LibStub("AceConfigDialog-3.0")
-    hooksecurefunc(ACD, "Open", function(_, appName)
-        if appName == "ArcUI" then
-            C_Timer.After(0.1, function()
-                local frame = ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
-                if frame and frame.frame then
-                    -- Auto-enable edit mode when ArcUI options opens (unless user explicitly disabled it)
-                    if not ns.CDMGroups.dragModeEnabled and not ns.CDMGroups._userDisabledEditMode then
-                        ns.CDMGroups.SetDragMode(true)
-                    end
-                    
-                    -- Update visibility (show combat-only groups when options open)
-                    ns.CDMGroups.UpdateGroupVisibility()
-                    
-                    -- Hook OnHide to disable edit mode
-                    if not frame.frame._cdmgHooked then
-                        frame.frame._cdmgHooked = true
-                        frame.frame:HookScript("OnHide", function()
-                            if ns.CDMGroups.dragModeEnabled then
-                                ns.CDMGroups.SetDragMode(false)
-                            end
-                            -- Disable placeholder mode when panel closes
-                            if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.SetEditingMode then
-                                ns.CDMGroups.Placeholders.SetEditingMode(false)
-                            end
-                            -- Reset user disabled flag when panel closes
-                            ns.CDMGroups._userDisabledEditMode = false
-                            -- Update visibility (hide combat-only groups when options close)
-                            ns.CDMGroups.UpdateGroupVisibility()
-                        end)
-                    end
+    -- Register panel open/close callback with Shared's hook-based system
+    -- This replaces the old hooksecurefunc(ACD, "Open", ...) approach
+    local Shared = ns.CDMShared or ns.CDM_Shared
+    if Shared and Shared.RegisterPanelCallback then
+        Shared.RegisterPanelCallback("CDMGroups", {
+            onOpen = function()
+                -- Auto-enable edit mode when ArcUI options opens (unless user explicitly disabled it)
+                if not ns.CDMGroups.dragModeEnabled and not ns.CDMGroups._userDisabledEditMode then
+                    ns.CDMGroups.SetDragMode(true)
                 end
-            end)
-        end
-    end)
+                
+                -- Restore placeholder editing mode from DB preference
+                if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.RestoreEditingMode then
+                    ns.CDMGroups.Placeholders.RestoreEditingMode()
+                end
+                
+                -- Update visibility (show combat-only groups when options open)
+                ns.CDMGroups.UpdateGroupVisibility()
+            end,
+            onClose = function()
+                if ns.CDMGroups.dragModeEnabled then
+                    ns.CDMGroups.SetDragMode(false)
+                end
+                -- Suspend placeholder mode (hides visuals without changing DB preference)
+                if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.SuspendEditingMode then
+                    ns.CDMGroups.Placeholders.SuspendEditingMode()
+                end
+                -- Reset user disabled flag when panel closes
+                ns.CDMGroups._userDisabledEditMode = false
+                -- Update visibility (hide combat-only groups when options close)
+                ns.CDMGroups.UpdateGroupVisibility()
+            end,
+        })
+    end
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- CRITICAL: Ensure data persists on first load
@@ -13778,6 +14073,9 @@ local function SaveGroupLayoutsToActiveProfile()
                 bgColor = group.bgColor and DeepCopy(group.bgColor),
                 -- Visibility
                 visibility = group.visibility,
+                -- Frame strata
+                frameStrata = group.frameStrata,
+                frameLevel = group.frameLevel,
             }
         end
     end

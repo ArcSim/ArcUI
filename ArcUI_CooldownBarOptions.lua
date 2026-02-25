@@ -537,33 +537,50 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         end,
       },
       
-      -- Talent conditions
-      talentCondLabel = {
+      -- Talent conditions (Arc Auras style - full row layout)
+      talentCondHeader = {
         type = "description",
-        name = "|cffffd700Talent:|r",
+        name = "\n|cffffd700Talent Conditions:|r",
         order = 4.0,
-        width = 0.35,
+        width = "full",
         fontSize = "medium",
         hidden = function() return not expandedBars[barKey] end,
       },
-      talentCondBtn = {
-        type = "execute",
+      talentCondDesc = {
+        type = "description",
+        name = "|cff888888Only show this bar when specific talents are active. If no conditions are set, the bar shows whenever the spell is known.|r",
+        order = 4.1,
+        width = "full",
+        fontSize = "small",
+        hidden = function() return not expandedBars[barKey] end,
+      },
+      talentCondSummary = {
+        type = "description",
         name = function()
           local cfg = GetBarConfig(spellID, barType)
-          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-            return "|cff00ff00Active|r"
+          if not cfg or not cfg.behavior then return "" end
+          if cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+            if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+              return ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode)
+            end
           end
-          return "None"
+          return ""
         end,
-        desc = function()
+        order = 4.2,
+        width = "full",
+        fontSize = "small",
+        hidden = function()
+          if not expandedBars[barKey] then return true end
           local cfg = GetBarConfig(spellID, barType)
-          if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
-            local summary = ns.TalentPicker and ns.TalentPicker.GetConditionSummary and 
-                            ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode) or "Active"
-            return summary .. "\n\n|cffffd700Click to edit talent conditions|r"
-          end
-          return "Show/hide this bar based on your talent choices.\n\n|cffffd700Click to open talent picker|r"
+          return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
         end,
+      },
+      talentCondEdit = {
+        type = "execute",
+        name = "Edit Talent Conditions",
+        desc = "Open the talent picker to choose which talents must be active (or inactive) for this bar to show.",
+        order = 4.3,
+        width = 1.0,
         func = function()
           local cfg = GetBarConfig(spellID, barType)
           local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
@@ -576,7 +593,6 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
                 if not barCfg.behavior then barCfg.behavior = {} end
                 barCfg.behavior.talentConditions = conditions
                 barCfg.behavior.talentMatchMode = newMatchMode
-                -- Refresh bar visibility immediately
                 if ns.CooldownBars and ns.CooldownBars.UpdateBarVisibilityForSpec then
                   ns.CooldownBars.UpdateBarVisibilityForSpec()
                 end
@@ -587,28 +603,25 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
             print("|cff00ccffArc UI|r: Talent picker not available")
           end
         end,
-        order = 4.1,
-        width = 0.45,
         hidden = function() return not expandedBars[barKey] end,
       },
       talentCondClear = {
         type = "execute",
-        name = "X",
-        desc = "Clear talent conditions",
+        name = "Clear",
+        desc = "Remove all talent conditions. The bar will show whenever the spell is known.",
+        order = 4.4,
+        width = 0.5,
         func = function()
           local cfg = GetBarConfig(spellID, barType)
           if cfg and cfg.behavior then
             cfg.behavior.talentConditions = nil
             cfg.behavior.talentMatchMode = nil
-            -- Refresh bar visibility immediately
             if ns.CooldownBars and ns.CooldownBars.UpdateBarVisibilityForSpec then
               ns.CooldownBars.UpdateBarVisibilityForSpec()
             end
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
-        order = 4.2,
-        width = 0.2,
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = GetBarConfig(spellID, barType)
