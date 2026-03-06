@@ -2189,7 +2189,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         type = "range",
         name = "Slot Spacing",
         desc = "Gap between charge slots (charge bars only)",
-        min = 0, max = 20, step = 1,
+        min = -5, max = 20, step = 1,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.slotSpacing or 3
