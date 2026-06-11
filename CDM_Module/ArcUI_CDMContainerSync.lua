@@ -248,8 +248,14 @@ local function SetupViewerHooks(viewerName)
 
     hooksecurefunc(viewer, "SetPoint", function(self)
         if pushing or editModeSettling then return end
+        if ns.CDMGroups and ns.CDMGroups.specChangeInProgress then return end
 
-        if IsInEditMode() then
+        -- PullFromViewer must ONLY run in Blizzard Edit Mode.
+        -- IsInEditMode() also returns true for ArcUI drag overlay mode — if we
+        -- called PullFromViewer there, dragging a group would read the viewer's
+        -- current position (often stale/bottom-of-screen) and snap the group to it.
+        local blizzEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+        if blizzEditMode then
             if IsMouseButtonDown("LeftButton") then return end
             local point = select(1, self:GetPoint(1))
             if point == "TOPLEFT" then return end
@@ -332,7 +338,9 @@ end
 function ns.CDMContainerSync.OnProxySynced(groupName)
     if not enabled[groupName] then return end
     if IsInEditMode() then return end
-    PushToViewer(groupName)
+    -- skipLayoutSave=true: OnProxySynced fires during gameplay positioning.
+    -- LibEMO layout save is only needed when the user explicitly moves things.
+    PushToViewer(groupName, true)
 end
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -409,7 +417,9 @@ combatFrame:SetScript("OnEvent", function()
     if IsInEditMode() then return end
     C_Timer.After(0.1, function()
         for groupName, isEnabled in pairs(enabled) do
-            if isEnabled then PushToViewer(groupName) end
+            -- skipLayoutSave=true: combat exit just needs a positional push.
+            -- LibEMO LoadLayouts+SaveOnly on every combat exit caused ~2ms spike per group.
+            if isEnabled then PushToViewer(groupName, true) end
         end
     end)
 end)

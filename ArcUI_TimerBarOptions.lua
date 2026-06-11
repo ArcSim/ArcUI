@@ -21,6 +21,7 @@ local function GetStaging(timerID)
     stackStagingState[timerID] = {
       genTrigger = "spellcast", genSpellID = nil, genCooldownID = nil, genStacks = "1",
       spTrigger = "spellcast", spSpellID = nil, spCooldownID = nil, spStacks = "1",
+      supTrigger = "spellcast", supSpellID = nil, supCooldownID = nil, supDuration = "2",
     }
   end
   return stackStagingState[timerID]
@@ -47,11 +48,13 @@ local BAR_MODE_ORDER = { "timer", "toggle", "stack" }
 -- ===================================================================
 local TRIGGER_TYPES = {
   spellcast = "Spell Cast",
+  spellcastSent = "Spell Cast (Sent)",
   ["Aura Gained"] = "Aura Gained",
   ["Aura Lost"] = "Aura Lost",
+  ["Stack Changed"] = "Stack Changed",
 }
 
-local TRIGGER_TYPE_ORDER = { "spellcast", "Aura Gained", "Aura Lost" }
+local TRIGGER_TYPE_ORDER = { "spellcast", "spellcastSent", "Aura Gained", "Aura Lost", "Stack Changed" }
 
 local CANCEL_METHODS = {
   sameSpell = "Same Spell Cast",
@@ -68,12 +71,13 @@ local CANCEL_METHOD_ORDER = { "sameSpell", "auraLost", "auraGained", "overlayHid
 -- ===================================================================
 local STACK_TRIGGER_TYPES = {
   spellcast = "|cffcc66ffSpell Cast|r",
+  spellcastSent = "|cffcc66ffSpell Cast (Sent)|r",
   auraGained = "|cff00ff00Aura Gained|r",
   auraLost = "|cffff4444Aura Lost|r",
   glowShow = "|cffffd700Glow Show|r",
   glowHide = "|cff888888Glow Hide|r",
 }
-local STACK_TRIGGER_ORDER = { "spellcast", "auraGained", "auraLost", "glowShow", "glowHide" }
+local STACK_TRIGGER_ORDER = { "spellcast", "spellcastSent", "auraGained", "auraLost", "glowShow", "glowHide" }
 
 local AURA_TYPES = {
   normal = "Buff/Debuff",
@@ -177,6 +181,14 @@ local function CreateTimerEntry(timerID, orderBase)
     name = "",
     inline = true,
     order = orderBase,
+    hidden = function()
+      -- Hide if timer was deleted (config removed from DB and activeTimers)
+      local cfgExists = ns.db and ns.db.char and ns.db.char.timerBarConfigs
+        and ns.db.char.timerBarConfigs[timerID]
+      local activeExists = ns.CooldownBars and ns.CooldownBars.activeTimers
+        and ns.CooldownBars.activeTimers[timerID]
+      return not cfgExists and not activeExists
+    end,
     args = {
       header = {
         type = "toggle",
@@ -493,8 +505,8 @@ local function CreateTimerEntry(timerID, orderBase)
       
       iconOverride = {
         type = "input",
-        name = "Icon ID",
-        desc = "Override the bar icon with a spell ID or texture ID. Leave empty to use the trigger spell icon.",
+        name = "Icon / Spell ID",
+        desc = "Override the bar icon. Enter a |cffffd700Spell ID|r (auto-resolves to its icon texture) or a raw |cffffd700Texture/Icon ID|r number. Leave empty to use the trigger spell icon.",
         dialogControl = "ArcUI_EditBox",
         get = function()
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
@@ -541,7 +553,7 @@ local function CreateTimerEntry(timerID, orderBase)
       triggerType = {
         type = "select",
         name = "Trigger",
-        desc = "What triggers this timer to start",
+        desc = "What triggers this timer to start.\n\n|cffffd700Stack Changed|r: Starts a timer each time a tracked aura gains or loses a stack (any change fires it).",
         values = TRIGGER_TYPES,
         sorting = TRIGGER_TYPE_ORDER,
         get = function()
@@ -591,7 +603,8 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function()
           if triggerSectionHidden() then return true end
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
-          return not cfg or cfg.tracking.triggerType ~= "spellcast"
+          local tt = cfg and cfg.tracking.triggerType
+          return not cfg or (tt ~= "spellcast" and tt ~= "spellcastSent")
         end,
       },
       
@@ -621,7 +634,8 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function()
           if triggerSectionHidden() then return true end
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
-          return not cfg or cfg.tracking.triggerType ~= "spellcast"
+          local tt = cfg and cfg.tracking.triggerType
+          return not cfg or (tt ~= "spellcast" and tt ~= "spellcastSent")
         end,
       },
       
@@ -654,7 +668,7 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function()
           if triggerSectionHidden() then return true end
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
-          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost")
+          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost" and cfg.tracking.triggerType ~= "Stack Changed")
         end,
       },
       
@@ -681,7 +695,7 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function()
           if triggerSectionHidden() then return true end
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
-          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost")
+          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost" and cfg.tracking.triggerType ~= "Stack Changed")
         end,
       },
       
@@ -703,7 +717,7 @@ local function CreateTimerEntry(timerID, orderBase)
         hidden = function()
           if triggerSectionHidden() then return true end
           local cfg = ns.CooldownBars.GetTimerConfig(timerID)
-          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost")
+          return not cfg or (cfg.tracking.triggerType ~= "Aura Gained" and cfg.tracking.triggerType ~= "Aura Lost" and cfg.tracking.triggerType ~= "Stack Changed")
         end,
       },
       
@@ -1069,6 +1083,37 @@ local function CreateTimerEntry(timerID, orderBase)
           if genSectionHidden() then return true end
           local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("genGrid_" .. timerID)
           return not grid or not grid:HasSelection()
+        end,
+      },
+      
+      genRequireHostileTarget = {
+        type = "toggle",
+        name = "Require Hostile Target",
+        desc = "Only grant stacks if you have a hostile, living target.\nPrevents phantom stacks from casts that missed or hit nothing.",
+        get = function()
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("genGrid_" .. timerID)
+          local entry = grid and grid:GetSelectedEntry()
+          return entry and entry.requireHostileTarget or false
+        end,
+        set = function(info, value)
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("genGrid_" .. timerID)
+          local entry = grid and grid:GetSelectedEntry()
+          if entry then
+            entry.requireHostileTarget = value or nil
+            grid:InvalidateCache()
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.6665,
+        width = 1.0,
+        hidden = function()
+          if genSectionHidden() then return true end
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("genGrid_" .. timerID)
+          if not grid or not grid:HasSelection() then return true end
+          local entry = grid:GetSelectedEntry()
+          if not entry then return true end
+          local tt = entry.triggerType or "spellcast"
+          return IsAuraTrigger(tt) or tt == "glowShow" or tt == "glowHide"
         end,
       },
       
@@ -1470,14 +1515,314 @@ local function CreateTimerEntry(timerID, orderBase)
         end,
       },
       
-      lineBreak3 = {
+      -- ===== SUPPRESSORS (collapsible) =====
+      supHeader = {
+        type = "toggle",
+        name = "|cffff4466Suppressors|r",
+        desc = "Click to expand/collapse suppressors.\n\nSuppressors block spender consumption while active — either for a timed window after a spell cast, or while a CDM-tracked aura is present.",
+        dialogControl = "CollapsibleHeader",
+        get = function() return expandedSections[timerID .. "_sup"] end,
+        set = function(info, value) expandedSections[timerID .. "_sup"] = value end,
+        order = 5.800,
+        width = "full",
+        hidden = stackHiddenFn,
+      },
+
+      -- Add controls
+      supAddTrigger = {
+        type = "select",
+        name = "Trigger",
+        desc = "|cffcc66ffSpell Cast|r: Suppress spenders for N seconds after this spell is cast (e.g. Bladestorm).\n\n|cff00ff00Aura Active|r: Suppress spenders while this CDM-tracked buff is present on you.\n\n|cffff4444Aura Missing|r: Suppress spenders while this CDM-tracked buff is absent (e.g. a buff you must maintain).",
+        values = { spellcast = "Spell Cast", auraActive = "Aura Active", auraMissing = "Aura Missing" },
+        get = function() return GetStaging(timerID).supTrigger or "spellcast" end,
+        set = function(info, value)
+          local staging = GetStaging(timerID)
+          staging.supTrigger = value
+          staging.supSpellID = nil
+          staging.supCooldownID = nil
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.801,
+        width = 0.8,
+        hidden = function() return stackHiddenFn() or not expandedSections[timerID .. "_sup"] end,
+      },
+
+      supAddSpell = {
+        type = "select",
+        name = function()
+          local tt = GetStaging(timerID).supTrigger or "spellcast"
+          if tt == "auraActive" or tt == "auraMissing" then return "Aura" end
+          return "Spell"
+        end,
+        desc = function()
+          local tt = GetStaging(timerID).supTrigger or "spellcast"
+          if tt == "auraActive" or tt == "auraMissing" then return "Pick an aura from your tracked auras" end
+          return "Pick a spell from your spellbook"
+        end,
+        values = function()
+          local tt = GetStaging(timerID).supTrigger or "spellcast"
+          if tt == "auraActive" or tt == "auraMissing" then return GetAuraCatalogDropdown() end
+          return GetSpellCatalogDropdown()
+        end,
+        get = function()
+          local staging = GetStaging(timerID)
+          if (staging.supTrigger or "spellcast") ~= "spellcast" then
+            return staging.supCooldownID or 0
+          end
+          return staging.supSpellID or 0
+        end,
+        set = function(info, value)
+          local staging = GetStaging(timerID)
+          if (staging.supTrigger or "spellcast") ~= "spellcast" then
+            staging.supCooldownID = (value and value > 0) and value or nil
+          else
+            staging.supSpellID = (value and value > 0) and value or nil
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.802,
+        width = 1.2,
+        hidden = function() return stackHiddenFn() or not expandedSections[timerID .. "_sup"] end,
+      },
+
+      supAddID = {
+        type = "input",
+        name = function()
+          local tt = GetStaging(timerID).supTrigger or "spellcast"
+          if tt == "auraActive" or tt == "auraMissing" then return "CDM ID" end
+          return "Spell ID"
+        end,
+        desc = function()
+          local tt = GetStaging(timerID).supTrigger or "spellcast"
+          if tt == "auraActive" or tt == "auraMissing" then return "Or enter CDM cooldown ID manually" end
+          return "Or enter spell ID manually"
+        end,
+        dialogControl = "ArcUI_EditBox",
+        get = function()
+          local staging = GetStaging(timerID)
+          if (staging.supTrigger or "spellcast") ~= "spellcast" then
+            return staging.supCooldownID and tostring(staging.supCooldownID) or ""
+          end
+          return staging.supSpellID and tostring(staging.supSpellID) or ""
+        end,
+        set = function(info, value)
+          local id = tonumber(value)
+          local staging = GetStaging(timerID)
+          if (staging.supTrigger or "spellcast") ~= "spellcast" then
+            staging.supCooldownID = (id and id > 0) and id or nil
+          else
+            staging.supSpellID = (id and id > 0) and id or nil
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.803,
+        width = 0.4,
+        hidden = function() return stackHiddenFn() or not expandedSections[timerID .. "_sup"] end,
+      },
+
+      supAddDuration = {
+        type = "input",
+        name = "Seconds",
+        desc = "How long to suppress spenders after this spell is cast",
+        dialogControl = "ArcUI_EditBox",
+        get = function() return GetStaging(timerID).supDuration or "2" end,
+        set = function(info, value) GetStaging(timerID).supDuration = value end,
+        order = 5.804,
+        width = 0.3,
+        hidden = function()
+          if stackHiddenFn() or not expandedSections[timerID .. "_sup"] then return true end
+          return (GetStaging(timerID).supTrigger or "spellcast") ~= "spellcast"
+        end,
+      },
+
+      supAddBtn = {
+        type = "execute",
+        name = "Add",
+        desc = "Add the selected spell/aura as a suppressor",
+        func = function()
+          local staging = GetStaging(timerID)
+          local tt = staging.supTrigger or "spellcast"
+          if tt ~= "spellcast" then
+            local cdID = tonumber(staging.supCooldownID)
+            if not cdID or cdID <= 0 then
+              print("|cff00ccff[ArcUI]|r Select an aura or enter a cooldown ID first.")
+              return
+            end
+            ns.CooldownBars.AddStackSuppressor(timerID, tt, nil, cdID, nil)
+          else
+            local spellID = tonumber(staging.supSpellID)
+            if not spellID or spellID <= 0 then
+              print("|cff00ccff[ArcUI]|r Select a spell or enter a spell ID first.")
+              return
+            end
+            local dur = math.max(0.5, tonumber(staging.supDuration) or 2)
+            ns.CooldownBars.AddStackSuppressor(timerID, "spellcast", spellID, nil, dur)
+          end
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          if grid then grid:InvalidateCache() end
+          staging.supSpellID = nil
+          staging.supCooldownID = nil
+          staging.supDuration = "2"
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.805,
+        width = 0.55,
+        disabled = function()
+          local staging = GetStaging(timerID)
+          if (staging.supTrigger or "spellcast") ~= "spellcast" then
+            return (tonumber(staging.supCooldownID) or 0) <= 0
+          end
+          return (tonumber(staging.supSpellID) or 0) <= 0
+        end,
+        hidden = function() return stackHiddenFn() or not expandedSections[timerID .. "_sup"] end,
+      },
+
+      -- Grid icons at orders 5.811..5.820 (merged after result table)
+      supGridLabel = {
+        type = "description",
+        name = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          local sups = cfg and cfg.tracking.suppressors
+          if not sups or #sups == 0 then
+            return "|cff666666No suppressors added yet.|r"
+          end
+          return "|cff888888Click an icon to edit or remove:|r"
+        end,
+        order = 5.809,
+        width = "full",
+        hidden = function() return stackHiddenFn() or not expandedSections[timerID .. "_sup"] end,
+      },
+
+      -- Selection panel (appears when grid icon clicked)
+      supSelectedLabel = {
+        type = "description",
+        name = function()
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          if not grid or not grid:HasSelection() then return "" end
+          local entry = grid:GetSelectedEntry()
+          if not entry then return "" end
+          local tt = entry.triggerType or "spellcast"
+          local name, tex
+          if tt == "auraActive" or tt == "auraMissing" then
+            local cdEntry = ns.Catalog and ns.Catalog.GetEntry and ns.Catalog.GetEntry(entry.cooldownID)
+            name = cdEntry and cdEntry.name or ("CD:" .. (entry.cooldownID or "?"))
+            tex = cdEntry and cdEntry.icon or 134400
+            local label = tt == "auraMissing" and "|cffff4444Aura Missing|r" or "|cff00ff00Aura Active|r"
+            return string.format("|cff00ff00Selected:|r |T%d:14:14:0:0|t %s  %s", tex, name, label)
+          else
+            name = C_Spell.GetSpellName(entry.spellID) or ("ID:" .. (entry.spellID or "?"))
+            tex = C_Spell.GetSpellTexture(entry.spellID) or 134400
+            return string.format("|cff00ff00Selected:|r |T%d:14:14:0:0|t %s  |cffcc66ffSpell Cast|r |cff88ff88(%.1fs)|r", tex, name, entry.duration or 2)
+          end
+        end,
+        fontSize = "medium",
+        order = 5.820,
+        width = "full",
+        hidden = function()
+          if stackHiddenFn() or not expandedSections[timerID .. "_sup"] then return true end
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          return not grid or not grid:HasSelection()
+        end,
+      },
+
+      supEditDuration = {
+        type = "input",
+        name = "Suppress Duration (s)",
+        desc = "How many seconds to suppress spenders after this spell is cast",
+        dialogControl = "ArcUI_EditBox",
+        get = function()
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          local entry = grid and grid:GetSelectedEntry()
+          if not entry then return "" end
+          return tostring(entry.duration or 2)
+        end,
+        set = function(info, value)
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          local entry = grid and grid:GetSelectedEntry()
+          if entry then
+            entry.duration = math.max(0.5, tonumber(value) or 2)
+            grid:InvalidateCache()
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.821,
+        width = 0.55,
+        hidden = function()
+          if stackHiddenFn() or not expandedSections[timerID .. "_sup"] then return true end
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          if not grid or not grid:HasSelection() then return true end
+          local entry = grid:GetSelectedEntry()
+          return not entry or (entry.triggerType or "spellcast") ~= "spellcast"
+        end,
+      },
+
+      supRemoveBtn = {
+        type = "execute",
+        name = "|cffff4444Remove|r",
+        desc = "Remove the selected suppressor",
+        func = function()
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          if not grid then return end
+          local entry = grid:GetSelectedEntry()
+          if not entry then return end
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg and cfg.tracking.suppressors then
+            local tt = entry.triggerType or "spellcast"
+            local entryID = (tt ~= "spellcast") and entry.cooldownID or entry.spellID
+            for i, sup in ipairs(cfg.tracking.suppressors) do
+              local supTT = sup.triggerType or "spellcast"
+              local supID = (supTT ~= "spellcast") and sup.cooldownID or sup.spellID
+              if supTT == tt and tonumber(supID) == tonumber(entryID) then
+                ns.CooldownBars.RemoveStackSuppressor(timerID, i)
+                break
+              end
+            end
+          end
+          grid:ClearSelection()
+          grid:InvalidateCache()
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 5.822,
+        width = 0.4,
+        hidden = function()
+          if stackHiddenFn() or not expandedSections[timerID .. "_sup"] then return true end
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          return not grid or not grid:HasSelection()
+        end,
+        confirm = function()
+          local grid = LibStub("ArcUI-CatalogGridBuilder-1.0"):GetGrid("supGrid_" .. timerID)
+          local entry = grid and grid:GetSelectedEntry()
+          if entry then
+            local tt = entry.triggerType or "spellcast"
+            local name
+            if tt ~= "spellcast" then
+              local cdEntry = ns.Catalog and ns.Catalog.GetEntry and ns.Catalog.GetEntry(entry.cooldownID)
+              name = cdEntry and cdEntry.name or ("CD:" .. (entry.cooldownID or "?"))
+            else
+              name = C_Spell.GetSpellName(entry.spellID) or ("ID:" .. (entry.spellID or "?"))
+            end
+            return "Remove suppressor: " .. name .. "?"
+          end
+          return false
+        end,
+      },
+
+      lineBreak_sup = {
         type = "description",
         name = "",
-        order = 8,
+        order = 5.77,
+        width = "full",
+        hidden = stackHiddenFn,
+      },
+
+      lineBreak_supEnd = {
+        type = "description",
+        name = "",
+        order = 5.840,
         width = "full",
         hidden = function() return not expandedTimers[timerKey] end,
       },
-      
+
       hideWhenInactive = {
         type = "toggle",
         name = function()
@@ -1506,11 +1851,11 @@ local function CreateTimerEntry(timerID, orderBase)
             ns.CooldownBars.ApplyAppearance(timerID, "timer")
           end
         end,
-        order = 9,
-        width = 0.75,
+        order = 5.851,
+        width = 1.0,
         hidden = function() return not expandedTimers[timerKey] end,
       },
-      
+
       hideOutOfCombat = {
         type = "toggle",
         name = "Hide Out of Combat",
@@ -1526,9 +1871,55 @@ local function CreateTimerEntry(timerID, orderBase)
             ns.CooldownBars.ApplyAppearance(timerID, "timer")
           end
         end,
-        order = 10,
+        order = 5.852,
         width = 0.9,
         hidden = function() return not expandedTimers[timerKey] end,
+      },
+      
+      resetOnDeath = {
+        type = "toggle",
+        name = "Reset on Death",
+        desc = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg and cfg.tracking.unlimitedDuration then
+            return "Cancel this |cff00ccffToggle|r bar when you die.\n\nDisable to keep it running through death."
+          end
+          return "Stop and hide this |cffcc66ffTimer|r when you die.\n\nDisable to let the timer continue counting down through death."
+        end,
+        get = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          return cfg and cfg.tracking.resetOnDeath ~= false
+        end,
+        set = function(info, value)
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg then cfg.tracking.resetOnDeath = value end
+        end,
+        order = 10.05,
+        width = 0.85,
+        hidden = function()
+          if not expandedTimers[timerKey] then return true end
+          return getUIMode() == "stack"
+        end,
+      },
+      
+      resetOnRetrigger = {
+        type = "toggle",
+        name = "Restart on Re-trigger",
+        desc = "When the trigger fires again while the timer is already running:\n\n|cff00ff00Enabled|r: Restart the timer from full duration (default).\n\n|cffff4444Disabled|r: Ignore the trigger - the timer continues until it finishes naturally.",
+        get = function()
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          return cfg and cfg.tracking.resetOnRetrigger ~= false
+        end,
+        set = function(info, value)
+          local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+          if cfg then cfg.tracking.resetOnRetrigger = value end
+        end,
+        order = 10.06,
+        width = 1.0,
+        hidden = function()
+          if not expandedTimers[timerKey] then return true end
+          return getUIMode() ~= "timer"
+        end,
       },
       
       -- Spec 1 toggle
@@ -2082,6 +2473,90 @@ local function CreateTimerEntry(timerID, orderBase)
     local origHidden = v.hidden
     v.hidden = function()
       if spSectionHidden() then return true end
+      return origHidden and origHidden()
+    end
+    result.args[k] = v
+  end
+  
+  -- ===== BUILD SUPPRESSOR GRID =====
+  local supGridID = "supGrid_" .. timerID
+  local supSectionHidden = function()
+    if stackHiddenFn() then return true end
+    return not expandedSections[timerID .. "_sup"]
+  end
+  local supGrid = CGB:GetGrid(supGridID)
+  if not supGrid then
+    supGrid = CGB:New({
+    id            = "supGrid_" .. timerID,
+    maxIcons      = 10,
+    iconWidth     = 28,
+    iconHeight    = 28,
+    cellWidth     = 0.20,
+    orderBase     = 5.811,
+    orderStep     = 0.001,
+    selectionMode = "toggle",
+    
+    dataProvider = function(grid)
+      local cfg = ns.CooldownBars.GetTimerConfig(timerID)
+      return cfg and cfg.tracking.suppressors or {}
+    end,
+    
+    getEntryID = function(entry)
+      local tt = entry.triggerType or "spellcast"
+      if tt ~= "spellcast" then return tt .. ":" .. tostring(entry.cooldownID or 0) end
+      return "spell:" .. tostring(entry.spellID or 0)
+    end,
+    
+    getEntryIcon = function(entry)
+      local tt = entry.triggerType or "spellcast"
+      if tt ~= "spellcast" then
+        if ns.Catalog and ns.Catalog.GetEntry then
+          local cdEntry = ns.Catalog.GetEntry(entry.cooldownID)
+          if cdEntry then return cdEntry.icon or 134400 end
+        end
+        return 134400
+      end
+      return C_Spell.GetSpellTexture(entry.spellID) or 134400
+    end,
+    
+    getEntryName = function(entry, state)
+      local tt = entry.triggerType or "spellcast"
+      if tt == "auraActive" then
+        return state.selected and "|cff00ff00A|r" or "|cff44aa44A|r"
+      elseif tt == "auraMissing" then
+        return state.selected and "|cffff4444M|r" or "|cffaa2222M|r"
+      else
+        return state.selected and "|cffff8800S|r" or "|cff885500S|r"
+      end
+    end,
+    
+    getEntryDesc = function(entry, state)
+      local name, detail
+      local tt = entry.triggerType or "spellcast"
+      if tt ~= "spellcast" then
+        local cdEntry = ns.Catalog and ns.Catalog.GetEntry and ns.Catalog.GetEntry(entry.cooldownID)
+        name = cdEntry and cdEntry.name or ("CD:" .. (entry.cooldownID or "?"))
+        detail = tt == "auraMissing" and "While aura absent" or "While aura active"
+      else
+        name = C_Spell.GetSpellName(entry.spellID) or ("ID:" .. (entry.spellID or "?"))
+        detail = "Suppress for " .. (entry.duration or 2) .. "s after cast"
+      end
+      local desc = name .. "\n" .. detail
+      if state.selected then desc = desc .. "\n|cff00ff00Selected - edit below|r" end
+      return desc
+    end,
+    
+    onSelectionChanged = function(grid)
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  })
+  end -- if not supGrid
+  
+  local supArgs = supGrid:GetArgs()
+  for k, v in pairs(supArgs) do
+    local origHidden = v.hidden
+    v.hidden = function()
+      if supSectionHidden() then return true end
       return origHidden and origHidden()
     end
     result.args[k] = v

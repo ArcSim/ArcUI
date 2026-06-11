@@ -262,9 +262,10 @@ function Shared.IsArcAuraID(cooldownID)
 end
 
 -- Parse "arc_trinket_13" -> "trinket", 13
+-- Also handles optional "_N" dedup suffix (e.g. "arc_timer_188443_2" -> "timer", 188443)
 function Shared.ParseArcAuraID(arcID)
     if not Shared.IsArcAuraID(arcID) then return nil, nil end
-    local arcType, id = arcID:match("^arc_(%w+)_(%d+)$")
+    local arcType, id = arcID:match("^arc_(%w+)_(%d+)")
     return arcType, tonumber(id)
 end
 
@@ -683,6 +684,18 @@ function Shared.GetGroupTemplatesDB()
     return ns.db.profile.groupTemplates
 end
 
+-- Get the Group Layouts database (truly account-wide via global)
+-- Group Layouts are live-linked: profiles that opt in read/write directly here
+-- instead of storing their own copy in profile.groupLayouts
+function Shared.GetGroupLayoutsDB()
+    if not ns.db then return nil end
+    if not ns.db.global then ns.db.global = {} end
+    if not ns.db.global.groupLayouts then
+        ns.db.global.groupLayouts = {}
+    end
+    return ns.db.global.groupLayouts
+end
+
 -- Get Group Template settings (default template, etc.)
 function Shared.GetGroupTemplateSettings()
     if not ns.db then return nil end
@@ -698,19 +711,7 @@ function Shared.GetGroupTemplateSettings()
     return ns.db.profile.groupTemplateSettings
 end
 
--- Get the default template name (or nil if using hardcoded defaults)
-function Shared.GetDefaultTemplateName()
-    local settings = Shared.GetGroupTemplateSettings()
-    if not settings then return nil end
-    return settings.defaultTemplate
-end
 
--- Set the default template name
-function Shared.SetDefaultTemplateName(templateName)
-    local settings = Shared.GetGroupTemplateSettings()
-    if not settings then return end
-    settings.defaultTemplate = templateName
-end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- DEBUG HELPERS
@@ -779,9 +780,16 @@ function Shared.RegisterPanelCallback(name, callbacks)
     Shared._panelCallbacks[name] = callbacks
 end
 
+-- Private dedup guard. Cannot use ns.optionsPanelOpen because FrameController's
+-- OnArcUIPanelChanged (called from Options.lua posthook) sets that flag before
+-- CDM_Shared's posthook fires. Using a private variable ensures callbacks always
+-- fire exactly once per state transition regardless of hook ordering.
+local _lastPanelState = false
+
 -- Internal: Set panel state and fire all callbacks
 local function SetPanelState(open)
-    if ns.optionsPanelOpen == open then return end
+    if _lastPanelState == open then return end
+    _lastPanelState = open
     ns.optionsPanelOpen = open
 
     -- Fire legacy callback (if any module set it directly)
@@ -809,6 +817,35 @@ function Shared.IsOptionsPanelOpen()
     return ns.optionsPanelOpen
 end
 
+-- Public: Fire all registered panel callbacks. Called directly by Options.lua
+-- hooks which are the reliable, always-firing path. This is the same pattern
+-- used for DynamicLayout.OnOptionsPanelOpened/Closed — direct call, no hooks.
+function Shared.FirePanelCallbacks(open)
+    -- Dedup: Close hook + OnHide can both fire on same close
+    if _lastPanelState == open then return end
+    _lastPanelState = open
+    ns.optionsPanelOpen = open
+
+    -- Fire legacy callback
+    if Shared.OnOptionsPanelStateChanged then
+        local ok, err = pcall(Shared.OnOptionsPanelStateChanged, open)
+        if not ok then
+            print("|cffFF0000[ArcUI PanelHook]|r Legacy callback error: " .. tostring(err))
+        end
+    end
+
+    -- Fire registered callbacks
+    local key = open and "onOpen" or "onClose"
+    for name, cbs in pairs(Shared._panelCallbacks) do
+        if cbs[key] then
+            local ok, err = pcall(cbs[key])
+            if not ok then
+                print("|cffFF0000[ArcUI PanelHook]|r Callback error (" .. name .. "): " .. tostring(err))
+            end
+        end
+    end
+end
+
 -- Force-set panel state (for external callers that need to override, e.g. combat close)
 function Shared.SetOptionsPanelState(open)
     SetPanelState(open)
@@ -829,18 +866,10 @@ local panelHooksInstalled = false
 local widgetFrameHooked = false
 
 local function HookWidgetFrame(ACD)
-    if widgetFrameHooked then return end
-    local widget = ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
-    if not widget or not widget.frame then return end
-
-    widget.frame:HookScript("OnShow", function()
-        SetPanelState(true)
-    end)
-    widget.frame:HookScript("OnHide", function()
-        SetPanelState(false)
-    end)
-    widgetFrameHooked = true
-    Shared._widgetFrameHooked = true
+    -- DISABLED: AceConfigDialog reuses the widget frame for ALL addons.
+    -- OnShow/OnHide fires when ANY addon opens/closes their AceConfig panel,
+    -- falsely toggling ns.optionsPanelOpen. The ACD:Open/Close/CloseAll hooks
+    -- already check appName == "ArcUI" and handle state correctly.
 end
 
 function Shared.InstallPanelHooks()

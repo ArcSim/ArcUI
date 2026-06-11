@@ -84,6 +84,16 @@ local function ApplyCurveAlpha(widget, durObj, curve)
   end
 end
 
+-- Check if the icon's CDM group container is hidden.
+-- SafeShowContainer sets _arcGroupHidden on the container AND existing children,
+-- but icons added after the visibility pass don't have the flag on themselves.
+-- Always check the parent container as the authoritative source.
+local function IsGroupHidden(frame)
+  if frame._arcGroupHidden then return true end
+  local parent = frame:GetParent()
+  return parent and parent._arcGroupHidden or false
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- APPLY CUSTOM LABEL(S)
 -- Creates/updates up to 3 container+FontString overlays per icon
@@ -116,7 +126,7 @@ function CL.Apply(frame, cfg)
       -- ── Create container if needed ──
       if not frame[fk] then
         local container = CreateFrame("Frame", nil, frame)
-        container:SetIgnoreParentAlpha(true)
+        container:SetIgnoreParentAlpha(not IsGroupHidden(frame))
         container._text = container:CreateFontString(nil, "OVERLAY")
         container._text:SetDrawLayer("OVERLAY", 7)
         frame[fk] = container
@@ -124,6 +134,9 @@ function CL.Apply(frame, cfg)
 
       local container = frame[fk]
       local label = container._text
+
+      -- Respect group hidden state (SafeShowContainer sets container alpha=0)
+      container:SetIgnoreParentAlpha(not IsGroupHidden(frame))
 
       -- ── Per-label settings ──
       local fontSize = labelCfg["size" .. s] or 12
@@ -206,7 +219,27 @@ function CL.UpdateVisibility(frame)
   if not frame then return end
   if not frame._arcCLHasText then return end
 
+  -- PARENT ALPHA: Labels use SetIgnoreParentAlpha(true) so they can drive
+  -- their own alpha via cooldown curves. This means they DON'T inherit
+  -- the icon frame's alpha automatically. When the icon is effectively
+  -- hidden (alpha ≈ 0, e.g. OOC / inactive state), hide all labels.
+  local frameAlpha = frame:GetAlpha()
+  if frameAlpha < 0.01 or IsGroupHidden(frame) then
+    for i = 1, 3 do
+      local container = frame[FRAME_KEYS[i]]
+      if container then container:SetAlpha(0) end
+    end
+    return
+  end
+
   local cfg = frame._arcCfg
+  -- ArcAuras frames don't have _arcCfg (CDMEnhance cache). Fetch via arcID.
+  if not cfg then
+    local arcID = frame._arcAuraID or frame.cooldownID
+    if arcID and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings then
+      cfg = ns.CDMEnhance.GetEffectiveIconSettings(arcID)
+    end
+  end
   local labelCfg = cfg and cfg.customLabel
   -- Use ONLY cfg._isAura to determine path, NOT frame.wasSetFromAura.
   local isAura = (cfg and cfg._isAura == true)
@@ -231,6 +264,7 @@ function CL.UpdateVisibility(frame)
   -- ── COOLDOWN PATH: per-label, duration is SECRET → curve system ──
   local spellID = (cfg and cfg._spellID)
     or (frame.cooldownInfo and (frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID))
+    or frame._arcSpellID
 
   -- Pre-compute cooldown state once for all labels
   local isOnGCD, durationObj, isChargeSpell, chargeDurObj
@@ -355,8 +389,16 @@ function CL.UpdateVisibility(frame)
             -- All toggles same state - not filtering, show the label
             container:SetAlpha(1)
           elseif not spellID or isOnGCD or not durationObj or not CooldownCurves then
-            -- Fallback: use boolean result
-            container:SetAlpha(showReady and 1 or 0)
+            -- Fallback: use boolean frame state (covers ArcAuras items/trinkets
+            -- which have _isOnCooldown but no spellID/curves)
+            local isOnCD = frame._isOnCooldown
+              or frame._lastCooldownState
+              or (frame._lastVisualState == "cooldown")
+            if isOnCD then
+              container:SetAlpha(showCooldown and 1 or 0)
+            else
+              container:SetAlpha(showReady and 1 or 0)
+            end
           else
             -- Use curve for smooth transition
             local curve = showReady and CooldownCurves.BinaryInv or CooldownCurves.Binary

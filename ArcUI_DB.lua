@@ -35,10 +35,15 @@ ns.DB_DEFAULTS = {
       radius = 80
     },
     menuBackgroundAlpha = 1.0,
+    -- Options panel saved position/size
+    optionsPanelPos = nil,   -- { point, x, y }
+    optionsPanelSize = nil,  -- { width, height }
     -- CDM Master Kill Switch - stored in global so it's checked before CDM modules init
     cdmStylingEnabled = true,
     -- Pending CDM profiles from master import (for classes not yet logged)
     masterCDMPending = nil,
+    -- Skin preset library (shared across all characters)
+    skinLibrary = {},
   },
   
   -- Profile storage (shared across characters using same profile)
@@ -90,16 +95,12 @@ ns.DB_DEFAULTS = {
           iconTextureID = 0,
           cooldownID = 0,
           alternateCooldownIDs = {},  -- Additional cooldownIDs for cross-spec support
+          excludedCooldownIDs = {},   -- CooldownIDs manually removed; never auto-discovered
           slotNumber = 0,
           maxStacks = 10,
           auraInstanceID = 0,
           useBaseSpell = false,  -- Ignore CDM override spell, use base spell for icon
-          customEnabled = false,
-          customSpellID = 0,
-          customDuration = 10,
-          customStacksPerCast = 1,
-          customMaxStacks = 10,
-          customRefreshMode = "add",
+
           sourceType = "icon",
           useDurationBar = false,
           dynamicMaxDuration = false,
@@ -143,7 +144,7 @@ ns.DB_DEFAULTS = {
           iconMultiDurationAnchor = "BOTTOM",
           
           -- ═══════════════════════════════════════════════════════════════
-          -- CUSTOM TRACKING DISPLAY OPTIONS (for customAura/customCooldown)
+          -- COOLDOWN DISPLAY OPTIONS
           -- ═══════════════════════════════════════════════════════════════
           -- Cooldown Swipe (COOLDOWNS ONLY)
           iconShowCooldownSwipe = true,
@@ -159,6 +160,7 @@ ns.DB_DEFAULTS = {
           iconZoom = 0,
           
           texture = "Blizzard",
+          rotateTexture = false,
           fillTextureScale = 1.0,
           barOrientation = "horizontal",  -- "horizontal" or "vertical"
           barReverseFill = false,         -- Reverse fill direction (right-to-left / top-to-bottom)
@@ -195,6 +197,9 @@ ns.DB_DEFAULTS = {
           showTickMarks = true,
           tickMode = "all",
           tickThickness = 1,
+          tickHeightPercent = 100,
+          tickHeightAnchor = "center",
+          tickThicknessAnchor = "center",
           tickColor = {r=0, g=0, b=0, a=1},
           showText = true,
           font = "2002 Bold",
@@ -257,6 +262,7 @@ ns.DB_DEFAULTS = {
           nameAnchorOffsetY = 0,
           showBarIcon = false,
           barIconSize = 32,
+          iconOverride = nil,    -- Spell ID or texture ID to override the bar icon
           barIconAnchor = "LEFT",
           barIconAnchorOffsetX = 0,
           barIconAnchorOffsetY = 0,
@@ -302,7 +308,7 @@ ns.DB_DEFAULTS = {
         },
         
         -- ═══════════════════════════════════════════════════════════════
-        -- CONDITIONAL EVENTS (for customAura/customCooldown)
+        -- CONDITIONAL EVENTS
         -- ═══════════════════════════════════════════════════════════════
         events = {},
       },
@@ -345,6 +351,7 @@ ns.DB_DEFAULTS = {
           opacity = 1.0,
           
           texture = "Blizzard",
+          rotateTexture = false,
           fillTextureScale = 1.0,
           barOrientation = "horizontal",  -- "horizontal" or "vertical"
           barReverseFill = false,         -- Reverse fill direction
@@ -356,6 +363,9 @@ ns.DB_DEFAULTS = {
           showTickMarks = false,
           tickMode = "all",
           tickThickness = 2,
+          tickHeightPercent = 100,
+          tickHeightAnchor = "center",
+          tickThicknessAnchor = "center",
           tickColor = {r=1, g=1, b=1, a=0.8},
           showText = true,
           textFormat = "value",  -- "value" or "percent"
@@ -393,7 +403,10 @@ ns.DB_DEFAULTS = {
           showOnSpecs = {},
           talentConditions = nil,
           talentMatchMode = nil,
-        }
+        },
+        prediction = {
+          spells = {},
+        },
       }
     },
     
@@ -440,6 +453,7 @@ ns.DB_DEFAULTS = {
           
           -- Texture and fill
           texture = "Blizzard",
+          rotateTexture = false,
           fillTextureScale = 1.0,
           barOrientation = "horizontal",  -- "horizontal" or "vertical"
           barReverseFill = false,         -- Reverse fill direction
@@ -465,6 +479,9 @@ ns.DB_DEFAULTS = {
           showTickMarks = true,
           tickMode = "all",
           tickThickness = 1,
+          tickHeightPercent = 100,
+          tickHeightAnchor = "center",
+          tickThicknessAnchor = "center",
           tickColor = {r=0, g=0, b=0, a=1},
           
           -- Stack/Charge Text
@@ -541,11 +558,6 @@ ns.DB_DEFAULTS = {
     -- DO NOT add new fields here - use profile.cdmEnhance instead
     cdmEnhance = nil,
     
-    -- Custom aura and cooldown definitions
-    customDefinitions = {
-      auras = {},     -- Custom aura definitions keyed by unique ID
-      cooldowns = {}, -- Custom cooldown definitions keyed by unique ID
-    },
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- COOLDOWN BAR SETUP (ArcUI_CooldownBars.lua active bar tracking)
@@ -585,7 +597,7 @@ function ns.API.GetBarConfig(barNumber)
   local barConfig = db.bars[barNumber]
   
   -- FAST PATH: Already migrated = most common case during combat (400+ calls/sec)
-  local CURRENT_MIGRATION_VERSION = 2
+  local CURRENT_MIGRATION_VERSION = 3
   local migrated = barConfig._migrated
   if migrated == CURRENT_MIGRATION_VERSION or (type(migrated) == "number" and migrated >= CURRENT_MIGRATION_VERSION) then
     return barConfig
@@ -641,6 +653,8 @@ function ns.API.GetBarConfig(barNumber)
   end
   if display.barOrientation == nil then display.barOrientation = "horizontal" end
   if display.barReverseFill == nil then display.barReverseFill = false end
+  if display.rotateTexture == nil then display.rotateTexture = false end
+  if display.showBackground == nil then display.showBackground = true end
   -- Migration: ensure text anchor defaults exist (prevents free-drag mode for old bars)
   if display.textAnchor == nil then display.textAnchor = "OUTERTOP" end
   if display.durationAnchor == nil then display.durationAnchor = "CENTER" end
@@ -723,6 +737,97 @@ function ns.API.GetBarConfig(barNumber)
     end
   end
   
+  -- Migration: convert old showInForms (positive) or hideInForms (negative) → hideWhen keys
+  -- Old positive: showInForms = {cat=true, bear=true} → "show ONLY in cat and bear"
+  -- Old negative: hideInForms = {cat=true} → "hide in cat"
+  -- New unified: hideWhen = {hideInCatForm=true, ...}
+  local FORM_KEY_TO_HIDEWHEN = {
+    caster  = "hideInCasterForm",
+    cat     = "hideInCatForm",
+    bear    = "hideInBearForm",
+    moonkin = "hideInMoonkinForm",
+    travel  = "hideInTravelForm",
+    tree    = "hideInTreeForm",
+    none            = "hideInNoStance",
+    battleStance    = "hideInBattleStance",
+    defensiveStance = "hideInDefensiveStance",
+    shadowform      = "hideInShadowform",
+    stealth         = "hideInStealth",
+  }
+  if barConfig.behavior then
+    -- First: convert old positive showInForms → negative hideInForms
+    if barConfig.behavior.showInForms and type(barConfig.behavior.showInForms) == "table" then
+      local showForms = barConfig.behavior.showInForms
+      local anySelected = false
+      for _, v in pairs(showForms) do
+        if v then anySelected = true; break end
+      end
+      if anySelected then
+        -- Druid form set (the only class that had the old positive system)
+        local allDruidForms = { "caster", "cat", "bear", "moonkin", "travel", "tree" }
+        if not barConfig.behavior.hideInForms then barConfig.behavior.hideInForms = {} end
+        for _, form in ipairs(allDruidForms) do
+          if not showForms[form] then
+            barConfig.behavior.hideInForms[form] = true
+          end
+        end
+        barConfig.behavior.hideInFormsAlpha = barConfig.behavior.hideInFormsAlpha or 0
+      end
+      barConfig.behavior.showInForms = nil
+    end
+    -- Second: convert hideInForms → hideWhen keys
+    if barConfig.behavior.hideInForms and type(barConfig.behavior.hideInForms) == "table" then
+      if not barConfig.behavior.hideWhen or type(barConfig.behavior.hideWhen) ~= "table" then
+        barConfig.behavior.hideWhen = {}
+      end
+      for formKey, enabled in pairs(barConfig.behavior.hideInForms) do
+        if enabled then
+          local hwKey = FORM_KEY_TO_HIDEWHEN[formKey]
+          if hwKey then
+            barConfig.behavior.hideWhen[hwKey] = true
+          end
+        end
+      end
+      -- Migrate alpha
+      if barConfig.behavior.hideInFormsAlpha and barConfig.behavior.hideInFormsAlpha > 0 then
+        barConfig.behavior.hideWhenAlpha = barConfig.behavior.hideInFormsAlpha
+      end
+      barConfig.behavior.hideInForms = nil
+      barConfig.behavior.hideInFormsAlpha = nil
+    end
+  end
+  
+  -- ═══════════════════════════════════════════════════════════════════
+  -- VERSION 3 MIGRATIONS (border thickness pixel-perfect fix)
+  -- The border rendering changed from GetNearestPixelSize (which rounded
+  -- 1 WoW unit to 2 physical pixels at sub-1 UI scales) to an exact
+  -- physical pixel formula (1 WoW unit = exactly 1 physical pixel).
+  -- Double any existing drawnBorderThickness so bars look identical after
+  -- the update. New bars created after migration are unaffected.
+  -- ═══════════════════════════════════════════════════════════════════
+  if currentVersion < 3 then
+    -- Rendering changed from GetNearestPixelSize (which could round 1 WoW unit to 2px
+    -- at sub-1 UI scales due to btRaw minimum) to exact physical pixel formula (1 = 1px).
+    -- Compute how many physical pixels the OLD code actually rendered and store that count
+    -- as the new value — so everyone gets identical visuals regardless of UI scale.
+    local _, _h = GetPhysicalScreenSize()
+    local _s = UIParent:GetScale()
+    local _ppu = (_h and _h > 0 and _s and _s > 0) and (_h / 768) * _s or 1
+    local d = barConfig.display
+    if d and d.showBorder then
+      local bt = d.drawnBorderThickness
+      if type(bt) == "number" and bt > 0 then
+        d.drawnBorderThickness = math.max(bt, math.floor(bt * _ppu + 0.5))
+      end
+    end
+    if d then
+      local tt = d.tickThickness
+      if type(tt) == "number" and tt > 0 then
+        d.tickThickness = math.max(tt, math.floor(tt * _ppu + 0.5))
+      end
+    end
+  end
+
   -- Mark as migrated with version number
   barConfig._migrated = CURRENT_MIGRATION_VERSION
   
@@ -839,52 +944,67 @@ end
 -- ===================================================================
 -- HELPER: Get All Active Bars (Buff/Debuff)
 -- ===================================================================
+-- ===================================================================
+-- ACTIVE BAR CACHE
+-- Avoids scanning 500 slots on every call. Invalidated whenever a bar
+-- is enabled/disabled or created/deleted via InvalidateActiveBarCache().
+-- ===================================================================
+local activeBarCache         = nil  -- [barNum, ...] or nil (dirty)
+local activeResourceBarCache = nil
+local activeCooldownBarCache = nil
+
+function ns.API.InvalidateActiveBarCache()
+  activeBarCache         = nil
+  activeResourceBarCache = nil
+  activeCooldownBarCache = nil
+end
+
 function ns.API.GetActiveBars()
+  if activeBarCache then return activeBarCache end
   local db = ns.API.GetDB()
-  if not db or not db.bars then return {} end
-  
+  if not db or not db.bars then activeBarCache = {}; return activeBarCache end
   local activeBars = {}
   for i = 1, 500 do
     if db.bars[i] and db.bars[i].tracking.enabled then
       table.insert(activeBars, i)
     end
   end
-  
-  return activeBars
+  activeBarCache = activeBars
+  return activeBarCache
 end
 
 -- ===================================================================
 -- HELPER: Get All Active Resource Bars
 -- ===================================================================
 function ns.API.GetActiveResourceBars()
+  if activeResourceBarCache then return activeResourceBarCache end
   local db = ns.API.GetDB()
-  if not db or not db.resourceBars then return {} end
-  
+  if not db or not db.resourceBars then activeResourceBarCache = {}; return activeResourceBarCache end
   local activeBars = {}
   for i = 1, 500 do
     if db.resourceBars[i] and db.resourceBars[i].tracking.enabled then
       table.insert(activeBars, i)
     end
   end
-  
-  return activeBars
+  activeResourceBarCache = activeBars
+  return activeResourceBarCache
 end
 
 -- ===================================================================
 -- HELPER: Get All Active Cooldown Bars
 -- ===================================================================
 function ns.API.GetActiveCooldownBars()
+  if activeCooldownBarCache then return activeCooldownBarCache end
   local db = ns.API.GetDB()
-  if not db or not db.cooldownBars then return {} end
-  
+  if not db or not db.cooldownBars then activeCooldownBarCache = {}; return activeCooldownBarCache end
   local activeBars = {}
   for i = 1, 500 do
     if db.cooldownBars[i] and db.cooldownBars[i].tracking and db.cooldownBars[i].tracking.enabled then
       table.insert(activeBars, i)
     end
   end
-  
-  return activeBars
+  activeCooldownBarCache = activeBars
+  return activeCooldownBarCache
 end
 
 -- ===================================================================
@@ -919,6 +1039,7 @@ function ns.API.InitializeNewBar()
       db.bars[i].tracking.buffName = "(Not configured yet)"
       db.bars[i].tracking.spellID = 0
       db.bars[i].tracking.maxStacks = 10
+      ns.API.InvalidateActiveBarCache()
       
       if ns.Display and ns.Display.ShowBar then
         ns.Display.ShowBar(i)
@@ -960,6 +1081,7 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
       cfg.tracking.powerType = powerType
       cfg.tracking.secondaryType = secondaryType
       cfg.tracking.powerName = powerName
+      ns.API.InvalidateActiveBarCache()
       
       -- ═══════════════════════════════════════════════════════════
       -- CRITICAL: Reset display mode when reusing a slot.
@@ -986,6 +1108,11 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
       -- Get max value based on resource type
       if resourceCategory == "secondary" and secondaryType then
         cfg.tracking.maxValue = ns.Resources and ns.Resources.GetSecondaryMaxValue(secondaryType) or 5
+      elseif resourceCategory == "autoPrimary" then
+        -- Auto-switching: resolve current power type dynamically
+        local autoPower = UnitPowerType("player")
+        local max = UnitPowerMax("player", autoPower)
+        cfg.tracking.maxValue = (max and max > 0) and max or 100
       else
         local max = UnitPowerMax("player", powerType)
         -- Use queried value if valid, otherwise default to 100 (will be updated at runtime)
@@ -995,8 +1122,13 @@ function ns.API.InitializeNewResourceBar(powerType, powerName, resourceCategory,
       if cfg.behavior then
         cfg.behavior.talentConditions = nil
         cfg.behavior.talentMatchMode = nil
-        -- Set current spec so resource bar only shows on the spec it was created for
-        cfg.behavior.showOnSpecs = { GetSpecialization() or 1 }
+        if resourceCategory == "autoPrimary" then
+          -- Auto-switching bar: show on ALL specs (it resolves powerType dynamically)
+          cfg.behavior.showOnSpecs = {}
+        else
+          -- Manual bar: lock to current spec
+          cfg.behavior.showOnSpecs = { GetSpecialization() or 1 }
+        end
       end
       
       cfg.display.enabled = true

@@ -50,6 +50,11 @@ local PROC_START_RATIO = 150 / 45
 -- Get Masque shape from a frame's _MSQ_CFG (set by Masque:AddButton)
 local function GetMasqueShape(frame)
   if not frame then return nil end
+  -- Respect user toggle: disable Masque shape-matching for glows
+  if ns.db and ns.db.profile and ns.db.profile.cdmEnhance
+      and ns.db.profile.cdmEnhance.glowUseMasqueShapes == false then
+    return nil
+  end
   local mcfg = frame._MSQ_CFG
   if not mcfg or not mcfg.Enabled or mcfg.BaseSkin then return nil end
   return mcfg.Shape

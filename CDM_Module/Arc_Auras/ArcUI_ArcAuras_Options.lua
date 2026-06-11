@@ -247,8 +247,36 @@ local function GetTrackedItemsList()
         end
     end
     
-    -- Sort: trinkets first, then items, then spells, alpha within each
-    local typeOrder = { trinket = 1, item = 2, spell = 3 }
+    -- ── Custom Timers ──
+    if db.customTimers then
+        local GetSpellNameAndIcon = ns.ArcAurasCooldown and ns.ArcAurasCooldown.GetSpellNameAndIcon
+        for arcID, config in pairs(db.customTimers) do
+            local spellID = config.spellID
+            local name, icon = nil, nil
+            if GetSpellNameAndIcon and spellID then
+                name, icon = GetSpellNameAndIcon(spellID)
+            end
+            name = name or ("Spell " .. (spellID or "?"))
+            icon = config.icon or icon or 134400
+            table.insert(items, {
+                arcID = arcID,
+                arcType = "timer",
+                spellID = spellID,
+                name = name,
+                icon = icon,
+                config = config,
+                enabled = true,
+                inCurrentSpec = true,   -- timers don't do spec gating
+                duration = config.duration,
+                resetOnRecast = config.resetOnRecast ~= false,
+                resetOnDeath = config.resetOnDeath == true,
+                hasIconOverride = config.icon ~= nil,
+            })
+        end
+    end
+
+    -- Sort: trinkets first, then items, then spells, then timers, alpha within each
+    local typeOrder = { trinket = 1, item = 2, spell = 3, timer = 4 }
     table.sort(items, function(a, b)
         local oa = typeOrder[a.arcType] or 9
         local ob = typeOrder[b.arcType] or 9
@@ -332,6 +360,8 @@ local function CreateCatalogIconEntry(index)
                 else
                     status = "|cff88ccffS|r "   -- Light blue S = spell
                 end
+            elseif entry.arcType == "timer" then
+                status = "|cffffcc00T|r "   -- Gold T = custom timer
             elseif entry.isAutoTrackSlot then
                 status = "|cff88ff88A|r "
             elseif entry.hideWhenUnequipped then
@@ -389,6 +419,16 @@ local function CreateCatalogIconEntry(index)
                         desc = desc .. "\n|cffffd700Talents:|r " ..
                             ns.TalentPicker.GetConditionSummary(entry.config.talentConditions, entry.config.talentConditionMode)
                     end
+                end
+            elseif entry.arcType == "timer" then
+                desc = desc .. "\nSpell ID: " .. (entry.spellID or "?")
+                desc = desc .. "\nArc ID: " .. entry.arcID
+                desc = desc .. "\nType: |cffffcc00Custom Timer|r"
+                desc = desc .. "\nDuration: " .. tostring(entry.duration or "?") .. "s"
+                desc = desc .. "\nReset on Recast: " .. (entry.resetOnRecast and "|cff00ff00Yes|r" or "|cffff8800No|r")
+                desc = desc .. "\nReset on Death: " .. (entry.resetOnDeath and "|cff00ff00Yes|r" or "|cffff8800No|r")
+                if entry.hasIconOverride then
+                    desc = desc .. "\n|cffFFCC00Custom Icon|r (ID: " .. tostring(entry.config.iconID or entry.config.icon or "?") .. ")"
                 end
             else
                 local typeColor = entry.arcType == "trinket" and "|cff00ccff" or "|cff00ff00"
@@ -719,7 +759,7 @@ function ns.GetArcAurasOptionsTable()
             width = "full",
             fontSize = "small",
         },
-        
+
         -- ═══════════════════════════════════════════════════════════════
         -- TRACKED CATALOG (unified items + spells)
         -- ═══════════════════════════════════════════════════════════════
@@ -863,12 +903,17 @@ function ns.GetArcAurasOptionsTable()
                 table.insert(toRemove, selectedArcAura)
             end
             
-            local removedItems, removedSpells = 0, 0
+            local removedItems, removedSpells, removedTimers = 0, 0, 0
             for _, arcID in ipairs(toRemove) do
                 if arcID:match("^arc_spell_") then
                     if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RemoveTrackedSpell then
                         ns.ArcAurasCooldown.RemoveTrackedSpell(arcID)
                         removedSpells = removedSpells + 1
+                    end
+                elseif arcID:match("^arc_timer_") then
+                    if ns.ArcAurasTimer and ns.ArcAurasTimer.RemoveTimer then
+                        ns.ArcAurasTimer.RemoveTimer(arcID)
+                        removedTimers = removedTimers + 1
                     end
                 else
                     ArcAuras.RemoveTrackedItem(arcID)
@@ -880,15 +925,11 @@ function ns.GetArcAurasOptionsTable()
             wipe(selectedArcAuras)
             Options.InvalidateCache()
             
-            local msg = "|cff00CCFF[Arc Auras]|r Removed "
-            if removedItems > 0 and removedSpells > 0 then
-                msg = msg .. removedItems .. " item(s) + " .. removedSpells .. " spell(s)"
-            elseif removedSpells > 0 then
-                msg = msg .. removedSpells .. " spell(s)"
-            else
-                msg = msg .. removedItems .. " item(s)"
-            end
-            print(msg)
+            local parts = {}
+            if removedItems  > 0 then table.insert(parts, removedItems  .. " item(s)")  end
+            if removedSpells > 0 then table.insert(parts, removedSpells .. " spell(s)") end
+            if removedTimers > 0 then table.insert(parts, removedTimers .. " timer(s)") end
+            print("|cff00CCFF[Arc Auras]|r Removed " .. (table.concat(parts, " + ")))
             
             if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.InvalidateCache then
                 ns.CDMEnhanceOptions.InvalidateCache()
@@ -962,6 +1003,29 @@ function ns.GetArcAurasOptionsTable()
         if not selectedArcAura then return nil end
         local db = ns.db and ns.db.char and ns.db.char.arcAuras
         return db and db.trackedSpells and db.trackedSpells[selectedArcAura]
+    end
+
+    -- Helper: manual item selected (arc_item_*, NOT trinket slots)
+    local function IsManualItemSelected()
+        local item = GetSelectedItem()
+        return item and item.arcType == "item"
+    end
+
+    local function GetItemConfig()
+        if not selectedArcAura then return nil end
+        local db = ns.db and ns.db.char and ns.db.char.arcAuras
+        return db and db.trackedItems and db.trackedItems[selectedArcAura]
+    end
+
+    -- Shared helpers: spec/talent options apply to BOTH spells and manual items
+    local function IsSpellOrItemSelected()
+        return IsSpellSelected() or IsManualItemSelected()
+    end
+
+    local function GetSpellOrItemConfig()
+        if IsSpellSelected() then return GetSpellConfig() end
+        if IsManualItemSelected() then return GetItemConfig() end
+        return nil
     end
 
     -- ═══════════════════════════════════════════════════════════════
@@ -1045,8 +1109,15 @@ function ns.GetArcAurasOptionsTable()
         name = function()
             local item = GetSelectedItem()
             if not item then return "" end
+            if item.arcType == "timer" then
+                if item.hasIconOverride then
+                    local overrideID = item.config and (item.config.iconID or "?")
+                    return "|cffFFCC00Current: Custom Icon|r (IconID: " .. tostring(overrideID) .. ")\n|cff888888Enter a new IconID below, or 0 to reset to the tracked spell's icon.|r"
+                end
+                return "|cff888888Enter an IconID (FileDataID) to use that texture. This is the number shown as 'IconID' in spell tooltips.  Enter 0 or leave blank to reset.|r"
+            end
             if item.hasIconOverride then
-                local overrideID = item.config and (item.config.iconOverrideID or "?") or "?"
+                local overrideID = item.config and (item.config.iconOverrideID or item.config.iconID or "?") or "?"
                 return "|cffFFCC00Current: Custom Icon|r (Source ID: " .. tostring(overrideID) .. ")\n|cff888888Enter a new Spell ID or Item ID below, or 0 to reset.|r"
             end
             return "|cff888888Enter a Spell ID or Item ID to use its icon instead of the default. Enter 0 or leave blank to reset.|r"
@@ -1060,14 +1131,26 @@ function ns.GetArcAurasOptionsTable()
     }
     args.iconOverrideInput = {
         type = "input",
-        name = "Icon Source ID",
-        desc = "Enter a Spell ID or Item ID to use its icon.\nEnter 0 to reset to the default icon.",
+        name = function()
+            local item = GetSelectedItem()
+            if item and item.arcType == "timer" then return "Icon ID" end
+            return "Icon Source ID"
+        end,
+        desc = function()
+            local item = GetSelectedItem()
+            if item and item.arcType == "timer" then
+                return "Enter an IconID (FileDataID) — the number shown as 'IconID' in the spell tooltip.  0 resets to the tracked spell's icon."
+            end
+            return "Enter a Spell ID or Item ID to use its icon.\nEnter 0 to reset to the default icon."
+        end,
         order = 109,
         width = 0.8,
         get = function()
             local item = GetSelectedItem()
-            if item and item.config and item.config.iconOverrideID then
-                return tostring(item.config.iconOverrideID)
+            if item and item.config then
+                -- Spells/items use iconOverrideID, timers use iconID
+                if item.config.iconOverrideID then return tostring(item.config.iconOverrideID) end
+                if item.arcType == "timer" and item.config.iconID then return tostring(item.config.iconID) end
             end
             return ""
         end,
@@ -1083,6 +1166,14 @@ function ns.GetArcAurasOptionsTable()
                 -- Use ArcAurasCooldown's icon override
                 if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ApplyIconOverride then
                     ns.ArcAurasCooldown.ApplyIconOverride(selectedArcAura, overrideID)
+                end
+            elseif item.arcType == "timer" then
+                -- Timer icon override — resolve source ID to an icon texture
+                -- (accepts either a spellID or itemID). Store numeric iconID
+                -- into db.customTimers[arcID].icon + .iconID for the picker
+                -- to round-trip. ApplyIconOverride lives on ArcAurasTimer.
+                if ns.ArcAurasTimer and ns.ArcAurasTimer.ApplyIconOverride then
+                    ns.ArcAurasTimer.ApplyIconOverride(selectedArcAura, overrideID)
                 end
             else
                 -- Use ArcAuras' icon override for items
@@ -1123,6 +1214,10 @@ function ns.GetArcAurasOptionsTable()
                 if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ApplyIconOverride then
                     ns.ArcAurasCooldown.ApplyIconOverride(selectedArcAura, nil)
                 end
+            elseif item.arcType == "timer" then
+                if ns.ArcAurasTimer and ns.ArcAurasTimer.ApplyIconOverride then
+                    ns.ArcAurasTimer.ApplyIconOverride(selectedArcAura, nil)
+                end
             else
                 if ArcAuras and ArcAuras.ApplyIconOverride then
                     ArcAuras.ApplyIconOverride(selectedArcAura, nil)
@@ -1138,7 +1233,94 @@ function ns.GetArcAurasOptionsTable()
     }
 
     -- ═══════════════════════════════════════════════════════════════
-    -- SHOW ON SPECS (spell entries only)
+    -- CUSTOM TIMER SETTINGS (only visible for timer-type entries)
+    -- ═══════════════════════════════════════════════════════════════
+    local function IsTimerSelected()
+        if collapsedSections.trackedItems or HideIfNoSelection() or GetSelectedCount() > 1 then
+            return false
+        end
+        local item = GetSelectedItem()
+        return item and item.arcType == "timer"
+    end
+    local function TimerHidden() return not IsTimerSelected() end
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- CUSTOM TIMER SETTINGS — REDIRECT TO CUSTOM ICONS TAB
+    --
+    -- All per-timer editor controls (trigger / duration / stacks / reset /
+    -- start & end conditions / actions / icon override) live in the
+    -- Custom Icons tab's editor pane. That pane reads the same selection
+    -- state we expose via Options.GetSelectedArcAura(), so whichever
+    -- timer the user has highlighted on this Main tab is automatically
+    -- the active editor target on the Custom Icons tab.
+    --
+    -- This panel previously duplicated the trigger/duration/reset/test
+    -- controls inline. The duplication drifted from the canonical Custom
+    -- Icons editor (it lacked stacks, end-conditions, actions, etc.) and
+    -- was a maintenance hazard. Now it just points the user at the
+    -- canonical place.
+    -- ──────────────────────────────────────────────────────────────────────
+    args.timerSettingsHeader = {
+        type = "description",
+        name = "\n|cffffd700====================================|r\n"
+            .. "|cffffd700  Custom Timer Settings|r\n"
+            .. "|cffffd700====================================|r\n"
+            .. "|cff888888All custom-timer options live on the |cffffd700Custom Icons|r tab, "
+            .. "|cff888888which already has the timer you selected here highlighted.|r\n",
+        order = 109.80,
+        width = "full",
+        fontSize = "medium",
+        hidden = TimerHidden,
+    }
+    args.timerOpenCustomIcons = {
+        type = "execute",
+        name = "Open Custom Icons Editor",
+        desc = "Switches to the Custom Icons tab. Your selected timer carries over automatically - its editor pane will be the active target.",
+        order = 109.81,
+        width = "full",
+        hidden = TimerHidden,
+        func = function()
+            -- AceConfigDialog navigation. The path is the chain of group
+            -- keys from the registered app root down to the destination
+            -- tab. ArcUI's master tree mounts Arc Auras under the
+            -- "icons" top-level group (see ArcUI_Options.lua line 346
+            -- and 417), so the full path is:
+            --     ArcUI / icons / arcAuras / customIcons
+            -- That's four args to SelectGroup. Calling it with only
+            -- three (skipping "icons") was the bug — SelectGroup looked
+            -- for "arcAuras" at the top level of ArcUI and never found
+            -- it, so the call silently no-op'd.
+            --
+            -- Two prerequisites for SelectGroup to actually navigate:
+            --   1. NotifyChange first so AceConfig rebuilds internal
+            --      tree state. Otherwise SelectGroup may target stale
+            --      nodes.
+            --   2. Defer SelectGroup by one tick so it runs AFTER
+            --      AceConfig finishes its post-execute-callback re-
+            --      render. Calling synchronously inside func would let
+            --      that re-render overwrite the navigation.
+            local ACR = LibStub and LibStub("AceConfigRegistry-3.0", true)
+            if ACR and ACR.NotifyChange then
+                ACR:NotifyChange("ArcUI")
+            end
+            C_Timer.After(0, function()
+                local ACD = LibStub and LibStub("AceConfigDialog-3.0", true)
+                if ACD and ACD.SelectGroup then
+                    ACD:SelectGroup("ArcUI", "icons", "arcAuras", "customIcons")
+                end
+            end)
+        end,
+    }
+    args.timerFooter = {
+        type = "description",
+        name = "\n|cffffd700====================================|r\n",
+        order = 109.90,
+        width = "full",
+        hidden = TimerHidden,
+    }
+
+    -- ═══════════════════════════════════════════════════════════════
+    -- SHOW ON SPECS (spell and item entries)
     -- ═══════════════════════════════════════════════════════════════
 
     local function ToggleSpecInList(showOnSpecs, specNum, value)
@@ -1164,7 +1346,7 @@ function ns.GetArcAurasOptionsTable()
     end
 
     local function IsSpecEnabled(specNum)
-        local cfg = GetSpellConfig()
+        local cfg = GetSpellOrItemConfig()
         if not cfg or not cfg.showOnSpecs or #cfg.showOnSpecs == 0 then return true end
         for _, spec in ipairs(cfg.showOnSpecs) do
             if spec == specNum then return true end
@@ -1173,7 +1355,7 @@ function ns.GetArcAurasOptionsTable()
     end
 
     local function SetSpecEnabled(specNum, value)
-        local cfg = GetSpellConfig()
+        local cfg = GetSpellOrItemConfig()
         if not cfg then return end
         if not cfg.showOnSpecs then cfg.showOnSpecs = {} end
         ToggleSpecInList(cfg.showOnSpecs, specNum, value)
@@ -1191,9 +1373,11 @@ function ns.GetArcAurasOptionsTable()
             end
             if allChecked then cfg.showOnSpecs = nil end
         end
-        -- Apply immediately
+        -- Apply immediately (handles both spells and items)
         if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpecVisibility then
             ns.ArcAurasCooldown.RefreshSpecVisibility()
+        elseif ArcAuras and ArcAuras.RefreshVisibility then
+            ArcAuras.RefreshVisibility()
         end
         LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
     end
@@ -1206,18 +1390,18 @@ function ns.GetArcAurasOptionsTable()
         fontSize = "medium",
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
     args.showOnSpecsDesc = {
         type = "description",
-        name = "|cff888888Choose which specs this spell frame appears on. Unchecked specs will hide the frame even if the spell is known. All checked (or none set) = show on every spec.|r",
+        name = "|cff888888Choose which specs this frame appears on. Unchecked specs will hide the frame. All checked (or none set) = show on every spec.|r",
         order = 111,
         width = "full",
         fontSize = "small",
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
 
@@ -1241,7 +1425,7 @@ function ns.GetArcAurasOptionsTable()
             set = function(_, val) SetSpecEnabled(specNum, val) end,
             hidden = function()
                 if collapsedSections.trackedItems or HideIfNoSelection()
-                    or GetSelectedCount() > 1 or not IsSpellSelected() then
+                    or GetSelectedCount() > 1 or not IsSpellOrItemSelected() then
                     return true
                 end
                 return (GetNumSpecializations() or 4) < specNum
@@ -1260,24 +1444,24 @@ function ns.GetArcAurasOptionsTable()
         fontSize = "medium",
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
     args.talentCondDesc = {
         type = "description",
-        name = "|cff888888Only show this frame when specific talents are active. If no conditions are set, the frame shows whenever the spell is known.|r",
+        name = "|cff888888Only show this frame when specific talents are active. If no conditions are set, the frame shows whenever it would normally be visible.|r",
         order = 121,
         width = "full",
         fontSize = "small",
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
     args.talentCondSummary = {
         type = "description",
         name = function()
-            local cfg = GetSpellConfig()
+            local cfg = GetSpellOrItemConfig()
             if not cfg then return "" end
             if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
                 return ns.TalentPicker.GetConditionSummary(cfg.talentConditions, cfg.talentConditionMode)
@@ -1289,7 +1473,7 @@ function ns.GetArcAurasOptionsTable()
         fontSize = "small",
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
     args.talentCondEdit = {
@@ -1299,7 +1483,7 @@ function ns.GetArcAurasOptionsTable()
         order = 123,
         width = 1.0,
         func = function()
-            local cfg = GetSpellConfig()
+            local cfg = GetSpellOrItemConfig()
             if not cfg or not ns.TalentPicker then return end
             ns.TalentPicker.OpenPicker(cfg.talentConditions, cfg.talentConditionMode, function(conditions, matchMode)
                 cfg.talentConditions = conditions
@@ -1313,17 +1497,17 @@ function ns.GetArcAurasOptionsTable()
         end,
         hidden = function()
             return collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected()
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected()
         end,
     }
     args.talentCondClear = {
         type = "execute",
         name = "Clear",
-        desc = "Remove all talent conditions. The frame will show whenever the spell is known.",
+        desc = "Remove all talent conditions. The frame will show whenever it would normally be visible.",
         order = 124,
         width = 0.5,
         func = function()
-            local cfg = GetSpellConfig()
+            local cfg = GetSpellOrItemConfig()
             if not cfg then return end
             cfg.talentConditions = nil
             cfg.talentConditionMode = nil
@@ -1335,10 +1519,10 @@ function ns.GetArcAurasOptionsTable()
         end,
         hidden = function()
             if collapsedSections.trackedItems or HideIfNoSelection()
-                or GetSelectedCount() > 1 or not IsSpellSelected() then
+                or GetSelectedCount() > 1 or not IsSpellOrItemSelected() then
                 return true
             end
-            local cfg = GetSpellConfig()
+            local cfg = GetSpellOrItemConfig()
             return not cfg or not cfg.talentConditions or #cfg.talentConditions == 0
         end,
     }
@@ -1626,7 +1810,27 @@ function ns.GetArcAurasOptionsTable()
         type = "group",
         name = "Arc Auras",
         order = 5,
-        args = args,
+        childGroups = "tab",
+        args = {
+            main = {
+                type = "group",
+                name = "Main",
+                order = 1,
+                args = args,
+            },
+            customIcons = (ns.GetCustomIconsOptionsTable and ns.GetCustomIconsOptionsTable()) or {
+                type = "group",
+                name = "Custom Icons",
+                order = 2,
+                args = {
+                    stub = {
+                        type = "description",
+                        name = "|cffff8800Custom Icons module not loaded.|r",
+                        order = 1,
+                    },
+                },
+            },
+        },
     }
 end
 
@@ -1651,6 +1855,48 @@ function Options.SelectIcon(arcID)
     wipe(selectedArcAuras)
     selectedArcAura = arcID
     LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PUBLIC ACCESSORS FOR SIBLING OPTIONS MODULES (e.g. Custom Icons tab)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Returns the currently single-selected arcID, or nil. This is the same
+-- selection state the Tracked catalog uses on the Main tab, so a timer
+-- selected in either place is editable from both.
+function Options.GetSelectedArcAura()
+    return selectedArcAura
+end
+
+-- Returns the multi-select map (arcID -> true). Read-only intent; sibling
+-- modules should not mutate — use Options.SetSelected to modify.
+function Options.GetSelectedArcAuras()
+    return selectedArcAuras
+end
+
+-- Set the single-selection arcID. Clears multi-select. Pass nil to deselect.
+function Options.SetSelected(arcID)
+    wipe(selectedArcAuras)
+    selectedArcAura = arcID
+end
+
+-- Toggle an arcID in the multi-select set (for shift-click equivalents on
+-- sibling tabs). Clears single selection when multi is non-empty.
+function Options.ToggleMultiSelect(arcID)
+    if not arcID then return end
+    if selectedArcAuras[arcID] then
+        selectedArcAuras[arcID] = nil
+    else
+        selectedArcAuras[arcID] = true
+        selectedArcAura = arcID   -- track most-recent for single-select fallback
+    end
+end
+
+-- Return the cached tracked list (items + spells + timers). Sibling modules
+-- that want to render a filtered sub-catalog (e.g. timer-only) iterate this
+-- and skip non-matching arcType entries.
+function Options.GetTrackedItems()
+    return GetTrackedItemsList()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

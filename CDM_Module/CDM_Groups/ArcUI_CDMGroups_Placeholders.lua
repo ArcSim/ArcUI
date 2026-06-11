@@ -775,9 +775,9 @@ local function UpdateSlotBadgesForGroup(groupName, group, getSlotPosition, slotW
                 badge:ClearAllPoints()
                 
                 if getSlotPosition then
-                    local slotX, slotY = getSlotPosition(row, col, group._leftOverflow or 0, group._topOverflow or 0)
-                    -- Position badge centered on the right edge of slot
-                    badge:SetPoint("CENTER", group.container, "TOPLEFT", slotX + slotW, slotY - (slotH / 2))
+                    local cx, cy = getSlotPosition(row, col, group._leftOverflow or 0, group._topOverflow or 0)
+                    -- Position badge at right edge of slot center (getSlotPosition returns container-CENTER-relative)
+                    badge:SetPoint("CENTER", group.container, "CENTER", cx + slotW / 2, cy)
                 else
                     -- Fallback positioning
                     local slotW_fb = group.layout and group.layout.iconSize or 36
@@ -1264,14 +1264,25 @@ local function CreatePlaceholder(cdID, positionType, targetGroup, row, col, x, y
             local targetRow = row or 0
             local targetCol = col or 0
             
-            -- Expand grid if needed
-            if targetRow >= group.layout.gridRows then
-                group.layout.gridRows = targetRow + 1
+            -- Expand grid if needed — but only if a real frame exists for this cdID.
+            -- Placeholders alone must NOT expand the grid; that would recreate rows/cols
+            -- that the user intentionally removed (the placeholder stays in savedPositions
+            -- dormant and gets placed properly once the real frame appears).
+            local hasRealFrame = ns.CDMGroups.members and ns.CDMGroups.members[cdID] and
+                                 ns.CDMGroups.members[cdID].frame ~= nil
+            if hasRealFrame then
+                if targetRow >= group.layout.gridRows then
+                    group.layout.gridRows = targetRow + 1
+                end
+                if targetCol >= group.layout.gridCols then
+                    group.layout.gridCols = targetCol + 1
+                end
+            else
+                -- Clamp to current grid bounds so the placeholder doesn't fall outside
+                targetRow = math.min(targetRow, group.layout.gridRows - 1)
+                targetCol = math.min(targetCol, group.layout.gridCols - 1)
             end
-            if targetCol >= group.layout.gridCols then
-                group.layout.gridCols = targetCol + 1
-            end
-            
+
             -- Check if there's a real frame at this position (stacking)
             group.grid = group.grid or {}
             group.grid[targetRow] = group.grid[targetRow] or {}
@@ -1447,14 +1458,21 @@ UpdatePlaceholderPosition = function(cdID, positionType, targetGroupName, arg1, 
             group.layout.gridRows = group.layout.gridRows or 2
             group.layout.gridCols = group.layout.gridCols or 4
             
-            -- Expand grid if needed
-            if row >= group.layout.gridRows then
-                group.layout.gridRows = row + 1
+            -- Expand grid if needed — only if a real frame exists (see site 1 comment)
+            local hasRealFrame = ns.CDMGroups.members and ns.CDMGroups.members[cdID] and
+                                 ns.CDMGroups.members[cdID].frame ~= nil
+            if hasRealFrame then
+                if row >= group.layout.gridRows then
+                    group.layout.gridRows = row + 1
+                end
+                if col >= group.layout.gridCols then
+                    group.layout.gridCols = col + 1
+                end
+            else
+                row = math.min(row, group.layout.gridRows - 1)
+                col = math.min(col, group.layout.gridCols - 1)
             end
-            if col >= group.layout.gridCols then
-                group.layout.gridCols = col + 1
-            end
-            
+
             -- Check for stacking
             group.grid = group.grid or {}
             group.grid[row] = group.grid[row] or {}
@@ -1674,30 +1692,32 @@ local function ShowPlaceholder(cdID)
             local spacingX = group.layout and group.layout.spacingX or group.layout.spacing or 2
             local spacingY = group.layout and group.layout.spacingY or group.layout.spacing or 2
             
-            -- For placeholders in groups, use the slot dimensions directly
-            -- (GetEffectivePlaceholderSize checks per-icon overrides which placeholders shouldn't use)
             local effectiveW, effectiveH = slotW, slotH
             
             local row = saved.row or 0
             local col = saved.col or 0
             
-            local borderOffset = 6
-            local padding = group.containerPadding or 0
+            -- Calculate container dimensions to derive CENTER-relative position,
+            -- matching how real frames are anchored (SetPoint CENTER/CENTER).
+            -- This ensures ShowPlaceholder produces the same result as PositionPlaceholdersInGroup.
+            local rows = group.layout and group.layout.gridRows or 2
+            local cols = group.layout and group.layout.gridCols or 4
             local leftOverflow = group._leftOverflow or 0
             local topOverflow = group._topOverflow or 0
             
-            local slotX = borderOffset + padding + leftOverflow + col * (slotW + spacingX)
-            local slotY = -(borderOffset + padding + topOverflow + row * (slotH + spacingY))
+            local contentW = cols * slotW + (cols - 1) * spacingX
+            local contentH = rows * slotH + (rows - 1) * spacingY
             
-            local offsetX = (slotW - effectiveW) / 2
-            local offsetY = -(slotH - effectiveH) / 2
+            -- CENTER of slot relative to container CENTER (same formula as getSlotPosition in Layout)
+            local cx = -contentW / 2 - leftOverflow + col * (slotW + spacingX) + slotW / 2
+            local cy =  contentH / 2 + topOverflow - row * (slotH + spacingY) - slotH / 2
             
             placeholderFrame:SetSize(effectiveW, effectiveH)
             placeholderFrame:SetParent(group.container)
             placeholderFrame:SetFrameStrata("MEDIUM")
             placeholderFrame:SetFrameLevel(10)
             placeholderFrame:ClearAllPoints()
-            placeholderFrame:SetPoint("TOPLEFT", group.container, "TOPLEFT", slotX + offsetX, slotY + offsetY)
+            placeholderFrame:SetPoint("CENTER", group.container, "CENTER", cx, cy)
         else
             local effectiveW, effectiveH = GetEffectivePlaceholderSize(cdID, nil)
             placeholderFrame:SetSize(effectiveW, effectiveH)
@@ -1852,17 +1872,17 @@ local function PositionPlaceholdersInGroup(groupName, group, getSlotPosition, sl
                         end
                         
                         local effectiveW, effectiveH = GetEffectivePlaceholderSize(cdID, group.layout)
-                        local offsetX = (slotW - effectiveW) / 2
-                        local offsetY = -(slotH - effectiveH) / 2
                         
                         placeholderFrame:SetSize(effectiveW, effectiveH)
                         placeholderFrame:SetParent(group.container)
                         placeholderFrame:SetFrameStrata("MEDIUM")
                         placeholderFrame:SetFrameLevel(10)
                         
-                        local slotX, slotY = getSlotPosition(row, col, group._leftOverflow or 0, group._topOverflow or 0)
+                        -- getSlotPosition returns CENTER-of-slot relative to container CENTER
+                        -- (same convention as real frames which use SetPoint("CENTER", container, "CENTER", cx, cy))
+                        local cx, cy = getSlotPosition(row, col, group._leftOverflow or 0, group._topOverflow or 0)
                         placeholderFrame:ClearAllPoints()
-                        placeholderFrame:SetPoint("TOPLEFT", group.container, "TOPLEFT", slotX + offsetX, slotY + offsetY)
+                        placeholderFrame:SetPoint("CENTER", group.container, "CENTER", cx, cy)
                         placeholderFrame:Show()
                     end
                 end
@@ -2225,7 +2245,7 @@ PushFramesFromSlot = function(group, row, col, claimingCdID)
             -- CRITICAL: Return frame to CDM before clearing reference
             if memberAtSlot.frame then
                 if ns.CDMGroups.ReturnFrameToCDM then
-                    pcall(ns.CDMGroups.ReturnFrameToCDM, memberAtSlot.frame, memberAtSlot.entry)
+                    ns.CDMGroups.ReturnFrameToCDM(memberAtSlot.frame, memberAtSlot.entry)
                 end
             end
             
@@ -2410,8 +2430,8 @@ local function DisplaceForReturningIcon(group, row, col, returningCdID)
     end
     
     -- Check if occupant has a valid frame
-    local hasValidFrame = occupantMember.frame and 
-        pcall(function() return occupantMember.frame.cooldownID end) and
+    local hasValidFrame = occupantMember.frame and
+        occupantMember.frame.cooldownID ~= nil and
         occupantMember.frame.cooldownID == gridOccupant
     
     if not hasValidFrame then
@@ -2470,7 +2490,7 @@ local function DisplaceForReturningIcon(group, row, col, returningCdID)
                 -- Return frame to CDM before clearing reference
                 if occupantMember.frame then
                     if ns.CDMGroups.ReturnFrameToCDM then
-                        pcall(ns.CDMGroups.ReturnFrameToCDM, occupantMember.frame, occupantMember.entry)
+                        ns.CDMGroups.ReturnFrameToCDM(occupantMember.frame, occupantMember.entry)
                     end
                 end
                 

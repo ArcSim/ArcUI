@@ -30,11 +30,10 @@ end
 
 local function GetBarStates(spellID)
   if not ns.CooldownBars then return {} end
-  return {
-    hasCooldownBar = ns.CooldownBars.activeCooldowns[spellID] ~= nil,
-    hasChargeBar = ns.CooldownBars.activeCharges[spellID] ~= nil,
-    hasResourceBar = ns.CooldownBars.activeResources[spellID] ~= nil,
-  }
+  if ns.CooldownBars.GetBarStates then
+    return ns.CooldownBars.GetBarStates(spellID)
+  end
+  return {}
 end
 
 local function GetCatalogEntries()
@@ -179,8 +178,13 @@ end
 -- ===================================================================
 -- CREATE ACTIVE BAR ENTRY (collapsible dropdown)
 -- ===================================================================
-local function CreateActiveBarEntry(spellID, barType, orderBase)
-  local barKey = barType .. "_" .. spellID
+local function CreateActiveBarEntry(spellID, barType, orderBase, instance)
+  instance = instance or 1
+  local barTypeKey = barType
+  if instance > 1 then
+    barTypeKey = barType .. "_" .. instance
+  end
+  local barKey = barTypeKey .. "_" .. spellID
   local spellName = C_Spell.GetSpellName(spellID) or "Unknown"
   local spellTexture = C_Spell.GetSpellTexture(spellID) or 134400
   
@@ -191,6 +195,12 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
     resource = { label = "Resource", color = "cc33cc" },
   }
   local typeInfo = typeLabels[barType] or { label = barType, color = "ffffff" }
+  local instanceLabel = instance > 1 and (" #" .. instance) or ""
+  
+  -- Determine which tracking table to check
+  local ParseBarID = ns.CooldownBars.ParseBarID
+  local MakeBarID = ns.CooldownBars.MakeBarID
+  local barID = MakeBarID and MakeBarID(spellID, instance) or spellID
   
   return {
     type = "group",
@@ -198,11 +208,11 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
     inline = true,
     order = orderBase,
     hidden = function()
-      -- Hide if this bar type isn't active for this spell
+      -- Hide if this bar type isn't active for this spell+instance
       if barType == "cooldown" then
-        return not ns.CooldownBars or not ns.CooldownBars.activeCooldowns[spellID]
+        return not ns.CooldownBars or not ns.CooldownBars.activeCooldowns[barID]
       elseif barType == "charge" then
-        return not ns.CooldownBars or not ns.CooldownBars.activeCharges[spellID]
+        return not ns.CooldownBars or not ns.CooldownBars.activeCharges[barID]
       elseif barType == "resource" then
         return not ns.CooldownBars or not ns.CooldownBars.activeResources[spellID]
       end
@@ -212,15 +222,15 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
       header = {
         type = "toggle",
         name = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           local presetLabel = (cfg and cfg.tracking and cfg.tracking.preset == "simple") and "|cff888888Simple|r" or "|cffffd700ArcUI|r"
           local displayIcon = spellTexture
           if cfg and cfg.tracking and cfg.tracking.iconOverride and cfg.tracking.iconOverride > 0 then
             displayIcon = C_Spell.GetSpellTexture(cfg.tracking.iconOverride) or cfg.tracking.iconOverride
           end
           
-          return string.format("|T%d:16:16:0:0|t |cff%s%s|r: %s [%s]",
-            displayIcon, typeInfo.color, typeInfo.label, spellName, presetLabel)
+          return string.format("|T%d:16:16:0:0|t |cff%s%s%s|r: %s [%s]",
+            displayIcon, typeInfo.color, typeInfo.label, instanceLabel, spellName, presetLabel)
         end,
         desc = "Click to expand/collapse settings",
         dialogControl = "CollapsibleHeader",
@@ -236,15 +246,15 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         name = "Show",
         desc = "Show/hide this bar",
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           return cfg and cfg.tracking and cfg.tracking.enabled ~= false
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg and cfg.tracking then
             cfg.tracking.enabled = value
             if ns.CooldownBars and ns.CooldownBars.ApplyAppearance then
-              ns.CooldownBars.ApplyAppearance(spellID, barType)
+              ns.CooldownBars.ApplyAppearance(spellID, barTypeKey)
             end
           end
         end,
@@ -263,15 +273,15 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           arcui = "ArcUI",
         },
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           return cfg and cfg.tracking and cfg.tracking.preset or "arcui"
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg and cfg.tracking then
             cfg.tracking.preset = value
             if ns.CooldownBars and ns.CooldownBars.ApplyPreset then
-              ns.CooldownBars.ApplyPreset(spellID, barType, value)
+              ns.CooldownBars.ApplyPreset(spellID, barTypeKey, value)
             end
           end
         end,
@@ -287,7 +297,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         desc = "Open Appearance options for this bar",
         func = function()
           if ns.CooldownBars and ns.CooldownBars.OpenOptionsForBar then
-            ns.CooldownBars.OpenOptionsForBar(barType, spellID)
+            ns.CooldownBars.OpenOptionsForBar(barTypeKey, spellID)
           end
         end,
         order = 2.5,
@@ -310,7 +320,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return specName and ("Show for " .. specName) or "Show for Spec 1"
         end,
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if not cfg or not cfg.behavior or not cfg.behavior.showOnSpecs then return true end
           if #cfg.behavior.showOnSpecs == 0 then return true end  -- Empty = all specs
           for _, spec in ipairs(cfg.behavior.showOnSpecs) do
@@ -319,7 +329,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return false
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
@@ -368,7 +378,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return specName and ("Show for " .. specName) or "Show for Spec 2"
         end,
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if not cfg or not cfg.behavior or not cfg.behavior.showOnSpecs then return true end
           if #cfg.behavior.showOnSpecs == 0 then return true end  -- Empty = all specs
           for _, spec in ipairs(cfg.behavior.showOnSpecs) do
@@ -377,7 +387,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return false
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
@@ -426,7 +436,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return specName and ("Show for " .. specName) or "Show for Spec 3"
         end,
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if not cfg or not cfg.behavior or not cfg.behavior.showOnSpecs then return true end
           if #cfg.behavior.showOnSpecs == 0 then return true end  -- Empty = all specs
           for _, spec in ipairs(cfg.behavior.showOnSpecs) do
@@ -435,7 +445,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return false
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
@@ -489,7 +499,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return specName and ("Show for " .. specName) or "Show for Spec 4"
         end,
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if not cfg or not cfg.behavior or not cfg.behavior.showOnSpecs then return true end
           if #cfg.behavior.showOnSpecs == 0 then return true end  -- Empty = all specs
           for _, spec in ipairs(cfg.behavior.showOnSpecs) do
@@ -498,7 +508,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
           return false
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg then
             if not cfg.behavior then cfg.behavior = {} end
             if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
@@ -537,6 +547,31 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         end,
       },
       
+      -- Force show override
+      forceShowAllSpecs = {
+        type = "toggle",
+        name = "|cff00ff88Show on All Specs|r",
+        desc = "When enabled, this bar is always visible regardless of the spec checkboxes or talent conditions above. Useful for bars imported from another spec that you want to see on this character.",
+        get = function()
+          local cfg = GetBarConfig(spellID, barTypeKey)
+          return cfg and cfg.behavior and cfg.behavior.forceShow or false
+        end,
+        set = function(info, value)
+          local cfg = GetBarConfig(spellID, barTypeKey)
+          if cfg then
+            if not cfg.behavior then cfg.behavior = {} end
+            cfg.behavior.forceShow = value or nil
+            if ns.CooldownBars and ns.CooldownBars.UpdateBarVisibilityForSpec then
+              ns.CooldownBars.UpdateBarVisibilityForSpec()
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+          end
+        end,
+        order = 3.5,
+        width = "full",
+        hidden = function() return not expandedBars[barKey] end,
+      },
+
       -- Talent conditions (Arc Auras style - full row layout)
       talentCondHeader = {
         type = "description",
@@ -557,7 +592,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
       talentCondSummary = {
         type = "description",
         name = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if not cfg or not cfg.behavior then return "" end
           if cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
             if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
@@ -571,7 +606,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         fontSize = "small",
         hidden = function()
           if not expandedBars[barKey] then return true end
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
         end,
       },
@@ -582,13 +617,13 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         order = 4.3,
         width = 1.0,
         func = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
           local matchMode = cfg and cfg.behavior and cfg.behavior.talentMatchMode or "all"
           
           if ns.TalentPicker and ns.TalentPicker.OpenPicker then
             ns.TalentPicker.OpenPicker(existingConditions, matchMode, function(conditions, newMatchMode)
-              local barCfg = GetBarConfig(spellID, barType)
+              local barCfg = GetBarConfig(spellID, barTypeKey)
               if barCfg then
                 if not barCfg.behavior then barCfg.behavior = {} end
                 barCfg.behavior.talentConditions = conditions
@@ -612,7 +647,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         order = 4.4,
         width = 0.5,
         func = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg and cfg.behavior then
             cfg.behavior.talentConditions = nil
             cfg.behavior.talentMatchMode = nil
@@ -624,7 +659,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         end,
         hidden = function()
           if not expandedBars[barKey] then return true end
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
         end,
       },
@@ -636,12 +671,12 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         desc = "Override the bar icon with a spell ID or texture ID. Leave empty to use the spell's default icon.",
         dialogControl = "ArcUI_EditBox",
         get = function()
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           local id = cfg and cfg.tracking and cfg.tracking.iconOverride
           return id and id > 0 and tostring(id) or ""
         end,
         set = function(info, value)
-          local cfg = GetBarConfig(spellID, barType)
+          local cfg = GetBarConfig(spellID, barTypeKey)
           if cfg and cfg.tracking then
             local num = tonumber(value)
             if num and num > 0 then
@@ -650,7 +685,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
               cfg.tracking.iconOverride = nil
             end
             if ns.CooldownBars and ns.CooldownBars.ApplyAppearance then
-              ns.CooldownBars.ApplyAppearance(spellID, barType)
+              ns.CooldownBars.ApplyAppearance(spellID, barTypeKey)
             end
           end
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
@@ -667,7 +702,7 @@ local function CreateActiveBarEntry(spellID, barType, orderBase)
         desc = "Remove this bar",
         func = function()
           if ns.CooldownBars and ns.CooldownBars.ToggleBarType then
-            ns.CooldownBars.ToggleBarType(spellID, barType, false)
+            ns.CooldownBars.ToggleBarType(spellID, barTypeKey, false)
           end
           expandedBars[barKey] = nil
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
@@ -880,15 +915,16 @@ function ns.CooldownBarOptions.GetOptionsTable()
       name = function()
         if not selectedSpellID then return "Duration Bar" end
         local states = GetBarStates(selectedSpellID)
-        return states.hasCooldownBar and "|cff00ff00Duration Bar|r" or "Duration Bar"
+        if states.cooldownCount and states.cooldownCount > 0 then
+          return "|cff00ff00+ Duration Bar|r |cff888888(" .. states.cooldownCount .. " active)|r"
+        end
+        return "Duration Bar"
       end,
-      desc = "Create a bar showing cooldown/recharge time remaining",
+      desc = "Create a bar showing cooldown/recharge time remaining.\nClick again to create additional instances with independent settings.",
       func = function()
         if selectedSpellID and ns.CooldownBars then
-          local states = GetBarStates(selectedSpellID)
-          if not states.hasCooldownBar then
-            ns.CooldownBars.ToggleBarType(selectedSpellID, "cooldown", true)
-          end
+          local nextInst = ns.CooldownBars.GetNextInstance(selectedSpellID, "cooldown")
+          ns.CooldownBars.ToggleBarType(selectedSpellID, "cooldown", true, nextInst)
         end
         LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
       end,
@@ -926,15 +962,16 @@ function ns.CooldownBarOptions.GetOptionsTable()
       name = function()
         if not selectedSpellID then return "Charges Bar" end
         local states = GetBarStates(selectedSpellID)
-        return states.hasChargeBar and "|cff00ff00Charges Bar|r" or "Charges Bar"
+        if states.chargeCount and states.chargeCount > 0 then
+          return "|cff00ff00+ Charges Bar|r |cff888888(" .. states.chargeCount .. " active)|r"
+        end
+        return "Charges Bar"
       end,
-      desc = "Create charge indicators",
+      desc = "Create charge indicators.\nClick again to create additional instances with independent settings.",
       func = function()
         if selectedSpellID and ns.CooldownBars then
-          local states = GetBarStates(selectedSpellID)
-          if not states.hasChargeBar then
-            ns.CooldownBars.ToggleBarType(selectedSpellID, "charge", true)
-          end
+          local nextInst = ns.CooldownBars.GetNextInstance(selectedSpellID, "charge")
+          ns.CooldownBars.ToggleBarType(selectedSpellID, "charge", true, nextInst)
         end
         LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
       end,
@@ -1078,15 +1115,19 @@ function ns.CooldownBarOptions.GetOptionsTable()
   local barOrder = 510
   
   if ns.CooldownBars then
-    -- Duration bars
-    for spellID, _ in pairs(ns.CooldownBars.activeCooldowns or {}) do
-      args["activeBar_cooldown_" .. spellID] = CreateActiveBarEntry(spellID, "cooldown", barOrder)
+    local ParseBarID = ns.CooldownBars.ParseBarID
+    
+    -- Duration bars (all instances)
+    for barID, _ in pairs(ns.CooldownBars.activeCooldowns or {}) do
+      local spellID, instance = ParseBarID(barID)
+      args["activeBar_cooldown_" .. tostring(barID)] = CreateActiveBarEntry(spellID, "cooldown", barOrder, instance)
       barOrder = barOrder + 1
     end
     
-    -- Charge bars
-    for spellID, _ in pairs(ns.CooldownBars.activeCharges or {}) do
-      args["activeBar_charge_" .. spellID] = CreateActiveBarEntry(spellID, "charge", barOrder)
+    -- Charge bars (all instances)
+    for barID, _ in pairs(ns.CooldownBars.activeCharges or {}) do
+      local spellID, instance = ParseBarID(barID)
+      args["activeBar_charge_" .. tostring(barID)] = CreateActiveBarEntry(spellID, "charge", barOrder, instance)
       barOrder = barOrder + 1
     end
     

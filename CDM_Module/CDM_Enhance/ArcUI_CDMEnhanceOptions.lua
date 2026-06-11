@@ -52,7 +52,8 @@ local collapsedSections = {
   keybindText = true,      -- Per-icon keybind display settings
   customLabel = true,      -- Per-icon custom label text
   spellUsability = true,   -- Per-icon spell usability tinting/glow
-  assistedCombatHighlight = false, -- Assisted Combat next-cast highlight (opt-in)
+  assistedCombatHighlight = true, -- Assisted Combat next-cast highlight (opt-in)
+  buttonPressHighlight = true,    -- Button Press keybind overlay (opt-in)
 }
 
 -- Cache for unified icon list
@@ -73,11 +74,16 @@ local RebuildUnifiedIconCache
 -- Define which fields belong to each section for per-icon indicator
 -- ===================================================================
 local SECTION_FIELDS = {
-  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "hideShadow", "keepBright", "keepBrightAllowDesat", "debuffBorder.enabled", "pandemicBorder.enabled" },
+  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "shadowSize", "keepBright", "keepBrightAllowDesat", "customIconID", "debuffBorder.enabled", "pandemicBorder.enabled" },
   position = { "position" },
   -- Ready State / Aura Active - all actual stored fields
   activeState = { 
     "cooldownStateVisuals.readyState.alpha",
+    "cooldownStateVisuals.readyState.preserveDurationText",
+    "cooldownStateVisuals.readyState.procOverride",
+    "cooldownStateVisuals.readyState.desaturate",
+    "cooldownStateVisuals.readyState.tint",
+    "cooldownStateVisuals.readyState.tintColor",
     "cooldownStateVisuals.readyState.glow",
     "cooldownStateVisuals.readyState.glowCombatOnly",
     "cooldownStateVisuals.readyState.glowType",
@@ -102,18 +108,32 @@ local SECTION_FIELDS = {
     "cooldownStateVisuals.cooldownState.tintColor",
     "cooldownStateVisuals.cooldownState.preserveDurationText",
     "cooldownStateVisuals.cooldownState.waitForNoCharges",
+    "cooldownStateVisuals.cooldownState.dimWhenEmpty",
+    "cooldownStateVisuals.cooldownState.procOverride",
+    "auraActiveState.glowWhenMissing",
+    "auraActiveState.glowCombatOnly",
+    "auraActiveState.glowType",
+    "auraActiveState.glowColor",
+    "auraActiveState.glowIntensity",
+    "auraActiveState.glowScale",
+    "auraActiveState.glowSpeed",
+    "auraActiveState.glowLines",
+    "auraActiveState.glowThickness",
+    "auraActiveState.glowParticles",
+    "auraActiveState.glowFrameStrata",
+    "auraActiveState.glowFrameLevel",
   },
-  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly" },  -- Aura Active State settings
+  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
   rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
-  procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled" },
+  procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled", "procGlow.xOffset", "procGlow.yOffset", "procGlow.strata", "procGlow.frameLevel" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
-  cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride" },
-  chargeText = { "chargeText.enabled", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY" },
-  cooldownText = { "cooldownText.enabled", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
+  cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride" },
+  chargeText = { "chargeText.enabled", "chargeText.showSingleStack", "chargeText.hideAtZero", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY" },
+  cooldownText = { "cooldownText.enabled", "cooldownText.hideWhenHasCharges", "cooldownText.durationColor", "cooldownText.durationColorPreset", "cooldownText.durationColorCustom", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.decimalThreshold", "cooldownText.abbrevThreshold", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
   alertEvents = { "alertEvents" },
-  spellUsability = { "spellUsability.enabled", "spellUsability.useNormalColor", "spellUsability.normalColor", "spellUsability.normalDesaturate", "spellUsability.useOnCooldownColor", "spellUsability.onCooldownColor", "spellUsability.onCooldownDesaturate", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notEnoughResourceDesaturate", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.notUsableDesaturate", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles" },
+  spellUsability = { "spellUsability.enabled", "spellUsability.useNormalColor", "spellUsability.normalColor", "spellUsability.normalDesaturate", "spellUsability.useOnCooldownColor", "spellUsability.onCooldownColor", "spellUsability.onCooldownDesaturate", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notEnoughResourceDesaturate", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.notUsableDesaturate", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles", "spellUsability.usableGlowXOffset", "spellUsability.usableGlowYOffset", "spellUsability.usableGlowFrameStrata", "spellUsability.usableGlowFrameLevel" },
 }
 
 -- Purple indicator for customized sections
@@ -218,6 +238,57 @@ local function GetCooldownHeaderName(sectionName, displayName)
     return CUSTOM_INDICATOR .. displayName
   end
   return displayName
+end
+
+-- ───────────────────────────────────────────────────────────────────────
+-- Detect whether the currently-selected cooldown icon(s) are ALL custom
+-- timer icons (arcType == "timer"). Used to relabel per-icon section
+-- headers like "Cooldown Ready State" → "Not Active" when editing a
+-- custom timer icon.
+--
+-- IMPORTANT: matches arcType == "timer" ONLY. Other Arc Aura categories
+-- (spell cooldowns, trinkets, items — which all carry isArcAura=true)
+-- keep the canonical "Cooldown Ready State" / "On Cooldown State" labels.
+--
+-- Returns true only when:
+--   - Edit-all mode is OFF (bulk edit retains canonical labels)
+--   - Selection is non-empty
+--   - Every selected cdID has arcType == "timer" (mixed selection → false)
+--
+-- Rebuilds the unified icon cache if stale so the lookup sees current data.
+-- ───────────────────────────────────────────────────────────────────────
+local function IsCurrentCooldownSelectionAllCustomTimer()
+  if editAllUnifiedMode then return false end
+
+  -- Refresh cache if filter mode changed (mirrors GetCooldownIconByIndex)
+  if cachedUnifiedFilterMode ~= unifiedFilterMode then
+    RebuildUnifiedIconCache()
+  end
+
+  -- cdID → arcType lookup. Linear scan over the cache is fine — this only
+  -- fires when the section header is rendered, not on every layout pass.
+  local function isCustomTimerCdID(cdID)
+    for _, entry in ipairs(cachedUnifiedIcons) do
+      if entry.cooldownID == cdID then
+        return entry.arcType == "timer"
+      end
+    end
+    return false
+  end
+
+  -- Multi-select takes precedence
+  if next(selectedCooldownIcons) then
+    for cdID, _ in pairs(selectedCooldownIcons) do
+      if not isCustomTimerCdID(cdID) then return false end
+    end
+    return true
+  end
+
+  if selectedCooldownIcon then
+    return isCustomTimerCdID(selectedCooldownIcon)
+  end
+
+  return false
 end
 
 -- ===================================================================
@@ -850,6 +921,9 @@ local function ApplyAuraSetting(setter)
   if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
     ns.CDMEnhance.InvalidateCache()
   end
+  if ns.ArcAuras and ns.ArcAuras.InvalidateSettingsCache then
+    ns.ArcAuras.InvalidateSettingsCache()
+  end
   UpdateAura()
   
   -- Also update cooldowns if we applied to them
@@ -886,6 +960,9 @@ local function ApplyAuraOnlySetting(setter)
   
   if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
     ns.CDMEnhance.InvalidateCache()
+  end
+  if ns.ArcAuras and ns.ArcAuras.InvalidateSettingsCache then
+    ns.ArcAuras.InvalidateSettingsCache()
   end
   UpdateAura()
   
@@ -943,23 +1020,13 @@ end
 -- Clears glow signature to force restart with new settings
 -- NOTE: This is for aura active state glow - NOT shared with cooldowns (they have their own ready state glow)
 local function ApplyAuraReadyStateGlowSetting(setter)
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllReadyGlows then
+    ns.ArcAurasCooldown.StopAllReadyGlows()
+  end
   ApplyAuraOnlySetting(setter)
-  if ns.CDMEnhance then
-    local icons = GetAuraIconsToUpdate()
-    for _, cdID in ipairs(icons) do
-      local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
-      if data and data.frame then
-        data.frame._arcCurrentGlowSig = nil
-        -- If preview is active, force immediate glow refresh
-        if ns.CDMEnhanceOptions.IsGlowPreviewActive and ns.CDMEnhanceOptions.IsGlowPreviewActive(cdID) then
-          ns.CDMEnhanceOptions.SetGlowPreview(cdID, true)
-        end
-      end
-    end
-    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
-    for _, cdID in ipairs(icons) do
-      if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
-    end
+  -- Re-evaluate ArcAuras frames immediately (StopAll killed glows, this restarts them)
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
   end
 end
 
@@ -967,19 +1034,83 @@ end
 -- Lighter version that doesn't clear glow signature - just updates preview if active
 -- Use this for continuous slider changes to avoid FPS drops
 local function ApplyAuraReadyStateGlowSliderSetting(setter)
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllReadyGlows then
+    ns.ArcAurasCooldown.StopAllReadyGlows()
+  end
   ApplyAuraOnlySetting(setter)
-  if ns.CDMEnhance then
-    local icons = GetAuraIconsToUpdate()
-    -- Invalidate cache so next FeedCooldown picks up new values
-    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
-    for _, cdID in ipairs(icons) do
-      -- If preview is active, refresh preview
-      if ns.CDMEnhanceOptions.IsGlowPreviewActive and ns.CDMEnhanceOptions.IsGlowPreviewActive(cdID) then
-        ns.CDMEnhanceOptions.SetGlowPreview(cdID, true)
-      end
-      -- Always update icon for immediate slider feedback
-      if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
+  end
+end
+
+-- Helper: Re-evaluate glow-when-missing on all affected aura frames
+local function RefreshAuraMissingGlow()
+  if not ns.CDMEnhance then return end
+  -- Include aura icons AND cooldown icons that have glowWhenMissing configured
+  local icons = GetAuraIconsToUpdate()
+  local cdIcons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(cdIcons) do
+    local cfg = ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+    if cfg and cfg.auraActiveState and cfg.auraActiveState.glowWhenMissing then
+      table.insert(icons, cdID)
     end
+  end
+  for _, cdID in ipairs(icons) do
+    local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+    if data and data.frame then
+      local cfg = ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+      local aaCfg = cfg and cfg.auraActiveState
+      if aaCfg then
+        local hasAura = ns.API and ns.API.HasAuraInstanceID and ns.API.HasAuraInstanceID(data.frame.auraInstanceID)
+        if ns.CDMEnhance.ShouldShowAuraActiveGlow(aaCfg, data.frame, hasAura) then
+          ns.CDMEnhance.ShowAuraActiveGlow(data.frame, aaCfg)
+        else
+          ns.CDMEnhance.HideAuraActiveGlow(data.frame)
+        end
+      end
+    end
+  end
+end
+
+-- Apply aura missing glow TOGGLE settings with immediate refresh
+-- Clears glow signature to force restart with new settings
+local function ApplyAuraMissingGlowSetting(setter)
+  -- Write to aura icons AND cooldown icons (both can have glowWhenMissing)
+  local auraIcons = GetAuraIconsToUpdate()
+  local cdIcons = GetCooldownIconsToUpdate()
+  local allIcons = {}
+  for _, id in ipairs(auraIcons) do table.insert(allIcons, id) end
+  for _, id in ipairs(cdIcons)   do table.insert(allIcons, id) end
+  for _, cdID in ipairs(allIcons) do
+    local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
+    if cfg then setter(cfg) end
+  end
+  if ns.CDMEnhance then
+    for _, cdID in ipairs(allIcons) do
+      local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+      if data and data.frame then
+        data.frame._arcAuraActiveGlowSig = nil  -- Force glow restart
+      end
+    end
+    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+    RefreshAuraMissingGlow()
+  end
+end
+
+-- Apply aura missing glow SLIDER settings (lighter version for continuous changes)
+local function ApplyAuraMissingGlowSliderSetting(setter)
+  local auraIcons = GetAuraIconsToUpdate()
+  local cdIcons = GetCooldownIconsToUpdate()
+  local allIcons = {}
+  for _, id in ipairs(auraIcons) do table.insert(allIcons, id) end
+  for _, id in ipairs(cdIcons)   do table.insert(allIcons, id) end
+  for _, cdID in ipairs(allIcons) do
+    local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
+    if cfg then setter(cfg) end
+  end
+  if ns.CDMEnhance then
+    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+    RefreshAuraMissingGlow()
   end
 end
 
@@ -1220,7 +1351,9 @@ end
 -- Check if cooldown swipe options should be disabled (when Masque controls cooldowns)
 -- Show Swipe and Show Edge are NOT disabled - user can still toggle visibility
 local function DisableCooldownCooldownSwipe()
-  return false  -- Always enabled - user can toggle swipe/edge visibility even with Masque
+  -- Gray out swipe/edge visibility toggles when Masque controls cooldowns —
+  -- Masque owns that entirely and we no longer enforce it.
+  return IsMasqueCooldownsActive()
 end
 
 -- Disable function for options that ARE controlled by Masque (insets, colors, etc)
@@ -1273,7 +1406,11 @@ local function HideCooldownInactiveState()
 end
 
 local function HideCooldownAuraActiveState()
-  return HideIfNoCooldownSelection() or collapsedSections.auraActiveState
+  -- Show for both cooldown AND aura icon selections - aura active glow applies to both
+  local hasAura = next(selectedAuraIcons) ~= nil or selectedAuraIcon ~= nil
+  local hasCooldown = not HideIfNoCooldownSelection()
+  if not hasAura and not hasCooldown then return true end
+  return collapsedSections.auraActiveState
 end
 
 -- Get the viewer type for the currently selected cooldown(s)
@@ -1352,6 +1489,25 @@ local function GetCooldownCfg()
   -- Single selection
   if not selectedCooldownIcon or not ns.CDMEnhance then return nil end
   return ns.CDMEnhance.GetIconSettings(selectedCooldownIcon)
+end
+
+-- Config getter for auraActiveState settings.
+-- Aura active state exists on BOTH aura frames AND cooldown frames.
+-- Returns from whichever type is currently selected (aura takes priority
+-- when both are selected, e.g. in mixed edit-all mode with auras visible).
+local function GetAuraActiveStateCfg()
+  local hasAura = next(selectedAuraIcons) ~= nil or selectedAuraIcon ~= nil
+  if hasAura then return GetAuraCfg() end
+  return GetCooldownCfg()
+end
+
+-- Bool getter wrapper for auraActiveState settings (routes to correct type).
+local function GetAuraActiveStateBoolSetting(getter, fallback)
+  local hasAura = next(selectedAuraIcons) ~= nil or selectedAuraIcon ~= nil
+  if hasAura then
+    return GetAuraOnlyBoolSetting(getter, fallback)
+  end
+  return GetCooldownBoolSetting(getter, fallback)
 end
 
 -- Get list of cooldown icons to update (supports multi-select and edit-all mode)
@@ -1490,7 +1646,13 @@ end
 -- Apply aura active glow setting (cooldown frames only)
 -- Updates config, invalidates cache, refreshes icons
 local function ApplyCooldownAuraActiveGlowSetting(setter)
-  local icons = GetCooldownIconsToUpdate()
+  -- auraActiveState settings apply to whichever icon type is selected
+  local cdIcons   = GetCooldownIconsToUpdate()
+  local auraIcons = GetAuraIconsToUpdate()
+  local icons = {}
+  for _, id in ipairs(cdIcons)   do table.insert(icons, id) end
+  for _, id in ipairs(auraIcons) do table.insert(icons, id) end
+
   for _, cdID in ipairs(icons) do
     local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
     if cfg then
@@ -1508,11 +1670,17 @@ local function ApplyCooldownAuraActiveGlowSetting(setter)
     end
   end
   UpdateCooldown()
+  UpdateAura()
 end
 
 -- Lighter version for sliders (avoids heavy glow restart)
 local function ApplyCooldownAuraActiveGlowSliderSetting(setter)
-  local icons = GetCooldownIconsToUpdate()
+  local cdIcons   = GetCooldownIconsToUpdate()
+  local auraIcons = GetAuraIconsToUpdate()
+  local icons = {}
+  for _, id in ipairs(cdIcons)   do table.insert(icons, id) end
+  for _, id in ipairs(auraIcons) do table.insert(icons, id) end
+
   for _, cdID in ipairs(icons) do
     local cfg = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
     if cfg then
@@ -1558,6 +1726,8 @@ end
 
 function ns.CDMEnhanceOptions.ToggleAuraGlowPreviewForSelection()
   local icons = GetCooldownIconsToUpdate()
+  local auraIcons = GetAuraIconsToUpdate()
+  for _, cdID in ipairs(auraIcons) do table.insert(icons, cdID) end
   local anyActive = false
   for _, cdID in ipairs(icons) do
     if auraGlowPreviewIcons[cdID] then anyActive = true; break end
@@ -1569,6 +1739,43 @@ end
 
 function ns.CDMEnhanceOptions.GetAuraGlowPreviewState()
   local icons = GetCooldownIconsToUpdate()
+  local auraIcons = GetAuraIconsToUpdate()
+  for _, cdID in ipairs(auraIcons) do table.insert(icons, cdID) end
+  for _, cdID in ipairs(icons) do
+    if auraGlowPreviewIcons[cdID] then return true end
+  end
+  return false
+end
+
+-- Aura-frame versions for Aura Missing glow preview (uses aura icon list)
+function ns.CDMEnhanceOptions.ToggleAuraMissingGlowPreviewForSelection()
+  -- Include aura icons + cooldown icons that have glowWhenMissing
+  local icons = GetAuraIconsToUpdate()
+  local cdIcons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(cdIcons) do
+    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+    if cfg and cfg.auraActiveState and cfg.auraActiveState.glowWhenMissing then
+      table.insert(icons, cdID)
+    end
+  end
+  local anyActive = false
+  for _, cdID in ipairs(icons) do
+    if auraGlowPreviewIcons[cdID] then anyActive = true; break end
+  end
+  for _, cdID in ipairs(icons) do
+    ns.CDMEnhanceOptions.SetAuraGlowPreview(cdID, not anyActive)
+  end
+end
+
+function ns.CDMEnhanceOptions.GetAuraMissingGlowPreviewState()
+  local icons = GetAuraIconsToUpdate()
+  local cdIcons = GetCooldownIconsToUpdate()
+  for _, cdID in ipairs(cdIcons) do
+    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+    if cfg and cfg.auraActiveState and cfg.auraActiveState.glowWhenMissing then
+      table.insert(icons, cdID)
+    end
+  end
   for _, cdID in ipairs(icons) do
     if auraGlowPreviewIcons[cdID] then return true end
   end
@@ -1643,23 +1850,13 @@ end
 -- Clears glow signature to force restart with new settings
 -- NOTE: This is for cooldown ready state glow - NOT shared with auras
 local function ApplyReadyStateGlowSetting(setter)
+  -- Stop first so ApplyCooldownSetting→UpdateIcon→FeedCooldown starts fresh with new settings
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllReadyGlows then
+    ns.ArcAurasCooldown.StopAllReadyGlows()
+  end
   ApplyCooldownSetting(setter)
-  if ns.CDMEnhance then
-    local icons = GetCooldownIconsToUpdate()
-    for _, cdID in ipairs(icons) do
-      local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
-      if data and data.frame then
-        data.frame._arcCurrentGlowSig = nil
-        -- If preview is active, force immediate glow refresh
-        if ns.CDMEnhanceOptions.IsGlowPreviewActive and ns.CDMEnhanceOptions.IsGlowPreviewActive(cdID) then
-          ns.CDMEnhanceOptions.SetGlowPreview(cdID, true)
-        end
-      end
-    end
-    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
-    for _, cdID in ipairs(icons) do
-      if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
-    end
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
   end
 end
 
@@ -1667,15 +1864,12 @@ end
 -- Lighter version that doesn't clear glow signature - just updates preview if active
 -- Use this for continuous slider changes to avoid FPS drops
 local function ApplyReadyStateGlowSliderSetting(setter)
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllReadyGlows then
+    ns.ArcAurasCooldown.StopAllReadyGlows()
+  end
   ApplyCooldownSetting(setter)
-  if ns.CDMEnhance then
-    local icons = GetCooldownIconsToUpdate()
-    -- Only refresh preview if active - no signature clearing, no full UpdateIcon
-    for _, cdID in ipairs(icons) do
-      if ns.CDMEnhanceOptions.IsGlowPreviewActive and ns.CDMEnhanceOptions.IsGlowPreviewActive(cdID) then
-        ns.CDMEnhanceOptions.SetGlowPreview(cdID, true)
-      end
-    end
+  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
   end
 end
 
@@ -2502,6 +2696,42 @@ function ns.GetCDMAuraIconsOptionsTable()
         LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
       end,
     },
+    masqueGlowShapes = {
+      type = "toggle",
+      name = "Use Masque Glow Shapes",
+      desc = "When enabled, glow effects (proc, ants, etc.) use shape-matched textures from Masque (circle, hexagon, etc.).\n\n|cffFFAA00When disabled:|r Glows always use the default square shape regardless of Masque skin.\n\n|cff888888Useful if Masque shape textures look bad or oversized on certain glow types.|r",
+      order = 8.26,
+      width = 1.2,
+      hidden = function()
+        return not IsMasqueActive()
+      end,
+      disabled = function()
+        return not IsMasqueActive()
+      end,
+      get = function()
+        if ns.db and ns.db.profile and ns.db.profile.cdmEnhance then
+          -- Default to true (use shapes)
+          if ns.db.profile.cdmEnhance.glowUseMasqueShapes == nil then return true end
+          return ns.db.profile.cdmEnhance.glowUseMasqueShapes
+        end
+        return true
+      end,
+      set = function(_, val)
+        if ns.db and ns.db.profile then
+          ns.db.profile.cdmEnhance = ns.db.profile.cdmEnhance or {}
+          ns.db.profile.cdmEnhance.glowUseMasqueShapes = val
+        end
+        -- Notify Glows module
+        if ns.Glows and ns.Glows.RefreshMasqueShapes then
+          ns.Glows.RefreshMasqueShapes()
+        end
+        -- Notify ACH module
+        if ns.AssistedCombatHighlight and ns.AssistedCombatHighlight.DestroyAllHighlights then
+          ns.AssistedCombatHighlight.DestroyAllHighlights()
+        end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+    },
     masqueZoomNote = {
       type = "description",
       name = "|cffFFAA00When Masque is enabled:|r Zoom, Aspect Ratio, and Padding controls are disabled. Use Masque's settings to adjust icon appearance.",
@@ -2850,14 +3080,15 @@ function ns.GetCDMAuraIconsOptionsTable()
       set = function(_, v) ApplyAuraSetting(function(c) c.alpha = v end) end,
       order = 107, width = 0.65, hidden = HideAuraIconAppearance,
     },
-    hideShadow = {
-      type = "toggle", name = "Hide CDM Shadow",
-      desc = "Removes the default shadow around the icon",
+    shadowSize = {
+      type = "range", name = "Shadow Size",
+      desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
+      min = 0.1, max = 3.0, step = 0.05,
       get = function()
-        return GetAuraBoolSetting(function(c) return c.hideShadow end, function() local c = GetAuraCfg(); return c and c.hideShadow end)
+        return GetAuraBoolSetting(function(c) return c.shadowSize end, function() local c = GetAuraCfg(); return c and c.shadowSize end) or 1.0
       end,
-      set = function(_, v) ApplyAuraSetting(function(c) c.hideShadow = v end) end,
-      order = 107.5, width = 0.85, hidden = HideAuraIconAppearance,
+      set = function(_, v) ApplyAuraSetting(function(c) c.shadowSize = v end) end,
+      order = 107.52, width = 1.2, hidden = HideAuraIconAppearance,
     },
     keepBright = {
       type = "toggle", name = "Keep Bright",
@@ -2891,6 +3122,26 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         return not (c and c.keepBright)
       end,
+    },
+    customIconID = {
+      type = "input",
+      dialogControl = "ArcUI_EditBox",
+      name = "Custom Icon",
+      desc = "Override the icon texture with a spell ID or texture file ID.\n\nEnter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nLeave empty to use the default CDM icon.",
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.customIconID then return tostring(c.customIconID) end
+        return ""
+      end,
+      set = function(_, v)
+        local id = tonumber(v)
+        ApplyAuraSetting(function(c) c.customIconID = id end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 107.537, width = 0.85,
+      hidden = HideAuraIconAppearance,
     },
     showDebuffBorder = {
       type = "toggle", name = "Debuff Border",
@@ -3027,7 +3278,7 @@ function ns.GetCDMAuraIconsOptionsTable()
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
         end
       end,
-      order = 107.9,
+      order = 107.802,
       width = 0.7,
       hidden = function()
         if HideAuraPosition() then return true end
@@ -3036,10 +3287,54 @@ function ns.GetCDMAuraIconsOptionsTable()
         return ns.CDMEnhance.GetIconPositionMode(cdID) == "group"
       end,
     },
-    
-    -- ═══════════════════════════════════════════════════════════════════
-    -- INACTIVE STATE SECTION (When aura is not active)
-    -- ═══════════════════════════════════════════════════════════════════
+    iconMoveToGroup = {
+      type = "select",
+      name = "Move to Group",
+      desc = "Move this icon to a different group, or make it free positioned.",
+      values = function()
+        local vals = {}
+        if ns.CDMGroups and ns.CDMGroups.groups then
+          for groupName, _ in pairs(ns.CDMGroups.groups) do
+            vals[groupName] = groupName
+          end
+        end
+        vals["free"] = "|cffff00ffFree Position|r"
+        return vals
+      end,
+      sorting = function()
+        local order = {}
+        if ns.CDMGroups and ns.CDMGroups.groups then
+          for groupName, _ in pairs(ns.CDMGroups.groups) do
+            order[#order + 1] = groupName
+          end
+          table.sort(order)
+        end
+        order[#order + 1] = "free"
+        return order
+      end,
+      get = function()
+        if not ns.CDMGroups or not ns.CDMGroups.GetGroupNameForIcon then return nil end
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID then return nil end
+        return ns.CDMGroups.GetGroupNameForIcon(cdID)
+      end,
+      set = function(_, v)
+        if not ns.CDMGroups or not ns.CDMGroups.MoveIconToGroup then return end
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID then return end
+        ns.CDMGroups.MoveIconToGroup(cdID, v)
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+      order = 107.805,
+      width = 1.2,
+      hidden = function()
+        if HideAuraPosition() then return true end
+        if not ns.CDMGroups or not ns.CDMGroups.IsCDMGroupsEnabled or not ns.CDMGroups.IsCDMGroupsEnabled() then return true end
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID then return true end
+        return false
+      end,
+    },
     -- ACTIVE STATE SECTION (when buff/debuff is applied)
     -- ═══════════════════════════════════════════════════════════════════
     activeStateHeader = {
@@ -3080,6 +3375,154 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.83, width = 0.8,
       hidden = function() return HideIfNoAuraSelection() or collapsedSections.activeState end,
+    },
+    activeStateDesaturate = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Make icon grayscale when active (e.g. for visual emphasis on other elements)",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.desaturate end,
+          function()
+            local c = GetAuraCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.desaturate or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraOnlySetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.desaturate = v
+        end)
+      end,
+      order = 107.831, width = 0.55,
+      hidden = function() return HideIfNoAuraSelection() or collapsedSections.activeState end,
+    },
+    activeStatePreserveDurationText = {
+      type = "toggle",
+      name = "Preserve Duration Text",
+      desc = "Keep the cooldown duration text at full opacity even when the icon alpha is reduced during the active state. Useful for tracking remaining buff duration on dimmed icons.",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.preserveDurationText end,
+          function()
+            local c = GetAuraCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.preserveDurationText or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraOnlySetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.preserveDurationText = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 107.8315, width = 1.2,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        -- Only show when active alpha is reduced below 1 (otherwise there's nothing to preserve)
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+               and (c.cooldownStateVisuals.readyState.alpha or 1.0) < 1.0)
+      end,
+    },
+    activeStateProcOverride = {
+      type = "toggle",
+      name = "Show on Proc",
+      desc = "If a proc glow is active on this icon, ignore the active state opacity and show the icon at full alpha instead.",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.procOverride end,
+          function()
+            local c = GetAuraCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.procOverride or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraOnlySetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.procOverride = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 107.8316, width = 1.2,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+               and (c.cooldownStateVisuals.readyState.alpha or 1.0) < 1.0)
+      end,
+    },
+    activeStateTint = {
+      type = "toggle",
+      name = "Color Tint",
+      desc = "Apply a custom color tint to the icon when active",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.tint end,
+          function()
+            local c = GetAuraCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.tint or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraOnlySetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.tint = v
+        end)
+      end,
+      order = 107.832, width = 0.55,
+      hidden = function() return HideIfNoAuraSelection() or collapsedSections.activeState end,
+    },
+    activeStateTintColor = {
+      type = "color",
+      name = "Tint",
+      desc = "Color to tint the icon when active",
+      hasAlpha = false,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+          local col = c.cooldownStateVisuals.readyState.tintColor
+          if col then return col.r or 0.5, col.g or 0.5, col.b or 0.5 end
+        end
+        return 0.5, 0.5, 0.5
+      end,
+      set = function(_, r, g, b)
+        ApplyAuraOnlySetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.tintColor = {r = r, g = g, b = b}
+        end)
+      end,
+      order = 107.833, width = 0.35,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.tint)
+      end,
     },
     activeStateGlow = {
       type = "toggle",
@@ -3171,16 +3614,17 @@ function ns.GetCDMAuraIconsOptionsTable()
     activeStateGlowType = {
       type = "select",
       name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
       values = {
+        ["button"] = "Button Glow (Default)",
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
-        ["button"] = "Button Glow (Default)",
-        ["proc"] = "Proc Effect",
+        ["proc"] = "Blizzard Proc",
         ["ants"] = "Ants (Marching)",
-        ["ach_proc"] = "Proc Burst (ACH)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
       },
-      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
       get = function()
         local c = GetAuraCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -3279,7 +3723,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+        return false  -- Scale works for all glow types
       end,
     },
     activeStateGlowSpeed = {
@@ -3416,8 +3860,8 @@ function ns.GetCDMAuraIconsOptionsTable()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Button glow doesn't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+        -- Only button and default types don't support offset
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
       end,
     },
     activeStateGlowYOffset = {
@@ -3444,21 +3888,22 @@ function ns.GetCDMAuraIconsOptionsTable()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Button glow doesn't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+        -- Only button and default types don't support offset
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
       end,
     },
     activeStateGlowFrameStrata = {
       type = "select",
       name = "Glow Strata",
-      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
       values = {
         ["inherit"] = "Inherit (Default)",
+        ["LOW"] = "LOW",
         ["MEDIUM"] = "MEDIUM",
         ["HIGH"] = "HIGH",
         ["DIALOG"] = "DIALOG",
       },
-      sorting = {"inherit", "MEDIUM", "HIGH", "DIALOG"},
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
       get = function()
         local c = GetAuraCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -3508,18 +3953,63 @@ function ns.GetCDMAuraIconsOptionsTable()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
     },
+    activeStateGlowMode = {
+      type = "select",
+      name = "Show Glow",
+      desc = "When to show the glow while the aura is active.\n\n|cffffd700Always|r — Glow the whole time the aura is up.\n\n|cffffd700Threshold %|r — Glow when remaining duration drops below a % of total. Simple but breaks for auras extended by talents (e.g. 30% of a talent-extended Moonfire fires too early).\n\n|cffffd700Threshold Seconds|r — Glow when remaining duration drops below a fixed number of seconds. Immune to talent extension — use this for Moonfire, Sunfire, etc.\n\n|cffffd700CDM Pandemic Timing|r — Glow exactly when CDM enters the pandemic window. Uses Blizzard's internal pandemic calculation, guaranteed correct.",
+      values = {
+        always   = "Always",
+        percent  = "Threshold %",
+        seconds  = "Threshold Seconds",
+        pandemic = "CDM Pandemic Timing",
+      },
+      sorting = { "always", "percent", "seconds", "pandemic" },
+      get = function()
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not rs then return "always" end
+        if rs.glowFollowPandemic then return "pandemic" end
+        if rs.glowThresholdSeconds then return "seconds" end
+        if (rs.glowThreshold or 1.0) < 1.0 then return "percent" end
+        return "always"
+      end,
+      set = function(_, v)
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          local rs = c.cooldownStateVisuals.readyState
+          -- Clear all mode flags first
+          rs.glowFollowPandemic = nil
+          rs.glowThresholdSeconds = nil
+          rs.glowThreshold = 1.0
+          if v == "pandemic" then
+            rs.glowFollowPandemic = true
+          elseif v == "percent" then
+            rs.glowThreshold = 0.3  -- default to 30%
+          elseif v == "seconds" then
+            rs.glowThresholdSeconds = 6.0  -- sensible starting value
+          end
+        end)
+      end,
+      order = 107.8406, width = 1.1,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
     activeStateGlowThreshold = {
       type = "range",
       name = "Threshold %",
-      desc = "Show glow when remaining duration is at or below this percentage.\n\n|cffffd700100%|r = Always glow when active\n|cffffd70030%|r = Pandemic window (glow when ≤30% remaining)",
-      min = 0.05, max = 1.0, step = 0.05,
+      desc = "Glow when remaining duration is at or below this percentage of the aura's current total duration.",
+      min = 0.05, max = 0.95, step = 0.05,
       isPercent = true,
       get = function()
         local c = GetAuraCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
-          return c.cooldownStateVisuals.readyState.glowThreshold or 1.0
+          return c.cooldownStateVisuals.readyState.glowThreshold or 0.3
         end
-        return 1.0
+        return 0.3
       end,
       set = function(_, v)
         ApplyAuraReadyStateGlowSliderSetting(function(c)
@@ -3528,11 +4018,39 @@ function ns.GetCDMAuraIconsOptionsTable()
           c.cooldownStateVisuals.readyState.glowThreshold = v
         end)
       end,
-      order = 107.8406, width = 0.7,
+      order = 107.8407, width = 0.75,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
-        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow) then return true end
+        return rs.glowFollowPandemic or rs.glowThresholdSeconds ~= nil or (rs.glowThreshold or 1.0) >= 1.0
+      end,
+    },
+    activeStateGlowThresholdSeconds = {
+      type = "input",
+      name = "Seconds",
+      desc = "Glow when remaining duration drops to this many seconds.\n\nExample: Moonfire pandemic = 6.6, Sunfire = 5.4",
+      get = function()
+        local c = GetAuraCfg()
+        local v = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glowThresholdSeconds
+        return v and tostring(v) or ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        ApplyAuraReadyStateGlowSliderSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowThresholdSeconds = (num and num > 0) and num or nil
+        end)
+      end,
+      order = 107.8408, width = 0.55,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow) then return true end
+        return rs.glowFollowPandemic or rs.glowThresholdSeconds == nil
       end,
     },
     activeStateGlowAuraType = {
@@ -3544,7 +4062,6 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
           local val = c.cooldownStateVisuals.readyState.glowAuraType
-          -- Convert old "auto" to "buff" as default
           if val == "auto" or not val then return "buff" end
           return val
         end
@@ -3557,14 +4074,16 @@ function ns.GetCDMAuraIconsOptionsTable()
           c.cooldownStateVisuals.readyState.glowAuraType = v
         end)
       end,
-      order = 107.8407, width = 0.85,
+      order = 107.8409, width = 0.85,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
-        if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Only show if threshold is < 100%
-        local threshold = c.cooldownStateVisuals.readyState.glowThreshold or 1.0
-        return threshold >= 1.0
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow) then return true end
+        -- Hide for "Always" and "CDM Pandemic Timing" modes
+        if rs.glowFollowPandemic then return true end
+        local threshold = rs.glowThreshold or 1.0
+        return (not rs.glowThresholdSeconds) and threshold >= 1.0
       end,
     },
     resetActiveState = {
@@ -3708,6 +4227,382 @@ function ns.GetCDMAuraIconsOptionsTable()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState and c.cooldownStateVisuals.cooldownState.tint)
       end,
     },
+    -- ── Glow When Missing ──────────────────────────────────────────
+    inactiveGlowEnable = {
+      type = "toggle",
+      name = "Glow When Missing",
+      desc = "Show a glow effect on this aura icon when the buff/debuff is NOT active. Works for buffs, debuffs, and totems. Useful as a reminder to reapply.",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glowWhenMissing end,
+          function()
+            local c = GetAuraCfg()
+            return c and c.auraActiveState and c.auraActiveState.glowWhenMissing or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowWhenMissing = v
+        end)
+        if not v then
+          ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
+        end
+      end,
+      order = 107.961, width = 1.0,
+      hidden = HideAuraInactiveState,
+    },
+    inactiveGlowPreview = {
+      type = "toggle",
+      name = "Preview",
+      desc = "Toggle glow preview for selected icon(s). Preview will automatically stop when you close the options panel.",
+      get = function()
+        return ns.CDMEnhanceOptions.GetAuraMissingGlowPreviewState()
+      end,
+      set = function(_, v)
+        ns.CDMEnhanceOptions.ToggleAuraMissingGlowPreviewForSelection()
+      end,
+      order = 107.9611, width = 0.5,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowCombatOnly = {
+      type = "toggle",
+      name = "In Combat Only",
+      desc = "Only show the missing glow while in combat",
+      get = function()
+        return GetAuraOnlyBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glowCombatOnly end,
+          function()
+            local c = GetAuraCfg()
+            return c and c.auraActiveState and c.auraActiveState.glowCombatOnly or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowCombatOnly = v
+        end)
+      end,
+      order = 107.962, width = 0.8,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowType = {
+      type = "select",
+      name = "Glow Style",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
+      values = {
+        ["pixel"] = "Pixel Glow",
+        ["autocast"] = "AutoCast Sparkles",
+        ["button"] = "Button Glow (Default)",
+        ["proc"] = "Blizzard Proc",
+        ["ants"] = "Ants (Marching)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
+      },
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowType or "button" end
+        return "button"
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowType = v
+        end)
+      end,
+      order = 107.963, width = 0.9,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowColor = {
+      type = "color",
+      name = "Color",
+      desc = "Glow color",
+      hasAlpha = false,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then
+          local col = c.auraActiveState.glowColor
+          if col then return col.r or 1, col.g or 0.85, col.b or 0.1 end
+        end
+        return 1, 0.85, 0.1
+      end,
+      set = function(_, r, g, b)
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowColor = {r = r, g = g, b = b}
+        end)
+      end,
+      order = 107.964, width = 0.5,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowIntensity = {
+      type = "range",
+      name = "Intensity",
+      desc = "How bright the glow appears",
+      min = 0, max = 1.0, step = 0.05,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowIntensity or 1.0 end
+        return 1.0
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowIntensity = v
+        end)
+      end,
+      order = 107.965, width = 0.6,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowScale = {
+      type = "range",
+      name = "Scale",
+      desc = "Size of the glow effect",
+      min = 0.5, max = 4.0, step = 0.05,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowScale or 1.0 end
+        return 1.0
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowScale = v
+        end)
+      end,
+      order = 107.966, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        return false  -- Scale works for all glow types
+      end,
+    },
+    inactiveGlowSpeed = {
+      type = "range",
+      name = "Speed",
+      desc = "How fast the glow animates",
+      min = 0.05, max = 1.0, step = 0.05,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowSpeed or 0.25 end
+        return 0.25
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowSpeed = v
+        end)
+      end,
+      order = 107.967, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        local gt = c.auraActiveState.glowType
+        return gt == "proc" or gt == "ants" or gt == "ach_proc"
+      end,
+    },
+    inactiveGlowLines = {
+      type = "range",
+      name = "Lines",
+      desc = "Number of glow lines",
+      min = 1, max = 16, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowLines or 8 end
+        return 8
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowLines = v
+        end)
+      end,
+      order = 107.968, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        return c.auraActiveState.glowType ~= "pixel"
+      end,
+    },
+    inactiveGlowThickness = {
+      type = "range",
+      name = "Thickness",
+      desc = "Thickness of glow lines",
+      min = 1, max = 10, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowThickness or 2 end
+        return 2
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowThickness = v
+        end)
+      end,
+      order = 107.969, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        return c.auraActiveState.glowType ~= "pixel"
+      end,
+    },
+    inactiveGlowParticles = {
+      type = "range",
+      name = "Particles",
+      desc = "Number of particle groups",
+      min = 1, max = 8, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowParticles or 4 end
+        return 4
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowParticles = v
+        end)
+      end,
+      order = 107.9695, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        return c.auraActiveState.glowType ~= "autocast"
+      end,
+    },
+    inactiveGlowFrameStrata = {
+      type = "select",
+      name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = {
+        ["inherit"] = "Inherit (Default)",
+        ["LOW"] = "LOW",
+        ["MEDIUM"] = "MEDIUM",
+        ["HIGH"] = "HIGH",
+        ["DIALOG"] = "DIALOG",
+      },
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowFrameStrata or "inherit"
+        end
+        return "inherit"
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowFrameStrata = (v ~= "inherit") and v or nil
+        end)
+      end,
+      order = 107.9696, width = 0.85,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowFrameLevel = {
+      type = "input",
+      name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata. Works with both inherited and custom strata.\n\nAccepts a number from 1 to 10000.",
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState and c.auraActiveState.glowFrameLevel then
+          return tostring(c.auraActiveState.glowFrameLevel)
+        end
+        return ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyAuraMissingGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowFrameLevel = num
+        end)
+      end,
+      order = 107.9697, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
+    inactiveGlowXOffset = {
+      type = "range", name = "X Offset", desc = "Horizontal glow position adjustment",
+      min = -50, max = 50, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowXOffset or 0 end
+        return 0
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowXOffset = v
+        end)
+      end,
+      order = 107.9698, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        local gt = c.auraActiveState.glowType or "button"
+        return gt == "button"
+      end,
+    },
+    inactiveGlowYOffset = {
+      type = "range", name = "Y Offset", desc = "Vertical glow position adjustment",
+      min = -50, max = 50, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowYOffset or 0 end
+        return 0
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowYOffset = v
+        end)
+      end,
+      order = 107.9699, width = 0.55,
+      hidden = function()
+        if HideAuraInactiveState() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        local gt = c.auraActiveState.glowType or "button"
+        return gt == "button"
+      end,
+    },
     resetInactiveState = {
       type = "execute",
       name = "Reset Section",
@@ -3783,17 +4678,18 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     procGlowType = {
       type = "select", name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      desc = "Select the glow animation style\n\n|cffffd700Default|r - Golden proc glow (matches CDM's native look)\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
       values = {
-        ["default"] = "Default (Blizzard)",
+        ["default"] = "Default (Golden)",
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow",
-        ["proc"] = "Proc Effect",
+        ["proc"] = "Blizzard Proc",
         ["ants"] = "Ants (Marching)",
-        ["ach_proc"] = "Proc Burst (ACH)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
       },
-      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
+      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc", "cdm_flash"},
       get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.glowType or "default" end,
       set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.glowType = v end) end,
       order = 109.15, width = 0.8, hidden = HideAuraProcGlow,
@@ -3851,7 +4747,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Show for autocast and button types (scale works via SetScale)
-        return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
+        return false  -- Scale works for all glow types including Default
       end,
     },
     procGlowSpeed = {
@@ -3910,6 +4806,54 @@ function ns.GetCDMAuraIconsOptionsTable()
         return glowType ~= "autocast"
       end,
     },
+    procGlowXOffset = {
+      type = "range", name = "X Offset", desc = "Horizontal glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.xOffset or 0 end,
+      set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.xOffset = v end) end,
+      order = 109.51, width = 0.55,
+      hidden = function()
+        if HideAuraProcGlow() then return true end
+        local c = GetAuraCfg()
+        local gt = c and c.procGlow and c.procGlow.glowType or "default"
+        return gt == "button" or gt == "default"
+      end,
+    },
+    procGlowYOffset = {
+      type = "range", name = "Y Offset", desc = "Vertical glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.yOffset or 0 end,
+      set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.yOffset = v end) end,
+      order = 109.515, width = 0.55,
+      hidden = function()
+        if HideAuraProcGlow() then return true end
+        local c = GetAuraCfg()
+        local gt = c and c.procGlow and c.procGlow.glowType or "default"
+        return gt == "button" or gt == "default"
+      end,
+    },
+    procGlowFrameStrata = {
+      type = "select", name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = { ["inherit"] = "Inherit (Default)", ["LOW"] = "LOW", ["MEDIUM"] = "MEDIUM", ["HIGH"] = "HIGH", ["DIALOG"] = "DIALOG" },
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+      get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.strata or "inherit" end,
+      set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.strata = (v ~= "inherit") and v or nil end) end,
+      order = 109.52, width = 0.85,
+      hidden = function() if HideAuraProcGlow() then return true end; local c = GetAuraCfg(); return not (c and c.procGlow and c.procGlow.enabled ~= false) end,
+    },
+    procGlowFrameLevel = {
+      type = "input", name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata.\n\nAccepts a number from 1 to 10000.",
+      get = function() local c = GetAuraCfg(); local v = c and c.procGlow and c.procGlow.frameLevel; return v and tostring(v) or "" end,
+      set = function(_, v)
+        local num = tonumber(v); if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.frameLevel = num end)
+      end,
+      order = 109.525, width = 0.55,
+      hidden = function() if HideAuraProcGlow() then return true end; local c = GetAuraCfg(); return not (c and c.procGlow and c.procGlow.enabled ~= false) end,
+    },
     resetProcGlow = {
       type = "execute",
       name = "Reset Section",
@@ -3919,7 +4863,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       hidden = HideAuraProcGlow,
       func = function() ResetAuraSectionSettings("procGlow") end,
     },
-    
+
     -- ═══════════════════════════════════════════════════════════════════
     -- ALERT EVENTS SECTION (Auras) - Coming Soon
     -- ═══════════════════════════════════════════════════════════════════
@@ -4272,6 +5216,13 @@ function ns.GetCDMAuraIconsOptionsTable()
       set = function(_, v) ApplyAuraSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.enabled = v end) end,
       order = 131, width = 0.55, hidden = HideAuraChargeText,
     },
+    chargeShowSingleStack = {
+      type = "toggle", name = "Show at 1 Stack",
+      desc = "Show the stack count even when you only have 1 stack (CDM hides it by default)",
+      get = function() return GetAuraBoolSetting(function(c) return c and c.chargeText and c.chargeText.showSingleStack == true end, function() local c = GetAuraCfg(); return c and c.chargeText and c.chargeText.showSingleStack == true end) end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.showSingleStack = v end) end,
+      order = 131.5, width = 0.9, hidden = HideAuraChargeText,
+    },
     chargeTextDrag = {
       type = "toggle", name = "Text Drag",
       desc = "Enable dragging charge/stack text to custom positions",
@@ -4426,8 +5377,9 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       set = function(_, r, g, b, a)
         ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.color = {r=r, g=g, b=b, a=a} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
       end,
-      order = 153, width = 0.55, hidden = HideAuraCooldownText,
+      order = 164.55, width = 0.55, hidden = HideAuraCooldownText,
     },
     cdFont = {
       type = "select", name = "Font", dialogControl = "LSM30_Font",
@@ -4504,6 +5456,416 @@ function ns.GetCDMAuraIconsOptionsTable()
       name = "|cff00ff00Text Drag Mode enabled.|r |cff888888Drag the cooldown text in-game to position it.|r",
       order = 164, width = "full", 
       hidden = function() return HideAuraCooldownText() or not (GetAuraCfg() and GetAuraCfg().cooldownText and GetAuraCfg().cooldownText.mode == "free") end,
+    },
+    -- ─── 3.6.6 Duration-text formatting (engine-rendered, zero polling) ───
+    cdFormatHeader = {
+      type = "description", name = "\n|cffffd700Format|r", order = 164.1, width = "full", hidden = HideAuraCooldownText,
+    },
+    cdDecimals = {
+      type = "select", name = "Decimals",
+      desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
+      values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
+      get = function() local c = GetAuraCfg(); return c and c.cooldownText and c.cooldownText.decimals or 0 end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimals = v end) end,
+      order = 164.2, width = 0.6, hidden = HideAuraCooldownText,
+    },
+    cdDecimalThresholdEnabled = {
+      type = "toggle", name = "Show Below Threshold",
+      desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
+      get = function() local c = GetAuraCfg(); return c and c.cooldownText and (c.cooldownText.decimalThreshold or 0) > 0 end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = v and 5 or 0 end) end,
+      order = 164.24, width = 0.95,
+      hidden = function() if HideAuraCooldownText() then return true end local c = GetAuraCfg(); return not c or not c.cooldownText or (c.cooldownText.decimals or 0) == 0 end,
+    },
+    cdDecimalThreshold = {
+      type = "input", name = "Below (s)",
+      desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
+      get = function() local c = GetAuraCfg(); local v = c and c.cooldownText and c.cooldownText.decimalThreshold or 0; return tostring(v) end,
+      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = n end) end,
+      order = 164.25, width = 0.85,
+      hidden = function() if HideAuraCooldownText() then return true end local c = GetAuraCfg(); if not c or not c.cooldownText then return true end if (c.cooldownText.decimals or 0) == 0 then return true end return (c.cooldownText.decimalThreshold or 0) <= 0 end,
+    },
+    cdAbbrevEnabled = {
+      type = "toggle", name = "Abbreviate (M:SS)",
+      desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
+      get = function() local c = GetAuraCfg(); if not (c and c.cooldownText) then return false end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = v and 60 or 0 end) end,
+      order = 164.29, width = 0.95, hidden = HideAuraCooldownText,
+    },
+    cdAbbrevThreshold = {
+      type = "input", name = "Below (s)",
+      desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
+      get = function() local c = GetAuraCfg(); local v = c and c.cooldownText and c.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
+      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = n end) end,
+      order = 164.3, width = 0.85,
+      hidden = function() if HideAuraCooldownText() then return true end local c = GetAuraCfg(); if not c or not c.cooldownText then return true end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
+    },
+    cdColorHeader = {
+      type = "description", name = "\n|cffffd700Color|r", order = 164.5, width = "full", hidden = HideAuraCooldownText,
+    },
+    cdDurationColor = {
+      type = "toggle", name = "Color by Duration",
+      desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
+      get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.durationColor == true end, function() local c = GetAuraCfg(); return c and c.cooldownText and c.cooldownText.durationColor == true end) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.durationColor = v end)
+        if ns.CDMTextColor then
+          ns.CDMTextColor.InvalidateCurves()
+          if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
+        end
+      end,
+      order = 164.6, width = 0.6, hidden = HideAuraCooldownText,
+    },
+    cdDurationColorPreset = {
+      type = "select", name = "Color Template",
+      desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
+      sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
+      values = function()
+        if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
+          return ns.CDMTextColor.PRESET_NAMES
+        end
+        return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
+      end,
+      get = function() local c = GetAuraCfg(); return c and c.cooldownText and c.cooldownText.durationColorPreset or "custom" end,
+      set = function(_, v)
+        local usePercent = false
+        local c = GetAuraCfg()
+        if c and c.cooldownText then usePercent = c.cooldownText.durationColorUsePercent end
+        ApplyAuraSetting(function(c2)
+          if not c2.cooldownText then c2.cooldownText = {} end
+          c2.cooldownText.durationColorPreset = v
+          -- Populate custom entries from preset (skip for "custom" to preserve user edits)
+          if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
+            if entries then c2.cooldownText.durationColorCustom = entries end
+            if defColor then c2.cooldownText.durationColorCustomDefault = defColor end
+          end
+        end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.63, width = 1.2,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurationColorUsePercent = {
+      type = "toggle", name = "Use % Thresholds",
+      desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+      get = function() local c = GetAuraCfg(); return c and c.cooldownText and c.cooldownText.durationColorUsePercent end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          if not c.cooldownText then c.cooldownText = {} end
+          c.cooldownText.durationColorUsePercent = v
+          -- Re-populate thresholds from current preset for the new mode (sec vs %)
+          local preset = c.cooldownText.durationColorPreset or "custom"
+          if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
+            if entries then c.cooldownText.durationColorCustom = entries end
+            if defColor then c.cooldownText.durationColorCustomDefault = defColor end
+          end
+        end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.61, width = 0.55,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    -- ═══ CUSTOM CURVE EDITOR (per-icon) ═══
+    cdDurCustomHeader = {
+      type = "description",
+      name = "|cffffd700Color Thresholds|r",
+      fontSize = "medium",
+      order = 164.65, width = "full",
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    -- Threshold 1
+    cdDurT1Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 1",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[1] = c.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}; c.cooldownText.durationColorCustom[1].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.661, width = 0.3,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT1Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.662, width = 0.25,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    cdDurT1Suffix = {
+      type = "description", name = function() local c = GetAuraCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.663, width = 0.12,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    cdDurT1Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
+      set = function(_, r, g, b, a)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.664, width = 0.4,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    -- Threshold 2
+    cdDurT2Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 2",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[2] = c.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[2].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.671, width = 0.3,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT2Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.672, width = 0.25,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    cdDurT2Suffix = {
+      type = "description", name = function() local c = GetAuraCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.673, width = 0.12,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    cdDurT2Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
+      set = function(_, r, g, b, a)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.674, width = 0.4,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    -- Threshold 3
+    cdDurT3Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 3",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[3] = c.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; c.cooldownText.durationColorCustom[3].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.681, width = 0.3,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT3Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.682, width = 0.25,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    cdDurT3Suffix = {
+      type = "description", name = function() local c = GetAuraCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.683, width = 0.12,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    cdDurT3Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
+      set = function(_, r, g, b, a)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.684, width = 0.4,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    -- Threshold 4
+    cdDurT4Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 4",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[4] = c.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[4].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.691, width = 0.3,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT4Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.692, width = 0.25,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    cdDurT4Suffix = {
+      type = "description", name = function() local c = GetAuraCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.693, width = 0.12,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    cdDurT4Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
+      set = function(_, r, g, b, a)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.694, width = 0.4,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    -- Threshold 5
+    cdDurT5Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 5",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[5] = c.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; c.cooldownText.durationColorCustom[5].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.701, width = 0.3,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT5Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.702, width = 0.25,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
+    },
+    cdDurT5Suffix = {
+      type = "description", name = function() local c = GetAuraCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.703, width = 0.12,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
+    },
+    cdDurT5Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetAuraCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
+      set = function(_, r, g, b, a)
+        ApplyAuraSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.704, width = 0.4,
+      hidden = function()
+        if HideAuraCooldownText() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
     },
     resetCooldownText = {
       type = "execute",
@@ -5048,14 +6410,15 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v) ApplySharedCooldownSetting(function(c) c.alpha = v end) end,
       order = 107, width = 0.65, hidden = HideCooldownIconAppearance,
     },
-    hideShadow = {
-      type = "toggle", name = "Hide CDM Shadow",
-      desc = "Removes the default shadow around the icon",
+    shadowSize = {
+      type = "range", name = "Shadow Size",
+      desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
+      min = 0.1, max = 3.0, step = 0.05,
       get = function()
-        return GetCooldownBoolSetting(function(c) return c.hideShadow end, function() local c = GetCooldownCfg(); return c and c.hideShadow end)
+        return GetCooldownBoolSetting(function(c) return c.shadowSize end, function() local c = GetCooldownCfg(); return c and c.shadowSize end) or 1.0
       end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) c.hideShadow = v end) end,
-      order = 107.5, width = 0.85, hidden = HideCooldownIconAppearance,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) c.shadowSize = v end) end,
+      order = 107.52, width = 1.2, hidden = HideCooldownIconAppearance,
     },
     keepBright = {
       type = "toggle", name = "Keep Bright",
@@ -5088,6 +6451,29 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideCooldownIconAppearance() then return true end
         local c = GetCooldownCfg()
         return not (c and c.keepBright)
+      end,
+    },
+    customIconID = {
+      type = "input",
+      dialogControl = "ArcUI_EditBox",
+      name = "Custom Icon",
+      desc = "Override the icon texture with a spell ID or texture file ID.\n\nEnter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nLeave empty to use the default CDM icon.",
+      get = function()
+        local c = GetCooldownCfg()
+        if c and c.customIconID then return tostring(c.customIconID) end
+        return ""
+      end,
+      set = function(_, v)
+        local id = tonumber(v)
+        ApplySharedCooldownSetting(function(c) c.customIconID = id end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.537, width = 0.85,
+      hidden = function()
+        if HideIfNoCooldownSelection() then return true end
+        return collapsedSections.iconAppearance
       end,
     },
     showPandemicBorder = {
@@ -5220,7 +6606,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
         end
       end,
-      order = 107.9,
+      order = 107.802,
       width = 0.7,
       hidden = function()
         if HideCooldownPosition() then return true end
@@ -5229,16 +6615,63 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return ns.CDMEnhance.GetIconPositionMode(cdID) == "group"
       end,
     },
-    
-    -- ═══════════════════════════════════════════════════════════════════
-    -- INACTIVE STATE SECTION (when NOT on cooldown)
-    -- ═══════════════════════════════════════════════════════════════════
+    iconMoveToGroup = {
+      type = "select",
+      name = "Move to Group",
+      desc = "Move this icon to a different group, or make it free positioned.",
+      values = function()
+        local vals = {}
+        if ns.CDMGroups and ns.CDMGroups.groups then
+          for groupName, _ in pairs(ns.CDMGroups.groups) do
+            vals[groupName] = groupName
+          end
+        end
+        vals["free"] = "|cffff00ffFree Position|r"
+        return vals
+      end,
+      sorting = function()
+        local order = {}
+        if ns.CDMGroups and ns.CDMGroups.groups then
+          for groupName, _ in pairs(ns.CDMGroups.groups) do
+            order[#order + 1] = groupName
+          end
+          table.sort(order)
+        end
+        order[#order + 1] = "free"
+        return order
+      end,
+      get = function()
+        if not ns.CDMGroups or not ns.CDMGroups.GetGroupNameForIcon then return nil end
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID then return nil end
+        return ns.CDMGroups.GetGroupNameForIcon(cdID)
+      end,
+      set = function(_, v)
+        if not ns.CDMGroups or not ns.CDMGroups.MoveIconToGroup then return end
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID then return end
+        ns.CDMGroups.MoveIconToGroup(cdID, v)
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+      order = 107.805,
+      width = 1.2,
+      hidden = function()
+        if HideCooldownPosition() then return true end
+        if not ns.CDMGroups or not ns.CDMGroups.IsCDMGroupsEnabled or not ns.CDMGroups.IsCDMGroupsEnabled() then return true end
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID then return true end
+        return false
+      end,
+    },
     -- ═══════════════════════════════════════════════════════════════════
     -- READY STATE SECTION (when ability is available)
     -- ═══════════════════════════════════════════════════════════════════
     readyStateHeader = {
       type = "toggle",
-      name = function() return GetCooldownHeaderName("activeState", "Ready State") end,
+      name = function()
+        local label = IsCurrentCooldownSelectionAllCustomTimer() and "Not Active" or "Cooldown Ready State"
+        return GetCooldownHeaderName("activeState", label)
+      end,
       desc = "Click to expand/collapse. Configure how the icon appears when the ability IS READY (not on cooldown). Purple dot indicates per-icon customizations.",
       dialogControl = "CollapsibleHeader",
       get = function() return not collapsedSections.readyState end,
@@ -5274,6 +6707,40 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       order = 107.83, width = 0.8,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
+    },
+    readyStateProcOverride = {
+      type = "toggle",
+      name = "Show on Proc",
+      desc = "If a proc glow is active on this icon, ignore the ready state opacity and show the icon at full alpha instead.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.procOverride end,
+          function()
+            local c = GetCooldownCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.procOverride or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.procOverride = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.831, width = 0.8,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+               and (c.cooldownStateVisuals.readyState.alpha or 1.0) < 1.0)
+      end,
     },
     readyStateTint = {
       type = "toggle",
@@ -5463,16 +6930,17 @@ function ns.GetCDMCooldownIconsOptionsTable()
     readyStateGlowType = {
       type = "select",
       name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
       values = {
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow (Default)",
-        ["proc"] = "Proc Effect",
+        ["proc"] = "Blizzard Proc",
         ["ants"] = "Ants (Marching)",
-        ["ach_proc"] = "Proc Burst (ACH)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
       },
-      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
       get = function()
         local c = GetCooldownCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -5571,7 +7039,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+        return false  -- Scale works for all glow types
       end,
     },
     readyStateGlowSpeed = {
@@ -5708,8 +7176,8 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Button glow doesn't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+        -- Only button and default types don't support offset
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
       end,
     },
     readyStateGlowYOffset = {
@@ -5736,21 +7204,22 @@ function ns.GetCDMCooldownIconsOptionsTable()
         if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
-        -- Button glow doesn't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+        -- Only button and default types don't support offset
+        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
       end,
     },
     readyStateGlowFrameStrata = {
       type = "select",
       name = "Glow Strata",
-      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
       values = {
         ["inherit"] = "Inherit (Default)",
+        ["LOW"] = "LOW",
         ["MEDIUM"] = "MEDIUM",
         ["HIGH"] = "HIGH",
         ["DIALOG"] = "DIALOG",
       },
-      sorting = {"inherit", "MEDIUM", "HIGH", "DIALOG"},
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
       get = function()
         local c = GetCooldownCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -5803,7 +7272,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
     resetReadyState = {
       type = "execute",
       name = "Reset Section",
-      desc = "Reset Ready State settings to defaults for selected icon(s)",
+      desc = "Reset Cooldown Ready State settings to defaults for selected icon(s)",
       order = 107.89,
       width = 0.7,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
@@ -5815,7 +7284,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
     -- ═══════════════════════════════════════════════════════════════════
     cooldownStateHeader = {
       type = "toggle",
-      name = function() return GetCooldownHeaderName("inactiveState", "On Cooldown State") end,
+      name = function()
+        local label = IsCurrentCooldownSelectionAllCustomTimer() and "Active State" or "On Cooldown State"
+        return GetCooldownHeaderName("inactiveState", label)
+      end,
       desc = "Click to expand/collapse. Configure how the icon appears when the ability IS ON COOLDOWN. Purple dot indicates per-icon customizations.",
       dialogControl = "CollapsibleHeader",
       get = function() return not collapsedSections.cooldownState end,
@@ -5992,6 +7464,94 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 107.946, width = 1.2,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.cooldownState end,
     },
+    cooldownStateDimWhenEmpty = {
+      type = "toggle",
+      name = "Dim When Out of Stock",
+      desc = "For item/trinket frames only: apply the cooldown alpha and desaturation when the item has no charges or isn't in your bags.\n\nDisable to only dim when the item is on an actual cooldown timer.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c)
+            if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState) then
+              return false  -- default OFF
+            end
+            return c.cooldownStateVisuals.cooldownState.dimWhenEmpty == true
+          end,
+          function()
+            -- Single-icon fallback: read actual stored value instead of hardcoding false
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState) then
+              return false
+            end
+            return c.cooldownStateVisuals.cooldownState.dimWhenEmpty == true
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.cooldownState then c.cooldownStateVisuals.cooldownState = {} end
+          c.cooldownStateVisuals.cooldownState.dimWhenEmpty = v
+        end)
+        if ns.ArcAuras and ns.ArcAuras.InvalidateSettingsCache then
+          ns.ArcAuras.InvalidateSettingsCache()
+        end
+        -- Force immediate visual update on all item/trinket frames
+        if ns.ArcAuras and ns.ArcAuras.frames and ns.ArcAuras.UpdateArcItemFrame then
+          for arcID, frame in pairs(ns.ArcAuras.frames) do
+            if not frame._arcIsSpellCooldown then
+              frame._lastAppliedAlpha = nil
+              frame._lastDesatState = nil
+              frame._cachedStateVisuals = nil
+              frame._settingsGeneration = nil  -- force stateVisuals rebuild in UpdateArcItemFrame
+              ns.ArcAuras.UpdateArcItemFrame(frame, arcID)
+            end
+          end
+        end
+      end,
+      order = 107.947, width = 1.2,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
+        local cdID = selectedCooldownIcon
+        if not cdID or not ns.ArcAuras or not ns.ArcAuras.frames then return true end
+        local frame = ns.ArcAuras.frames[cdID]
+        local cfg = frame and frame._arcConfig
+        return not (cfg and (cfg.type == "item" or cfg.type == "trinket"))
+      end,
+    },
+    cooldownStateProcOverride = {
+      type = "toggle",
+      name = "Show on Proc",
+      desc = "If a proc glow is active on this icon, ignore the on-cooldown opacity and show the icon at full alpha instead.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState and c.cooldownStateVisuals.cooldownState.procOverride end,
+          function()
+            local c = GetCooldownCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState then
+              return c.cooldownStateVisuals.cooldownState.procOverride or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.cooldownState then c.cooldownStateVisuals.cooldownState = {} end
+          c.cooldownStateVisuals.cooldownState.procOverride = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.947, width = 1.2,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState
+               and (c.cooldownStateVisuals.cooldownState.alpha or 1.0) < 1.0)
+      end,
+    },
     resetCooldownState = {
       type = "execute",
       name = "Reset Section",
@@ -6027,7 +7587,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       name = "Ignore Aura Override",
       desc = "Show the actual spell cooldown instead of the aura/buff duration. When enabled, the icon will display your spell's cooldown even while the buff is active, with desaturation applied.",
       get = function()
-        return GetCooldownBoolSetting(
+        return GetAuraActiveStateBoolSetting(
           function(c)
             -- Check both new location (auraActiveState) and old location (cooldownSwipe) for backward compatibility
             if c then
@@ -6041,7 +7601,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
             return false
           end,
           function()
-            local c = GetCooldownCfg()
+            local c = GetAuraActiveStateCfg()
             -- Check both new location (auraActiveState) and old location (cooldownSwipe) for backward compatibility
             if c then
               if c.auraActiveState and c.auraActiveState.ignoreAuraOverride then
@@ -6066,7 +7626,13 @@ function ns.GetCDMCooldownIconsOptionsTable()
           end
         end)
       end,
-      order = 107.97, width = 1.2,
+      order = 107.97, width = 1.5,
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateGlowDesc = {
+      type = "description",
+      name = "|cff888888Glow options:|r",
+      order = 107.9701, width = "full",
       hidden = HideCooldownAuraActiveState,
     },
     auraActiveStateGlow = {
@@ -6074,10 +7640,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
       name = "Glow When Aura Active",
       desc = "Show a glow effect on this cooldown icon while its associated buff/aura is active on you.",
       get = function()
-        return GetCooldownBoolSetting(
+        return GetAuraActiveStateBoolSetting(
           function(c) return c and c.auraActiveState and c.auraActiveState.glow end,
           function()
-            local c = GetCooldownCfg()
+            local c = GetAuraActiveStateCfg()
             return c and c.auraActiveState and c.auraActiveState.glow or false
           end
         )
@@ -6091,7 +7657,32 @@ function ns.GetCDMCooldownIconsOptionsTable()
           ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
         end
       end,
-      order = 107.971, width = 1.1,
+      order = 107.971, width = 1.3,
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateGlowWhenMissing = {
+      type = "toggle",
+      name = "Glow When Aura Missing",
+      desc = "Show glow when the associated buff/aura is NOT active instead of when it is active. Useful as a reminder to reapply buffs. Can be used independently or together with Glow When Aura Active.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glowWhenMissing end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            return c and c.auraActiveState and c.auraActiveState.glowWhenMissing or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowWhenMissing = v
+        end)
+        if not v then
+          ns.CDMEnhanceOptions.ClearAuraGlowPreviews()
+        end
+      end,
+      order = 107.9705, width = 1.3,
       hidden = HideCooldownAuraActiveState,
     },
     auraActiveStateGlowPreview = {
@@ -6104,11 +7695,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v)
         ns.CDMEnhanceOptions.ToggleAuraGlowPreviewForSelection()
       end,
-      order = 107.9711, width = 0.5,
+      order = 107.9711, width = 0.6,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.auraActiveState and c.auraActiveState.glow)
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
       end,
     },
     auraActiveStateGlowCombatOnly = {
@@ -6116,10 +7707,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
       name = "In Combat Only",
       desc = "Only show the aura active glow while in combat",
       get = function()
-        return GetCooldownBoolSetting(
+        return GetAuraActiveStateBoolSetting(
           function(c) return c and c.auraActiveState and c.auraActiveState.glowCombatOnly end,
           function()
-            local c = GetCooldownCfg()
+            local c = GetAuraActiveStateCfg()
             return c and c.auraActiveState and c.auraActiveState.glowCombatOnly or false
           end
         )
@@ -6139,28 +7730,56 @@ function ns.GetCDMCooldownIconsOptionsTable()
           end
         end
       end,
-      order = 107.9712, width = 0.8,
+      order = 107.9712, width = 1.0,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.auraActiveState and c.auraActiveState.glow)
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
+      end,
+    },
+    auraActiveStateGlowFollowPandemic = {
+      type = "toggle",
+      name = "Pandemic Timing",
+      desc = "When enabled, the glow fires exactly when CDM enters the pandemic window - not when the aura is applied.\n\n|cff00ff00Fixes extended-aura bugs|r like Moonfire/Sunfire with Aetherial Kindling: a % threshold fires early because the aura was extended beyond its base duration. CDMs internal pandemic calculation is always correct regardless of extension.\n\nOnly applies when |cffffd700Glow When Aura Active|r is enabled.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.glowFollowPandemic end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            return c and c.auraActiveState and c.auraActiveState.glowFollowPandemic or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowFollowPandemic = v or nil
+        end)
+      end,
+      order = 107.9713, width = 1.3,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        -- Only show when "Glow When Aura Active" is on (pandemic doesn't apply to glowWhenMissing)
+        return not (c and c.auraActiveState and c.auraActiveState.glow == true)
       end,
     },
     auraActiveStateGlowType = {
       type = "select",
       name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Proc|r - Flashy proc effect\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      desc = "Select the glow animation style\n\n|cffffd700Button|r - Classic button glow (default)\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
       values = {
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow (Default)",
-        ["proc"] = "Proc Effect",
+        ["proc"] = "Blizzard Proc",
         ["ants"] = "Ants (Marching)",
-        ["ach_proc"] = "Proc Burst (ACH)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
       },
-      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+      sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowType or "button"
         end
@@ -6172,11 +7791,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowType = v
         end)
       end,
-      order = 107.972, width = 0.9,
+      order = 107.972, width = 1.0,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.auraActiveState and c.auraActiveState.glow)
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
       end,
     },
     auraActiveStateGlowColor = {
@@ -6185,7 +7804,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "Glow color",
       hasAlpha = false,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           local col = c.auraActiveState.glowColor
           if col then return col.r or 1, col.g or 0.85, col.b or 0.1 end
@@ -6201,8 +7820,8 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 107.973, width = 0.5,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.auraActiveState and c.auraActiveState.glow)
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
       end,
     },
     auraActiveStateGlowIntensity = {
@@ -6211,7 +7830,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "How bright the glow appears",
       min = 0, max = 1.0, step = 0.05,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowIntensity or 1.0
         end
@@ -6223,11 +7842,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowIntensity = v
         end)
       end,
-      order = 107.974, width = 0.6,
+      order = 107.974, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.auraActiveState and c.auraActiveState.glow)
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
       end,
     },
     auraActiveStateGlowScale = {
@@ -6236,7 +7855,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "Size of the glow effect",
       min = 0.5, max = 4.0, step = 0.05,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowScale or 1.0
         end
@@ -6248,12 +7867,12 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowScale = v
         end)
       end,
-      order = 107.975, width = 0.55,
+      order = 107.975, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
-        local gt = c.auraActiveState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
+        return false
       end,
     },
     auraActiveStateGlowSpeed = {
@@ -6262,7 +7881,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "How fast the glow animates",
       min = 0.05, max = 1.0, step = 0.05,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowSpeed or 0.25
         end
@@ -6274,11 +7893,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowSpeed = v
         end)
       end,
-      order = 107.976, width = 0.55,
+      order = 107.976, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
         local gt = c.auraActiveState.glowType
         return gt == "proc" or gt == "ants" or gt == "ach_proc"
       end,
@@ -6289,7 +7908,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "Number of glow lines",
       min = 1, max = 16, step = 1,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowLines or 8
         end
@@ -6301,11 +7920,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowLines = v
         end)
       end,
-      order = 107.977, width = 0.55,
+      order = 107.977, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
         return c.auraActiveState.glowType ~= "pixel"
       end,
     },
@@ -6315,7 +7934,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "Thickness of glow lines",
       min = 1, max = 10, step = 1,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowThickness or 2
         end
@@ -6327,11 +7946,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowThickness = v
         end)
       end,
-      order = 107.978, width = 0.55,
+      order = 107.978, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
         return c.auraActiveState.glowType ~= "pixel"
       end,
     },
@@ -6341,7 +7960,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       desc = "Number of particle groups",
       min = 1, max = 8, step = 1,
       get = function()
-        local c = GetCooldownCfg()
+        local c = GetAuraActiveStateCfg()
         if c and c.auraActiveState then
           return c.auraActiveState.glowParticles or 4
         end
@@ -6353,13 +7972,210 @@ function ns.GetCDMCooldownIconsOptionsTable()
           c.auraActiveState.glowParticles = v
         end)
       end,
-      order = 107.979, width = 0.55,
+      order = 107.979, width = 0.65,
       hidden = function()
         if HideCooldownAuraActiveState() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.auraActiveState and c.auraActiveState.glow) then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
         return c.auraActiveState.glowType ~= "autocast"
       end,
+    },
+    auraActiveStateGlowFrameStrata = {
+      type = "select",
+      name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = {
+        ["inherit"] = "Inherit (Default)",
+        ["LOW"] = "LOW",
+        ["MEDIUM"] = "MEDIUM",
+        ["HIGH"] = "HIGH",
+        ["DIALOG"] = "DIALOG",
+      },
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+      get = function()
+        local c = GetAuraActiveStateCfg()
+        if c and c.auraActiveState then
+          return c.auraActiveState.glowFrameStrata or "inherit"
+        end
+        return "inherit"
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowFrameStrata = (v ~= "inherit") and v or nil
+        end)
+      end,
+      order = 107.9791, width = 0.9,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
+      end,
+    },
+    auraActiveStateGlowFrameLevel = {
+      type = "input",
+      name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata. Works with both inherited and custom strata.\n\nAccepts a number from 1 to 10000.",
+      get = function()
+        local c = GetAuraActiveStateCfg()
+        if c and c.auraActiveState and c.auraActiveState.glowFrameLevel then
+          return tostring(c.auraActiveState.glowFrameLevel)
+        end
+        return ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowFrameLevel = num
+        end)
+      end,
+      order = 107.9792, width = 0.65,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
+      end,
+    },
+    auraActiveStateGlowXOffset = {
+      type = "range", name = "X Offset", desc = "Horizontal glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetAuraActiveStateCfg(); return c and c.auraActiveState and c.auraActiveState.glowXOffset or 0 end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowXOffset = v
+        end)
+      end,
+      order = 107.9793, width = 0.65,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
+        local gt = c.auraActiveState.glowType or "button"
+        return gt == "button"
+      end,
+    },
+    auraActiveStateGlowYOffset = {
+      type = "range", name = "Y Offset", desc = "Vertical glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetAuraActiveStateCfg(); return c and c.auraActiveState and c.auraActiveState.glowYOffset or 0 end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowYOffset = v
+        end)
+      end,
+      order = 107.9794, width = 0.65,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
+        local gt = c.auraActiveState.glowType or "button"
+        return gt == "button"
+      end,
+    },
+    -- ── Swipe options while aura is active ──────────────────────────
+    auraActiveStateSwipeDesc = {
+      type = "description",
+      name = "|cff888888Swipe options while the aura is active:|r",
+      order = 107.9795, width = "full",
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateHideAuraSwipe = {
+      type = "toggle", name = "Use Normal Swipe Color",
+      desc = "Replace the yellow aura swipe with the normal black cooldown swipe color.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c)
+            local sc = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor
+            return sc and sc.r == 0 and sc.g == 0 and sc.b == 0 and (sc.a or 0) > 0
+          end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            local sc = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor
+            return sc and sc.r == 0 and sc.g == 0 and sc.b == 0 and (sc.a or 0) > 0 or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownSwipe then c.cooldownSwipe = {} end
+          c.cooldownSwipe.auraSwipeColor = v and {r=0, g=0, b=0, a=0.7} or nil
+        end)
+      end,
+      order = 107.9796, width = 1.5,
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateAuraSwipeColorEnabled = {
+      type = "toggle", name = "Custom Aura Swipe Color",
+      desc = "Set a custom color for the swipe CDM shows when the aura/buff is active. Overrides the default yellow.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c)
+            local sc = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor
+            return sc ~= nil and sc.a ~= 0
+          end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            local sc = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor
+            return sc ~= nil and sc.a ~= 0 or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownSwipe then c.cooldownSwipe = {} end
+          c.cooldownSwipe.auraSwipeColor = v and {r=1, g=0.95, b=0.57, a=0.7} or nil
+        end)
+      end,
+      order = 107.9797, width = 1.3,
+      hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateAuraSwipeColor = {
+      type = "color", name = "", hasAlpha = true,
+      desc = "Swipe color when the aura/buff is active",
+      get = function()
+        local c = GetAuraActiveStateCfg()
+        local col = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor or {r=1,g=0.95,b=0.57,a=0.7}
+        return col.r or 1, col.g or 0.95, col.b or 0.57, col.a or 0.7
+      end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownSwipe then c.cooldownSwipe = {} end
+          c.cooldownSwipe.auraSwipeColor = {r=r, g=g, b=b, a=a}
+        end)
+      end,
+      order = 107.9798, width = 0.3,
+      hidden = function()
+        if HideCooldownAuraActiveState() then return true end
+        local c = GetAuraActiveStateCfg()
+        local sc = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor
+        return not (sc and sc.a ~= 0)
+      end,
+    },
+    auraActiveStateReverseSwipe = {
+      type = "toggle", name = "Reverse Swipe While Aura Active",
+      desc = "Reverse the cooldown swipe direction while the aura is active on this icon.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c) return c and c.cooldownSwipe and c.cooldownSwipe.reverseWhileAura == true end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            return c and c.cooldownSwipe and c.cooldownSwipe.reverseWhileAura == true or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownSwipe then c.cooldownSwipe = {} end
+          c.cooldownSwipe.reverseWhileAura = v or nil
+        end)
+      end,
+      order = 107.9799, width = 1.8,
+      hidden = HideCooldownAuraActiveState,
     },
     resetAuraActiveState = {
       type = "execute",
@@ -6444,17 +8260,18 @@ function ns.GetCDMCooldownIconsOptionsTable()
     },
     procGlowType = {
       type = "select", name = "Glow Style",
-      desc = "Select the glow animation style\n\n|cffffd700Default|r - Blizzard's proc glow with proper sizing\n|cffffd700Proc|r - LibCustomGlow flashy proc effect\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Burst|r - Template proc burst glow",
+      desc = "Select the glow animation style\n\n|cffffd700Default|r - Golden proc glow (matches CDM's native look)\n|cffffd700Blizzard Proc|r - Blizzard proc flipbook animation\n|cffffd700Pixel|r - Rotating pixel lines\n|cffffd700AutoCast|r - Sparkle particles\n|cffffd700Button|r - Classic button glow\n|cffffd700Ants|r - Marching ants highlight\n|cffffd700Proc Loop|r - Continuous proc loop (no burst intro)\n|cffffd700CDM Flash|r - Pulsing glow overlay",
       values = {
-        ["default"] = "Default (Blizzard)",
+        ["default"] = "Default (Golden)",
         ["pixel"] = "Pixel Glow",
         ["autocast"] = "AutoCast Sparkles",
         ["button"] = "Button Glow",
-        ["proc"] = "Proc Effect",
+        ["proc"] = "Blizzard Proc",
         ["ants"] = "Ants (Marching)",
-        ["ach_proc"] = "Proc Burst (ACH)",
+        ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
       },
-      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
+      sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc", "cdm_flash"},
       get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.glowType or "default" end,
       set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.glowType = v end) end,
       order = 109.15, width = 0.8, hidden = HideCooldownProcGlow,
@@ -6512,7 +8329,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         local glowType = c and c.procGlow and c.procGlow.glowType or "default"
         -- Show for autocast and button types (scale works via SetScale)
-        return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
+        return false  -- Scale works for all glow types including Default
       end,
     },
     procGlowSpeed = {
@@ -6570,6 +8387,54 @@ function ns.GetCDMCooldownIconsOptionsTable()
         -- Only show for autocast type
         return glowType ~= "autocast"
       end,
+    },
+    procGlowXOffset = {
+      type = "range", name = "X Offset", desc = "Horizontal glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.xOffset or 0 end,
+      set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.xOffset = v end) end,
+      order = 109.51, width = 0.55,
+      hidden = function()
+        if HideCooldownProcGlow() then return true end
+        local c = GetCooldownCfg()
+        local gt = c and c.procGlow and c.procGlow.glowType or "default"
+        return gt == "button" or gt == "default"
+      end,
+    },
+    procGlowYOffset = {
+      type = "range", name = "Y Offset", desc = "Vertical glow size adjustment",
+      min = -50, max = 50, step = 1,
+      get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.yOffset or 0 end,
+      set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.yOffset = v end) end,
+      order = 109.515, width = 0.55,
+      hidden = function()
+        if HideCooldownProcGlow() then return true end
+        local c = GetCooldownCfg()
+        local gt = c and c.procGlow and c.procGlow.glowType or "default"
+        return gt == "button" or gt == "default"
+      end,
+    },
+    procGlowFrameStrata = {
+      type = "select", name = "Glow Strata",
+      desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+      values = { ["inherit"] = "Inherit (Default)", ["LOW"] = "LOW", ["MEDIUM"] = "MEDIUM", ["HIGH"] = "HIGH", ["DIALOG"] = "DIALOG" },
+      sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+      get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.strata or "inherit" end,
+      set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.strata = (v ~= "inherit") and v or nil end) end,
+      order = 109.52, width = 0.85,
+      hidden = function() if HideCooldownProcGlow() then return true end; local c = GetCooldownCfg(); return not (c and c.procGlow and c.procGlow.enabled ~= false) end,
+    },
+    procGlowFrameLevel = {
+      type = "input", name = "Glow Frame Level",
+      desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata.\n\nAccepts a number from 1 to 10000.",
+      get = function() local c = GetCooldownCfg(); local v = c and c.procGlow and c.procGlow.frameLevel; return v and tostring(v) or "" end,
+      set = function(_, v)
+        local num = tonumber(v); if not num then return end
+        num = math.floor(math.max(1, math.min(10000, num)))
+        ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.frameLevel = num end)
+      end,
+      order = 109.525, width = 0.55,
+      hidden = function() if HideCooldownProcGlow() then return true end; local c = GetCooldownCfg(); return not (c and c.procGlow and c.procGlow.enabled ~= false) end,
     },
     resetProcGlow = {
       type = "execute",
@@ -6786,6 +8651,42 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return not (c and c.cooldownSwipe and c.cooldownSwipe.swipeColor)
       end,
     },
+    auraSwipeColorEnabled = {
+      type = "toggle", name = "Aura Swipe Color",
+      desc = "Set a separate swipe color for when the aura/buff is active. Only applies when Ignore Aura Override is enabled.",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor ~= nil end, function() local c = GetCooldownCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor ~= nil end) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownSwipe then c.cooldownSwipe = {} end
+          c.cooldownSwipe.auraSwipeColor = v and {r=1, g=0.95, b=0.57, a=0.7} or nil
+        end)
+      end,
+      order = 121.45, width = 0.8,
+      hidden = function()
+        if HideCooldownCooldownSwipe() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.ignoreAuraOverride)
+      end,
+      disabled = DisableCooldownCooldownSwipe,
+    },
+    auraSwipeColor = {
+      type = "color", name = "", hasAlpha = true,
+      desc = "Swipe color when the aura/totem/pet is active",
+      get = function()
+        local c = GetCooldownCfg()
+        local col = c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor or {r=1,g=0.95,b=0.57,a=0.7}
+        return col.r or 1, col.g or 0.95, col.b or 0.57, col.a or 0.7
+      end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.auraSwipeColor = {r=r, g=g, b=b, a=a} end)
+      end,
+      order = 121.46, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownSwipe() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownSwipe and c.cooldownSwipe.auraSwipeColor)
+      end,
+    },
     -- Swipe Inset (same row as swipe)
     swipeInset = {
       type = "range", name = "Inset", min = -20, max = 40, step = 1,
@@ -6923,6 +8824,13 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.enabled = v end) end,
       order = 131, width = 0.55, hidden = HideCooldownChargeText,
     },
+    chargeHideAtZero = {
+      type = "toggle", name = "Hide at 0",
+      desc = "Hide charge count text when all charges are spent (0 remaining)",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.chargeText and c.chargeText.hideAtZero == true end, function() local c = GetCooldownCfg(); return c and c.chargeText and c.chargeText.hideAtZero == true end) end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.hideAtZero = v end) end,
+      order = 131.3, width = 0.55, hidden = HideCooldownChargeText,
+    },
     chargeTextDrag = {
       type = "toggle", name = "Text Drag",
       desc = "Enable dragging charge text to custom positions",
@@ -7059,18 +8967,390 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.enabled = v end) end,
       order = 151, width = 0.55, hidden = HideCooldownCooldownText,
     },
+    cdHideWhenHasCharges = {
+      type = "toggle", name = "Hide w/ Charges",
+      desc = "Hide cooldown text when charges are available (> 0). Useful for overlaying charge count and cooldown text on the same position — only cooldown text shows when all charges are spent.",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end) end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.hideWhenHasCharges = v end) end,
+      order = 151.3, width = 0.85, hidden = HideCooldownCooldownText,
+    },
     cdTextDrag = {
       type = "toggle", name = "Text Drag",
       desc = "Enable dragging cooldown text to custom positions",
       get = function() return ns.CDMEnhance and ns.CDMEnhance.IsTextDragMode() end,
       set = function(_, v) if ns.CDMEnhance then ns.CDMEnhance.SetTextDragMode(v) end end,
-      order = 151.5, width = 0.6, hidden = HideCooldownCooldownText,
+      order = 151.5, width = 0.7, hidden = HideCooldownCooldownText,
+    },
+    cdDurationColor = {
+      type = "toggle", name = "Color by Duration",
+      desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.durationColor == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColor == true end) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.durationColor = v end)
+        if ns.CDMTextColor then
+          ns.CDMTextColor.InvalidateCurves()
+          if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
+        end
+      end,
+      order = 164.6, width = 0.6, hidden = HideCooldownCooldownText,
+    },
+    cdDurationColorPreset = {
+      type = "select", name = "Color Template",
+      desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
+      sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
+      values = function()
+        if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
+          return ns.CDMTextColor.PRESET_NAMES
+        end
+        return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
+      end,
+      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorPreset or "custom" end,
+      set = function(_, v)
+        local usePercent = false
+        local c = GetCooldownCfg()
+        if c and c.cooldownText then usePercent = c.cooldownText.durationColorUsePercent end
+        ApplySharedCooldownSetting(function(c2)
+          if not c2.cooldownText then c2.cooldownText = {} end
+          c2.cooldownText.durationColorPreset = v
+          if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
+            if entries then c2.cooldownText.durationColorCustom = entries end
+            if defColor then c2.cooldownText.durationColorCustomDefault = defColor end
+          end
+        end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.63, width = 1.2,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurationColorUsePercent = {
+      type = "toggle", name = "Use % Thresholds",
+      desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorUsePercent end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c)
+          if not c.cooldownText then c.cooldownText = {} end
+          c.cooldownText.durationColorUsePercent = v
+          local preset = c.cooldownText.durationColorPreset or "custom"
+          if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
+            if entries then c.cooldownText.durationColorCustom = entries end
+            if defColor then c.cooldownText.durationColorCustomDefault = defColor end
+          end
+        end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.61, width = 0.55,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    -- ═══ CUSTOM CURVE EDITOR (per-icon) ═══
+    cdDurCustomHeader = {
+      type = "description",
+      name = "|cffffd700Color Thresholds|r",
+      fontSize = "medium",
+      order = 164.65, width = "full",
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    -- Threshold 1
+    cdDurT1Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 1",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[1] = c.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}; c.cooldownText.durationColorCustom[1].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.661, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT1Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.662, width = 0.25,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    cdDurT1Suffix = {
+      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.663, width = 0.12,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    cdDurT1Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.664, width = 0.4,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+      end,
+    },
+    -- Threshold 2
+    cdDurT2Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 2",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[2] = c.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[2].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.671, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT2Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.672, width = 0.25,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    cdDurT2Suffix = {
+      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.673, width = 0.12,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    cdDurT2Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.674, width = 0.4,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+      end,
+    },
+    -- Threshold 3
+    cdDurT3Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 3",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[3] = c.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; c.cooldownText.durationColorCustom[3].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.681, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT3Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.682, width = 0.25,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    cdDurT3Suffix = {
+      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.683, width = 0.12,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    cdDurT3Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.684, width = 0.4,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+      end,
+    },
+    -- Threshold 4
+    cdDurT4Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 4",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[4] = c.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[4].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.691, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT4Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.692, width = 0.25,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    cdDurT4Suffix = {
+      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.693, width = 0.12,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    cdDurT4Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.694, width = 0.4,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+      end,
+    },
+    -- Threshold 5
+    cdDurT5Enable = {
+      type = "toggle", name = "At", desc = "Enable threshold 5",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[5] = c.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; c.cooldownText.durationColorCustom[5].enabled = v end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.701, width = 0.3,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownText and c.cooldownText.durationColor)
+      end,
+    },
+    cdDurT5Value = {
+      type = "input", name = "", desc = "Below this many seconds, use this color",
+      dialogControl = "ArcUI_EditBox",
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300 end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.702, width = 0.25,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
+    },
+    cdDurT5Suffix = {
+      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+      order = 164.703, width = 0.12,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
+    },
+    cdDurT5Color = {
+      type = "color", name = "Color", hasAlpha = false,
+      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
+      set = function(_, r, g, b, a)
+        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].color = {r=r,g=g,b=b,a=a or 1} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+      end,
+      order = 164.704, width = 0.4,
+      hidden = function()
+        if HideCooldownCooldownText() then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+      end,
     },
     cdSize = {
       type = "range", name = "Size", min = 4, max = 64, step = 1,
       get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.size or 14 end,
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.size = v end) end,
       order = 152, width = 0.6, hidden = HideCooldownCooldownText,
+    },
+    cdColorHeader = {
+      type = "description", name = "\n|cffffd700Color|r", order = 164.5, width = "full", hidden = HideCooldownCooldownText,
     },
     cdColor = {
       type = "color", name = "Color", hasAlpha = true,
@@ -7081,8 +9361,9 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       set = function(_, r, g, b, a)
         ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.color = {r=r, g=g, b=b, a=a} end)
+        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
       end,
-      order = 153, width = 0.55, hidden = HideCooldownCooldownText,
+      order = 164.55, width = 0.55, hidden = HideCooldownCooldownText,
     },
     cdFont = {
       type = "select", name = "Font", dialogControl = "LSM30_Font",
@@ -7159,6 +9440,49 @@ function ns.GetCDMCooldownIconsOptionsTable()
       name = "|cff00ff00Text Drag Mode enabled.|r |cff888888Drag the cooldown text in-game to position it.|r",
       order = 164, width = "full", 
       hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
+    },
+    -- ─── 3.6.6 Duration-text formatting (engine-rendered, zero polling) ───
+    cdFormatHeader = {
+      type = "description", name = "\n|cffffd700Format|r", order = 164.1, width = "full", hidden = HideCooldownCooldownText,
+    },
+    cdDecimals = {
+      type = "select", name = "Decimals",
+      desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
+      values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
+      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.decimals or 0 end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimals = v end) end,
+      order = 164.2, width = 0.6, hidden = HideCooldownCooldownText,
+    },
+    cdDecimalThresholdEnabled = {
+      type = "toggle", name = "Show Below Threshold",
+      desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
+      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and (c.cooldownText.decimalThreshold or 0) > 0 end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = v and 5 or 0 end) end,
+      order = 164.24, width = 0.95,
+      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); return not c or not c.cooldownText or (c.cooldownText.decimals or 0) == 0 end,
+    },
+    cdDecimalThreshold = {
+      type = "input", name = "Below (s)",
+      desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
+      get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.decimalThreshold or 0; return tostring(v) end,
+      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = n end) end,
+      order = 164.25, width = 0.85,
+      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end if (c.cooldownText.decimals or 0) == 0 then return true end return (c.cooldownText.decimalThreshold or 0) <= 0 end,
+    },
+    cdAbbrevEnabled = {
+      type = "toggle", name = "Abbreviate (M:SS)",
+      desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
+      get = function() local c = GetCooldownCfg(); if not (c and c.cooldownText) then return false end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = v and 60 or 0 end) end,
+      order = 164.29, width = 0.95, hidden = HideCooldownCooldownText,
+    },
+    cdAbbrevThreshold = {
+      type = "input", name = "Below (s)",
+      desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
+      get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
+      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = n end) end,
+      order = 164.3, width = 0.85,
+      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
     },
     resetCooldownText = {
       type = "execute",
@@ -7539,13 +9863,6 @@ function ns.GetCDMCooldownIconsOptionsTable()
     end
   end
   
-  -- Merge Assisted Combat Highlight options from external module
-  if ns.AssistedCombatHighlightOptions and ns.AssistedCombatHighlightOptions.GetCooldownArgs then
-    for k, v in pairs(ns.AssistedCombatHighlightOptions.GetCooldownArgs()) do
-      args[k] = v
-    end
-  end
-  
   return {
     type = "group",
     name = "CDM Cooldown Icons",
@@ -7727,12 +10044,13 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         order = 12, width = 0.8, hidden = function() return collapsedGlobalAuraSections.iconAppearance end,
         disabled = IsMasqueActive,
       },
-      hideShadow = {
-        type = "toggle", name = "Hide CDM Shadow",
-        desc = "Hide CDM's default shadow/border texture",
-        get = function() return GetAuraGlobalCfg().hideShadow end,
-        set = function(_, v) ApplyAuraGlobalSetting("hideShadow", v); RefreshGlobalAuras() end,
-        order = 13, width = 0.7, hidden = function() return collapsedGlobalAuraSections.iconAppearance end,
+      shadowSize = {
+        type = "range", name = "Shadow Size",
+        desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
+        min = 0.1, max = 3.0, step = 0.05,
+        get = function() return GetAuraGlobalCfg().shadowSize or 1.0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("shadowSize", v); RefreshGlobalAuras() end,
+        order = 13.2, width = 1.2, hidden = function() return collapsedGlobalAuraSections.iconAppearance end,
       },
       showDebuffBorder = {
         type = "toggle", name = "Debuff Border",
@@ -7853,14 +10171,15 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         type = "select", name = "Glow Style",
         desc = "Select the glow animation style",
         values = {
+          ["button"] = "Button Glow (Default)",
           ["pixel"] = "Pixel Glow",
           ["autocast"] = "AutoCast Sparkles",
-          ["button"] = "Button Glow (Default)",
-          ["proc"] = "Proc Effect",
+          ["proc"] = "Blizzard Proc",
           ["ants"] = "Ants (Marching)",
-          ["ach_proc"] = "Proc Burst (ACH)",
+          ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
         },
-        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
         get = function()
           local g = GetAuraGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.readyState then
@@ -7954,7 +10273,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+          return false  -- Scale works for all glow types
         end,
       },
       activeStateGlowSpeed = {
@@ -8081,8 +10400,8 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Button glow doesn't support offset
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+          -- Only button and default types don't support offset
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
         end,
       },
       activeStateGlowYOffset = {
@@ -8107,8 +10426,8 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Button glow doesn't support offset
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+          -- Only button and default types don't support offset
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
         end,
       },
       activeStateGlowThreshold = {
@@ -8527,6 +10846,20 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         set = function(_, v) ApplyAuraGlobalSetting("chargeText.shadow", v); RefreshGlobalAuras() end,
         order = 34.5, width = 0.5, hidden = function() return collapsedGlobalAuraSections.chargeText end,
       },
+      chargeShadowX = {
+        type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.chargeText and g.chargeText.shadowOffsetX or 1 end,
+        set = function(_, v) ApplyAuraGlobalSetting("chargeText.shadowOffsetX", v); RefreshGlobalAuras() end,
+        order = 34.6, width = 0.55,
+        hidden = function() return collapsedGlobalAuraSections.chargeText or not (GetAuraGlobalCfg().chargeText and GetAuraGlobalCfg().chargeText.shadow) end,
+      },
+      chargeShadowY = {
+        type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.chargeText and g.chargeText.shadowOffsetY or -1 end,
+        set = function(_, v) ApplyAuraGlobalSetting("chargeText.shadowOffsetY", v); RefreshGlobalAuras() end,
+        order = 34.7, width = 0.55,
+        hidden = function() return collapsedGlobalAuraSections.chargeText or not (GetAuraGlobalCfg().chargeText and GetAuraGlobalCfg().chargeText.shadow) end,
+      },
       chargePositionLabel = {
         type = "description", name = "|cffffd700Position|r", fontSize = "medium",
         order = 34.8, width = "full", hidden = function() return collapsedGlobalAuraSections.chargeText end,
@@ -8672,6 +11005,323 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           return g.cooldownText and g.cooldownText.mode == "free"
         end,
       },
+      cdTextShadowX = {
+        type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.shadowOffsetX or 1 end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownText.shadowOffsetX", v); RefreshGlobalAuras() end,
+        order = 44.6, width = 0.55,
+        hidden = function() return collapsedGlobalAuraSections.cooldownText or not (GetAuraGlobalCfg().cooldownText and GetAuraGlobalCfg().cooldownText.shadow) end,
+      },
+      cdTextShadowY = {
+        type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.shadowOffsetY or -1 end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownText.shadowOffsetY", v); RefreshGlobalAuras() end,
+        order = 44.7, width = 0.55,
+        hidden = function() return collapsedGlobalAuraSections.cooldownText or not (GetAuraGlobalCfg().cooldownText and GetAuraGlobalCfg().cooldownText.shadow) end,
+      },
+      cdTextColorHeader = {
+        type = "description", name = "|cffffd700Color|r", fontSize = "medium",
+        order = 46, width = "full", hidden = function() return collapsedGlobalAuraSections.cooldownText end,
+      },
+      -- ─── 3.6.6 Duration-text formatting (engine-rendered, zero polling) ───
+      cdTextFormatHeader = {
+        type = "description", name = "|cffffd700Format|r", fontSize = "medium",
+        order = 45, width = "full", hidden = function() return collapsedGlobalAuraSections.cooldownText end,
+      },
+      cdTextDecimals = {
+        type = "select", name = "Decimals",
+        desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
+        values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.decimals or 0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownText.decimals", v); RefreshGlobalAuras() end,
+        order = 45.1, width = 0.6, hidden = function() return collapsedGlobalAuraSections.cooldownText end,
+      },
+      cdTextDecimalThresholdEnabled = {
+        type = "toggle", name = "Show Below Threshold",
+        desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and (g.cooldownText.decimalThreshold or 0) > 0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownText.decimalThreshold", v and 5 or 0); RefreshGlobalAuras() end,
+        order = 45.14, width = 0.95,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end local g = GetAuraGlobalCfg(); return not g.cooldownText or (g.cooldownText.decimals or 0) == 0 end,
+      },
+      cdTextDecimalThreshold = {
+        type = "input", name = "Below (s)",
+        desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
+        get = function() local g = GetAuraGlobalCfg(); local v = g.cooldownText and g.cooldownText.decimalThreshold or 0; return tostring(v) end,
+        set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyAuraGlobalSetting("cooldownText.decimalThreshold", n); RefreshGlobalAuras() end,
+        order = 45.15, width = 0.85,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end local g = GetAuraGlobalCfg(); if not g.cooldownText then return true end if (g.cooldownText.decimals or 0) == 0 then return true end return (g.cooldownText.decimalThreshold or 0) <= 0 end,
+      },
+      cdTextAbbrevEnabled = {
+        type = "toggle", name = "Abbreviate (M:SS)",
+        desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
+        get = function() local g = GetAuraGlobalCfg(); if not g.cooldownText then return false end local v = g.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("cooldownText.abbrevThreshold", v and 60 or 0); RefreshGlobalAuras() end,
+        order = 45.19, width = 0.95, hidden = function() return collapsedGlobalAuraSections.cooldownText end,
+      },
+      cdTextAbbrevThreshold = {
+        type = "input", name = "Below (s)",
+        desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
+        get = function() local g = GetAuraGlobalCfg(); local v = g.cooldownText and g.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
+        set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyAuraGlobalSetting("cooldownText.abbrevThreshold", n); RefreshGlobalAuras() end,
+        order = 45.2, width = 0.85,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end local g = GetAuraGlobalCfg(); if not g.cooldownText then return true end local v = g.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
+      },
+      cdTextDurationColor = {
+        type = "toggle", name = "Color by Duration",
+        desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.durationColor == true end,
+        set = function(_, v)
+          ApplyAuraGlobalSetting("cooldownText.durationColor", v); RefreshGlobalAuras()
+          if ns.CDMTextColor then
+            ns.CDMTextColor.InvalidateCurves()
+            if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
+          end
+        end,
+        order = 46.2, width = 0.6, hidden = function() return collapsedGlobalAuraSections.cooldownText end,
+      },
+      cdTextDurationColorPreset = {
+        type = "select", name = "Color Template",
+        desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
+        sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
+        values = function()
+          if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
+            return ns.CDMTextColor.PRESET_NAMES
+          end
+          return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
+        end,
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.durationColorPreset or "custom" end,
+        set = function(_, v)
+          local g = GetAuraGlobalCfg()
+          local usePercent = g.cooldownText and g.cooldownText.durationColorUsePercent
+          ApplyAuraGlobalSetting("cooldownText.durationColorPreset", v)
+          -- Populate custom entries from preset
+          if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
+            if entries then ApplyAuraGlobalSetting("cooldownText.durationColorCustom", entries) end
+            if defColor then ApplyAuraGlobalSetting("cooldownText.durationColorCustomDefault", defColor) end
+          end
+          RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.23, width = 1.2,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      cdTextDurationColorUsePercent = {
+        type = "toggle", name = "Use % Thresholds",
+        desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+        get = function() local g = GetAuraGlobalCfg(); return g.cooldownText and g.cooldownText.durationColorUsePercent end,
+        set = function(_, v)
+          ApplyAuraGlobalSetting("cooldownText.durationColorUsePercent", v)
+          -- Re-populate thresholds from current preset for the new mode (sec vs %)
+          local g = GetAuraGlobalCfg()
+          local preset = g.cooldownText and g.cooldownText.durationColorPreset or "custom"
+          if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
+            if entries then ApplyAuraGlobalSetting("cooldownText.durationColorCustom", entries) end
+            if defColor then ApplyAuraGlobalSetting("cooldownText.durationColorCustomDefault", defColor) end
+          end
+          RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.21, width = 0.55,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      -- ═══ CUSTOM CURVE EDITOR (global) ═══
+      cdTextDurCustomHeader = {
+        type = "description",
+        name = "|cffffd700Color Thresholds|r",
+        fontSize = "medium",
+        order = 46.25, width = "full",
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      -- Threshold 1
+      cdTextDurT1Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 1",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
+        set = function(_, v)
+          local g = GetAuraGlobalCfg()
+          if not g.cooldownText then g.cooldownText = {} end
+          if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end
+          g.cooldownText.durationColorCustom[1] = g.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}
+          g.cooldownText.durationColorCustom[1].enabled = v
+          ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.31, width = 0.3,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      cdTextDurT1Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color",
+        dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
+        set = function(_, v)
+          local g = GetAuraGlobalCfg()
+          if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[1] then return end
+          g.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5
+          ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.32, width = 0.25,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      cdTextDurT1Suffix = {
+        type = "description", name = function() local g = GetAuraGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+        order = 46.321, width = 0.12,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      cdTextDurT1Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
+        set = function(_, r, g2, b, a)
+          local g = GetAuraGlobalCfg()
+          if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[1] then return end
+          g.cooldownText.durationColorCustom[1].color = {r=r,g=g2,b=b,a=a or 1}
+          ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.34, width = 0.4,
+        hidden = function()
+          if collapsedGlobalAuraSections.cooldownText then return true end
+          local g = GetAuraGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      -- Threshold 2
+      cdTextDurT2Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 2",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
+        set = function(_, v)
+          local g = GetAuraGlobalCfg()
+          if not g.cooldownText then g.cooldownText = {} end
+          if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end
+          g.cooldownText.durationColorCustom[2] = g.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}
+          g.cooldownText.durationColorCustom[2].enabled = v
+          ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.41, width = 0.3,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT2Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[2] then return end; g.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.42, width = 0.25,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      cdTextDurT2Suffix = { type = "description", name = function() local g = GetAuraGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.421, width = 0.12,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      cdTextDurT2Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
+        set = function(_, r, g2, b, a) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[2] then return end; g.cooldownText.durationColorCustom[2].color = {r=r,g=g2,b=b,a=a or 1}; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.44, width = 0.4,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      -- Threshold 3
+      cdTextDurT3Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 3",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[3] = g.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; g.cooldownText.durationColorCustom[3].enabled = v; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.51, width = 0.3,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT3Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[3] then return end; g.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.52, width = 0.25,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      cdTextDurT3Suffix = { type = "description", name = function() local g = GetAuraGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.521, width = 0.12,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      cdTextDurT3Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
+        set = function(_, r, g2, b, a) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[3] then return end; g.cooldownText.durationColorCustom[3].color = {r=r,g=g2,b=b,a=a or 1}; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.54, width = 0.4,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      -- Threshold 4
+      cdTextDurT4Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 4",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[4] = g.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; g.cooldownText.durationColorCustom[4].enabled = v; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.61, width = 0.3,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT4Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[4] then return end; g.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.62, width = 0.25,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      cdTextDurT4Suffix = { type = "description", name = function() local g = GetAuraGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.621, width = 0.12,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      cdTextDurT4Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
+        set = function(_, r, g2, b, a) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[4] then return end; g.cooldownText.durationColorCustom[4].color = {r=r,g=g2,b=b,a=a or 1}; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.64, width = 0.4,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      -- Threshold 5
+      cdTextDurT5Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 5",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[5] = g.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; g.cooldownText.durationColorCustom[5].enabled = v; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.71, width = 0.3,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT5Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
+        set = function(_, v) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[5] then return end; g.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.72, width = 0.25,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
+      cdTextDurT5Suffix = { type = "description", name = function() local g = GetAuraGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.721, width = 0.12,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
+      cdTextDurT5Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetAuraGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
+        set = function(_, r, g2, b, a) local g = GetAuraGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[5] then return end; g.cooldownText.durationColorCustom[5].color = {r=r,g=g2,b=b,a=a or 1}; ApplyAuraGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalAuras(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.74, width = 0.4,
+        hidden = function() if collapsedGlobalAuraSections.cooldownText then return true end; local g = GetAuraGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
       
       -- ═══════════════════════════════════════════════════════════════════
       -- PROC GLOW
@@ -8690,8 +11340,8 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
       },
       glowType = {
         type = "select", name = "Type",
-        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Burst (ACH)" },
-        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
+        values = { default = "Default (Golden)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Loop", cdm_flash = "CDM Flash Pulse" },
+        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc", "cdm_flash"},
         get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.glowType or "default" end,
         set = function(_, v) ApplyAuraGlobalSetting("procGlow.glowType", v); RefreshGlobalAuras() end,
         order = 52, width = 0.7, hidden = function() return collapsedGlobalAuraSections.procGlow end,
@@ -8743,7 +11393,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if collapsedGlobalAuraSections.procGlow then return true end
           local g = GetAuraGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
+          return false  -- Scale works for all glow types including Default
         end,
       },
       glowSpeed = {
@@ -8798,7 +11448,58 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           return glowType ~= "autocast"
         end,
       },
-      
+      glowXOffset = {
+        type = "range", name = "X Offset", desc = "Horizontal glow size adjustment",
+        min = -50, max = 50, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.xOffset or 0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("procGlow.xOffset", v); RefreshGlobalAuras() end,
+        order = 55.1, width = 0.55,
+        hidden = function()
+          if collapsedGlobalAuraSections.procGlow then return true end
+          local g = GetAuraGlobalCfg()
+          local gt = g.procGlow and g.procGlow.glowType or "default"
+          return gt == "button" or gt == "default"
+        end,
+      },
+      glowYOffset = {
+        type = "range", name = "Y Offset", desc = "Vertical glow size adjustment",
+        min = -50, max = 50, step = 1,
+        get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.yOffset or 0 end,
+        set = function(_, v) ApplyAuraGlobalSetting("procGlow.yOffset", v); RefreshGlobalAuras() end,
+        order = 55.15, width = 0.55,
+        hidden = function()
+          if collapsedGlobalAuraSections.procGlow then return true end
+          local g = GetAuraGlobalCfg()
+          local gt = g.procGlow and g.procGlow.glowType or "default"
+          return gt == "button" or gt == "default"
+        end,
+      },
+      glowFrameStrata = {
+        type = "select", name = "Glow Strata",
+        desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+        values = { ["inherit"] = "Inherit (Default)", ["LOW"] = "LOW", ["MEDIUM"] = "MEDIUM", ["HIGH"] = "HIGH", ["DIALOG"] = "DIALOG" },
+        sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+        get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.strata or "inherit" end,
+        set = function(_, v)
+          ApplyAuraGlobalSetting("procGlow.strata", (v ~= "inherit") and v or nil)
+          RefreshGlobalAuras()
+        end,
+        order = 55.2, width = 0.85,
+        hidden = function() if collapsedGlobalAuraSections.procGlow then return true end; local g = GetAuraGlobalCfg(); return not (g.procGlow and g.procGlow.enabled ~= false) end,
+      },
+      glowFrameLevel = {
+        type = "input", name = "Glow Frame Level",
+        desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata.\n\nAccepts a number from 1 to 10000.",
+        get = function() local g = GetAuraGlobalCfg(); local v = g.procGlow and g.procGlow.frameLevel; return v and tostring(v) or "" end,
+        set = function(_, v)
+          local num = tonumber(v); if not num then return end
+          num = math.floor(math.max(1, math.min(10000, num)))
+          ApplyAuraGlobalSetting("procGlow.frameLevel", num); RefreshGlobalAuras()
+        end,
+        order = 55.25, width = 0.55,
+        hidden = function() if collapsedGlobalAuraSections.procGlow then return true end; local g = GetAuraGlobalCfg(); return not (g.procGlow and g.procGlow.enabled ~= false) end,
+      },
+
       -- ═══════════════════════════════════════════════════════════════════
       -- BORDER
       -- ═══════════════════════════════════════════════════════════════════
@@ -9060,12 +11761,13 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         order = 12, width = 0.8, hidden = function() return collapsedGlobalCooldownSections.iconAppearance end,
         disabled = IsMasqueActive,
       },
-      hideShadow = {
-        type = "toggle", name = "Hide CDM Shadow",
-        desc = "Hide CDM's default shadow/border texture",
-        get = function() return GetCooldownGlobalCfg().hideShadow end,
-        set = function(_, v) ApplyCooldownGlobalSetting("hideShadow", v); RefreshGlobalCooldowns() end,
-        order = 13, width = 0.75, hidden = function() return collapsedGlobalCooldownSections.iconAppearance end,
+      shadowSize = {
+        type = "range", name = "Shadow Size",
+        desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
+        min = 0.1, max = 3.0, step = 0.05,
+        get = function() return GetCooldownGlobalCfg().shadowSize or 1.0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("shadowSize", v); RefreshGlobalCooldowns() end,
+        order = 13.2, width = 1.2, hidden = function() return collapsedGlobalCooldownSections.iconAppearance end,
       },
       showPandemicBorder = {
         type = "toggle", name = "Pandemic Glow",
@@ -9079,7 +11781,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
       -- READY STATE
       -- ═══════════════════════════════════════════════════════════════════
       readyStateHeader = {
-        type = "toggle", name = "Ready State", dialogControl = "CollapsibleHeader",
+        type = "toggle", name = "Cooldown Ready State", dialogControl = "CollapsibleHeader",
         desc = "How icons appear when the ability IS READY (not on cooldown)",
         get = function() return not collapsedGlobalCooldownSections.readyState end,
         set = function(_, v) collapsedGlobalCooldownSections.readyState = not v end,
@@ -9206,11 +11908,12 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           ["pixel"] = "Pixel Glow",
           ["autocast"] = "AutoCast Sparkles",
           ["button"] = "Button Glow (Default)",
-          ["proc"] = "Proc Effect",
+          ["proc"] = "Blizzard Proc",
           ["ants"] = "Ants (Marching)",
-          ["ach_proc"] = "Proc Burst (ACH)",
+          ["ach_proc"] = "Proc Loop",
+        ["cdm_flash"] = "CDM Flash Pulse",
         },
-        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc"},
+        sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
         get = function()
           local g = GetCooldownGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.readyState then
@@ -9304,7 +12007,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt ~= "autocast" and gt ~= "button" and gt ~= "ants" and gt ~= "ach_proc"
+          return false  -- Scale works for all glow types
         end,
       },
       readyStateGlowSpeed = {
@@ -9431,8 +12134,8 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Button glow doesn't support offset
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+          -- Only button and default types don't support offset
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
         end,
       },
       readyStateGlowYOffset = {
@@ -9457,8 +12160,8 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
           if not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow) then return true end
-          -- Button glow doesn't support offset
-          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "ants" or gt == "ach_proc"
+          -- Only button and default types don't support offset
+          local gt = g.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
         end,
       },
       
@@ -9590,7 +12293,57 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         order = 18.1, width = 1.2,
         hidden = function() return collapsedGlobalCooldownSections.auraActiveState end,
       },
-      
+      globalUseNormalAuraSwipe = {
+        type = "toggle", name = "Use Normal Swipe Color",
+        desc = "Replace the yellow aura swipe with the normal black cooldown swipe color.",
+        get = function()
+          local g = GetCooldownGlobalCfg()
+          local sc = g.cooldownSwipe and g.cooldownSwipe.auraSwipeColor
+          return sc and sc.r == 0 and sc.g == 0 and sc.b == 0 and (sc.a or 0) > 0 or false
+        end,
+        set = function(_, v)
+          ApplyCooldownGlobalSetting("cooldownSwipe.auraSwipeColor", v and {r=0, g=0, b=0, a=0.7} or nil)
+          RefreshGlobalCooldowns()
+        end,
+        order = 18.2, width = 1.1,
+        hidden = function() return collapsedGlobalCooldownSections.auraActiveState end,
+      },
+      globalCustomAuraSwipeColorEnabled = {
+        type = "toggle", name = "Custom Aura Swipe Color",
+        desc = "Set a custom color for the swipe CDM shows when the aura/buff is active. Overrides the default yellow.",
+        get = function()
+          local g = GetCooldownGlobalCfg()
+          local sc = g.cooldownSwipe and g.cooldownSwipe.auraSwipeColor
+          return sc ~= nil and sc.a ~= 0 and not (sc.r == 0 and sc.g == 0 and sc.b == 0) or false
+        end,
+        set = function(_, v)
+          ApplyCooldownGlobalSetting("cooldownSwipe.auraSwipeColor", v and {r=1, g=0.95, b=0.57, a=0.7} or nil)
+          RefreshGlobalCooldowns()
+        end,
+        order = 18.3, width = 1.1,
+        hidden = function() return collapsedGlobalCooldownSections.auraActiveState end,
+      },
+      globalCustomAuraSwipeColor = {
+        type = "color", name = "", hasAlpha = true,
+        desc = "Swipe color when the aura/buff is active",
+        get = function()
+          local g = GetCooldownGlobalCfg()
+          local c = g.cooldownSwipe and g.cooldownSwipe.auraSwipeColor or {r=1,g=0.95,b=0.57,a=0.7}
+          return c.r or 1, c.g or 0.95, c.b or 0.57, c.a or 0.7
+        end,
+        set = function(_, r, gc, b, a)
+          ApplyCooldownGlobalSetting("cooldownSwipe.auraSwipeColor", {r=r, g=gc, b=b, a=a})
+          RefreshGlobalCooldowns()
+        end,
+        order = 18.4, width = 0.3,
+        hidden = function()
+          if collapsedGlobalCooldownSections.auraActiveState then return true end
+          local g = GetCooldownGlobalCfg()
+          local sc = g.cooldownSwipe and g.cooldownSwipe.auraSwipeColor
+          return not (sc and sc.a ~= 0 and not (sc.r == 0 and sc.g == 0 and sc.b == 0))
+        end,
+      },
+
       -- ═══════════════════════════════════════════════════════════════════
       -- COOLDOWN SWIPE
       -- ═══════════════════════════════════════════════════════════════════
@@ -9618,7 +12371,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         get = function() local g = GetCooldownGlobalCfg(); return not g.cooldownSwipe or g.cooldownSwipe.showSwipe ~= false end,
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownSwipe.showSwipe", v); RefreshGlobalCooldowns() end,
         order = 21, width = 0.6, hidden = function() return collapsedGlobalCooldownSections.cooldownSwipe end,
-        -- NOT disabled when Masque controls cooldowns - user can still toggle swipe visibility
+        disabled = function() return IsMasqueCooldownsActive() end,
       },
       noGCDSwipe = {
         type = "toggle", name = "No GCD Swipe",
@@ -9659,7 +12412,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         get = function() local g = GetCooldownGlobalCfg(); return not g.cooldownSwipe or g.cooldownSwipe.showEdge ~= false end,
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownSwipe.showEdge", v); RefreshGlobalCooldowns() end,
         order = 23, width = 0.4, hidden = function() return collapsedGlobalCooldownSections.cooldownSwipe end,
-        -- NOT disabled when Masque controls cooldowns - user can still toggle edge visibility
+        disabled = function() return IsMasqueCooldownsActive() end,
       },
       showBling = {
         type = "toggle", name = "Bling",
@@ -9811,6 +12564,13 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         set = function(_, v) ApplyCooldownGlobalSetting("chargeText.enabled", v); RefreshGlobalCooldowns() end,
         order = 31, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.chargeText end,
       },
+      chargeHideAtZero = {
+        type = "toggle", name = "Hide at 0",
+        desc = "Hide charge count text when all charges are spent (0 remaining)",
+        get = function() local g = GetCooldownGlobalCfg(); return g.chargeText and g.chargeText.hideAtZero == true end,
+        set = function(_, v) ApplyCooldownGlobalSetting("chargeText.hideAtZero", v); RefreshGlobalCooldowns() end,
+        order = 31.5, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.chargeText end,
+      },
       chargeSize = {
         type = "range", name = "Size", min = 4, max = 64, step = 1,
         get = function() local g = GetCooldownGlobalCfg(); return g.chargeText and g.chargeText.size or 14 end,
@@ -9849,6 +12609,20 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         get = function() local g = GetCooldownGlobalCfg(); return g.chargeText and g.chargeText.shadow end,
         set = function(_, v) ApplyCooldownGlobalSetting("chargeText.shadow", v); RefreshGlobalCooldowns() end,
         order = 34.5, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.chargeText end,
+      },
+      chargeShadowX = {
+        type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.chargeText and g.chargeText.shadowOffsetX or 1 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("chargeText.shadowOffsetX", v); RefreshGlobalCooldowns() end,
+        order = 34.6, width = 0.55,
+        hidden = function() return collapsedGlobalCooldownSections.chargeText or not (GetCooldownGlobalCfg().chargeText and GetCooldownGlobalCfg().chargeText.shadow) end,
+      },
+      chargeShadowY = {
+        type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.chargeText and g.chargeText.shadowOffsetY or -1 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("chargeText.shadowOffsetY", v); RefreshGlobalCooldowns() end,
+        order = 34.7, width = 0.55,
+        hidden = function() return collapsedGlobalCooldownSections.chargeText or not (GetCooldownGlobalCfg().chargeText and GetCooldownGlobalCfg().chargeText.shadow) end,
       },
       chargePositionLabel = {
         type = "description", name = "|cffffd700Position|r", fontSize = "medium",
@@ -9911,11 +12685,321 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.enabled", v); RefreshGlobalCooldowns() end,
         order = 41, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
       },
+      cdTextHideWhenHasCharges = {
+        type = "toggle", name = "Hide w/ Charges",
+        desc = "Hide cooldown text when charges are available (> 0). Useful for overlaying charge count and cooldown text — only cooldown text shows when all charges are spent.",
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.hideWhenHasCharges == true end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.hideWhenHasCharges", v); RefreshGlobalCooldowns() end,
+        order = 41.5, width = 0.85, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      -- ─── 3.6.6 Duration-text formatting (engine-rendered, zero polling) ───
+      cdTextFormatHeader = {
+        type = "description", name = "|cffffd700Format|r", fontSize = "medium",
+        order = 41.7, width = "full", hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextDecimals = {
+        type = "select", name = "Decimals",
+        desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
+        values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.decimals or 0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.decimals", v); RefreshGlobalCooldowns() end,
+        order = 41.71, width = 0.6, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextDecimalThresholdEnabled = {
+        type = "toggle", name = "Show Below Threshold",
+        desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and (g.cooldownText.decimalThreshold or 0) > 0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.decimalThreshold", v and 5 or 0); RefreshGlobalCooldowns() end,
+        order = 41.715, width = 0.95,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end local g = GetCooldownGlobalCfg(); return not g.cooldownText or (g.cooldownText.decimals or 0) == 0 end,
+      },
+      cdTextDecimalThreshold = {
+        type = "input", name = "Below (s)",
+        desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
+        get = function() local g = GetCooldownGlobalCfg(); local v = g.cooldownText and g.cooldownText.decimalThreshold or 0; return tostring(v) end,
+        set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyCooldownGlobalSetting("cooldownText.decimalThreshold", n); RefreshGlobalCooldowns() end,
+        order = 41.72, width = 0.85,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end local g = GetCooldownGlobalCfg(); if not g.cooldownText then return true end if (g.cooldownText.decimals or 0) == 0 then return true end return (g.cooldownText.decimalThreshold or 0) <= 0 end,
+      },
+      cdTextAbbrevEnabled = {
+        type = "toggle", name = "Abbreviate (M:SS)",
+        desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
+        get = function() local g = GetCooldownGlobalCfg(); if not g.cooldownText then return false end local v = g.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.abbrevThreshold", v and 60 or 0); RefreshGlobalCooldowns() end,
+        order = 41.725, width = 0.95, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextAbbrevThreshold = {
+        type = "input", name = "Below (s)",
+        desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
+        get = function() local g = GetCooldownGlobalCfg(); local v = g.cooldownText and g.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
+        set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplyCooldownGlobalSetting("cooldownText.abbrevThreshold", n); RefreshGlobalCooldowns() end,
+        order = 41.73, width = 0.85,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end local g = GetCooldownGlobalCfg(); if not g.cooldownText then return true end local v = g.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
+      },
+      cdTextDurationColor = {
+        type = "toggle", name = "Color by Duration",
+        desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.durationColor == true end,
+        set = function(_, v)
+          ApplyCooldownGlobalSetting("cooldownText.durationColor", v); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then
+            ns.CDMTextColor.InvalidateCurves()
+            if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
+          end
+        end,
+        order = 46.2, width = 0.6, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextDurationColorPreset = {
+        type = "select", name = "Color Template",
+        desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
+        sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
+        values = function()
+          if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
+            return ns.CDMTextColor.PRESET_NAMES
+          end
+          return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
+        end,
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.durationColorPreset or "custom" end,
+        set = function(_, v)
+          local g = GetCooldownGlobalCfg()
+          local usePercent = g.cooldownText and g.cooldownText.durationColorUsePercent
+          ApplyCooldownGlobalSetting("cooldownText.durationColorPreset", v)
+          -- Populate custom entries from preset
+          if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
+            if entries then ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", entries) end
+            if defColor then ApplyCooldownGlobalSetting("cooldownText.durationColorCustomDefault", defColor) end
+          end
+          RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.23, width = 1.2,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      cdTextDurationColorUsePercent = {
+        type = "toggle", name = "Use % Thresholds",
+        desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.durationColorUsePercent end,
+        set = function(_, v)
+          ApplyCooldownGlobalSetting("cooldownText.durationColorUsePercent", v)
+          -- Re-populate thresholds from current preset for the new mode (sec vs %)
+          local g = GetCooldownGlobalCfg()
+          local preset = g.cooldownText and g.cooldownText.durationColorPreset or "custom"
+          if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+            local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
+            if entries then ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", entries) end
+            if defColor then ApplyCooldownGlobalSetting("cooldownText.durationColorCustomDefault", defColor) end
+          end
+          RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.21, width = 0.55,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      -- ═══ CUSTOM CURVE EDITOR (global) ═══
+      cdTextDurCustomHeader = {
+        type = "description",
+        name = "|cffffd700Color Thresholds|r",
+        fontSize = "medium",
+        order = 46.25, width = "full",
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      -- Threshold 1
+      cdTextDurT1Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 1",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
+        set = function(_, v)
+          local g = GetCooldownGlobalCfg()
+          if not g.cooldownText then g.cooldownText = {} end
+          if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end
+          g.cooldownText.durationColorCustom[1] = g.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}
+          g.cooldownText.durationColorCustom[1].enabled = v
+          ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.31, width = 0.3,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          return not (g.cooldownText and g.cooldownText.durationColor)
+        end,
+      },
+      cdTextDurT1Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color",
+        dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
+        set = function(_, v)
+          local g = GetCooldownGlobalCfg()
+          if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[1] then return end
+          g.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5
+          ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.32, width = 0.25,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      cdTextDurT1Suffix = {
+        type = "description", name = function() local g = GetCooldownGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+        order = 46.321, width = 0.12,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      cdTextDurT1Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
+        set = function(_, r, g2, b, a)
+          local g = GetCooldownGlobalCfg()
+          if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[1] then return end
+          g.cooldownText.durationColorCustom[1].color = {r=r,g=g2,b=b,a=a or 1}
+          ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.34, width = 0.4,
+        hidden = function()
+          if collapsedGlobalCooldownSections.cooldownText then return true end
+          local g = GetCooldownGlobalCfg()
+          if not (g.cooldownText and g.cooldownText.durationColor) then return true end
+          local e = g.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+        end,
+      },
+      -- Threshold 2
+      cdTextDurT2Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 2",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
+        set = function(_, v)
+          local g = GetCooldownGlobalCfg()
+          if not g.cooldownText then g.cooldownText = {} end
+          if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end
+          g.cooldownText.durationColorCustom[2] = g.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}
+          g.cooldownText.durationColorCustom[2].enabled = v
+          ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+        end,
+        order = 46.41, width = 0.3,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT2Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[2] then return end; g.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.42, width = 0.25,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      cdTextDurT2Suffix = { type = "description", name = function() local g = GetCooldownGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.421, width = 0.12,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      cdTextDurT2Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
+        set = function(_, r, g2, b, a) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[2] then return end; g.cooldownText.durationColorCustom[2].color = {r=r,g=g2,b=b,a=a or 1}; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.44, width = 0.4,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled) end,
+      },
+      -- Threshold 3
+      cdTextDurT3Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 3",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[3] = g.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; g.cooldownText.durationColorCustom[3].enabled = v; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.51, width = 0.3,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT3Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[3] then return end; g.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.52, width = 0.25,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      cdTextDurT3Suffix = { type = "description", name = function() local g = GetCooldownGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.521, width = 0.12,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      cdTextDurT3Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
+        set = function(_, r, g2, b, a) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[3] then return end; g.cooldownText.durationColorCustom[3].color = {r=r,g=g2,b=b,a=a or 1}; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.54, width = 0.4,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled) end,
+      },
+      -- Threshold 4
+      cdTextDurT4Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 4",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[4] = g.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; g.cooldownText.durationColorCustom[4].enabled = v; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.61, width = 0.3,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT4Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[4] then return end; g.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.62, width = 0.25,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      cdTextDurT4Suffix = { type = "description", name = function() local g = GetCooldownGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.621, width = 0.12,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      cdTextDurT4Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
+        set = function(_, r, g2, b, a) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[4] then return end; g.cooldownText.durationColorCustom[4].color = {r=r,g=g2,b=b,a=a or 1}; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.64, width = 0.4,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled) end,
+      },
+      -- Threshold 5
+      cdTextDurT5Enable = {
+        type = "toggle", name = "At", desc = "Enable threshold 5",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText then g.cooldownText = {} end; if not g.cooldownText.durationColorCustom then g.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; g.cooldownText.durationColorCustom[5] = g.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; g.cooldownText.durationColorCustom[5].enabled = v; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.71, width = 0.3,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); return not (g.cooldownText and g.cooldownText.durationColor) end,
+      },
+      cdTextDurT5Value = {
+        type = "input", name = "", desc = "Below this many seconds, use this color", dialogControl = "ArcUI_EditBox",
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
+        set = function(_, v) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[5] then return end; g.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.72, width = 0.25,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
+      cdTextDurT5Suffix = { type = "description", name = function() local g = GetCooldownGlobalCfg(); return (g.cooldownText and g.cooldownText.durationColorUsePercent) and "%"  or "s" end, fontSize = "medium", order = 46.721, width = 0.12,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
+      cdTextDurT5Color = {
+        type = "color", name = "Color", hasAlpha = false,
+        get = function() local g = GetCooldownGlobalCfg(); local e = g.cooldownText and g.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
+        set = function(_, r, g2, b, a) local g = GetCooldownGlobalCfg(); if not g.cooldownText or not g.cooldownText.durationColorCustom or not g.cooldownText.durationColorCustom[5] then return end; g.cooldownText.durationColorCustom[5].color = {r=r,g=g2,b=b,a=a or 1}; ApplyCooldownGlobalSetting("cooldownText.durationColorCustom", g.cooldownText.durationColorCustom); RefreshGlobalCooldowns(); if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end end,
+        order = 46.74, width = 0.4,
+        hidden = function() if collapsedGlobalCooldownSections.cooldownText then return true end; local g = GetCooldownGlobalCfg(); if not (g.cooldownText and g.cooldownText.durationColor) then return true end; local e = g.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled) end,
+      },
       cdTextSize = {
         type = "range", name = "Size", min = 4, max = 64, step = 1,
         get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.size or 14 end,
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.size", v); RefreshGlobalCooldowns() end,
         order = 42, width = 0.7, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextColorHeader = {
+        type = "description", name = "\n|cffffd700Color|r", fontSize = "medium",
+        order = 46, width = "full", hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
       },
       cdTextColor = {
         type = "color", name = "Color", hasAlpha = true,
@@ -9927,8 +13011,9 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         end,
         set = function(_, r, g, b, a)
           ApplyCooldownGlobalSetting("cooldownText.color", {r=r, g=g, b=b, a=a}); RefreshGlobalCooldowns()
+          if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
         end,
-        order = 42.5, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+        order = 46.1, width = 0.55, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
       },
       cdTextFont = {
         type = "select", name = "Font", dialogControl = "LSM30_Font",
@@ -9949,6 +13034,20 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.shadow end,
         set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.shadow", v); RefreshGlobalCooldowns() end,
         order = 44.5, width = 0.5, hidden = function() return collapsedGlobalCooldownSections.cooldownText end,
+      },
+      cdTextShadowX = {
+        type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.shadowOffsetX or 1 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.shadowOffsetX", v); RefreshGlobalCooldowns() end,
+        order = 44.6, width = 0.55,
+        hidden = function() return collapsedGlobalCooldownSections.cooldownText or not (GetCooldownGlobalCfg().cooldownText and GetCooldownGlobalCfg().cooldownText.shadow) end,
+      },
+      cdTextShadowY = {
+        type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.cooldownText and g.cooldownText.shadowOffsetY or -1 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("cooldownText.shadowOffsetY", v); RefreshGlobalCooldowns() end,
+        order = 44.7, width = 0.55,
+        hidden = function() return collapsedGlobalCooldownSections.cooldownText or not (GetCooldownGlobalCfg().cooldownText and GetCooldownGlobalCfg().cooldownText.shadow) end,
       },
       cdPositionLabel = {
         type = "description", name = "|cffffd700Position|r", fontSize = "medium",
@@ -10013,8 +13112,8 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
       },
       glowType = {
         type = "select", name = "Type",
-        values = { default = "Default (Blizzard)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Burst (ACH)" },
-        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc"},
+        values = { default = "Default (Golden)", pixel = "Pixel", autocast = "Autocast", button = "Button", proc = "Proc", ants = "Ants (Marching)", ach_proc = "Proc Loop", cdm_flash = "CDM Flash Pulse" },
+        sorting = {"default", "proc", "pixel", "autocast", "button", "ants", "ach_proc", "cdm_flash"},
         get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.glowType or "default" end,
         set = function(_, v) ApplyCooldownGlobalSetting("procGlow.glowType", v); RefreshGlobalCooldowns() end,
         order = 52, width = 0.7, hidden = function() return collapsedGlobalCooldownSections.procGlow end,
@@ -10066,7 +13165,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           if collapsedGlobalCooldownSections.procGlow then return true end
           local g = GetCooldownGlobalCfg()
           local glowType = g.procGlow and g.procGlow.glowType or "default"
-          return glowType ~= "autocast" and glowType ~= "button" and glowType ~= "ants" and glowType ~= "ach_proc"
+          return false  -- Scale works for all glow types including Default
         end,
       },
       glowSpeed = {
@@ -10121,7 +13220,58 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           return glowType ~= "autocast"
         end,
       },
-      
+      glowXOffset = {
+        type = "range", name = "X Offset", desc = "Horizontal glow size adjustment",
+        min = -50, max = 50, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.xOffset or 0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("procGlow.xOffset", v); RefreshGlobalCooldowns() end,
+        order = 55.1, width = 0.55,
+        hidden = function()
+          if collapsedGlobalCooldownSections.procGlow then return true end
+          local g = GetCooldownGlobalCfg()
+          local gt = g.procGlow and g.procGlow.glowType or "default"
+          return gt == "button" or gt == "default"
+        end,
+      },
+      glowYOffset = {
+        type = "range", name = "Y Offset", desc = "Vertical glow size adjustment",
+        min = -50, max = 50, step = 1,
+        get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.yOffset or 0 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("procGlow.yOffset", v); RefreshGlobalCooldowns() end,
+        order = 55.15, width = 0.55,
+        hidden = function()
+          if collapsedGlobalCooldownSections.procGlow then return true end
+          local g = GetCooldownGlobalCfg()
+          local gt = g.procGlow and g.procGlow.glowType or "default"
+          return gt == "button" or gt == "default"
+        end,
+      },
+      glowFrameStrata = {
+        type = "select", name = "Glow Strata",
+        desc = "Override the frame strata of the glow effect.\n\n|cffffd700Inherit (Default)|r - Uses the icon's frame strata\n|cffffd700LOW|r - Below standard UI level\n|cffffd700MEDIUM|r - Standard UI level\n|cffffd700HIGH|r - Above most UI elements\n|cffffd700DIALOG|r - Above HIGH frames\n\nThis only changes the glow's strata, NOT the icon itself.",
+        values = { ["inherit"] = "Inherit (Default)", ["LOW"] = "LOW", ["MEDIUM"] = "MEDIUM", ["HIGH"] = "HIGH", ["DIALOG"] = "DIALOG" },
+        sorting = {"inherit", "LOW", "MEDIUM", "HIGH", "DIALOG"},
+        get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.strata or "inherit" end,
+        set = function(_, v)
+          ApplyCooldownGlobalSetting("procGlow.strata", (v ~= "inherit") and v or nil)
+          RefreshGlobalCooldowns()
+        end,
+        order = 55.2, width = 0.85,
+        hidden = function() if collapsedGlobalCooldownSections.procGlow then return true end; local g = GetCooldownGlobalCfg(); return not (g.procGlow and g.procGlow.enabled ~= false) end,
+      },
+      glowFrameLevel = {
+        type = "input", name = "Glow Frame Level",
+        desc = "Set the frame level of the glow.\n\nHigher values render above other frames in the same strata.\n\nAccepts a number from 1 to 10000.",
+        get = function() local g = GetCooldownGlobalCfg(); local v = g.procGlow and g.procGlow.frameLevel; return v and tostring(v) or "" end,
+        set = function(_, v)
+          local num = tonumber(v); if not num then return end
+          num = math.floor(math.max(1, math.min(10000, num)))
+          ApplyCooldownGlobalSetting("procGlow.frameLevel", num); RefreshGlobalCooldowns()
+        end,
+        order = 55.25, width = 0.55,
+        hidden = function() if collapsedGlobalCooldownSections.procGlow then return true end; local g = GetCooldownGlobalCfg(); return not (g.procGlow and g.procGlow.enabled ~= false) end,
+      },
+
       -- ═══════════════════════════════════════════════════════════════════
       -- BORDER
       -- ═══════════════════════════════════════════════════════════════════
@@ -10281,11 +13431,6 @@ function ns.GetCDMIconsOptionsTable()
     -- Skip global options (they're defined in the unified panel already)
     globalOptionsHeader = true, globalOptionsDesc = true,
     showTooltips = true, clickThrough = true,
-    -- Skip ACH options (merged directly into unified panel at correct order)
-    achHeader = true, achDesc = true, achEnabled = true, achStyle = true, achArcAuras = true,
-    achColor = true, achResetColor = true, achStatus = true, achCombatOnly = true,
-    achStrata = true, achLevel = true, achScale = true,
-    achAlwaysAnimate = true, achShowBurst = true,
   }
   -- Also skip catalogIcon entries
   for i = 1, 50 do
@@ -10298,14 +13443,26 @@ function ns.GetCDMIconsOptionsTable()
       name = "Customize CDM icons. Use the filter dropdown to switch between Cooldowns, Auras, or view icons in specific groups.",
       order = 1,
     },
-    
+    cdmDisabledMsg = {
+      type = "description",
+      name = "\n\n|cffff4444CDM Module is Disabled\n\nUse the 'Enable CDM Module' toggle below to re-enable icon styling and group management.|r\n\n",
+      order = -999,
+      width = "full",
+      fontSize = "large",
+      hidden = function()
+        if Shared and Shared.IsCDMStylingEnabled then return Shared.IsCDMStylingEnabled() end
+        return true
+      end,
+    },
+
     -- ═══════════════════════════════════════════════════════════════════
     -- CONTROLS
     -- ═══════════════════════════════════════════════════════════════════
     masterEnable = {
       type = "toggle",
-      name = "|cff00ff00Enable CDM Styling|r",
-      desc = "Master toggle to enable/disable all CDM icon styling and group management.\n\n|cffffaa00Reload recommended after changing.|r\n\nWhen disabled, icons stay under default CDM control.",
+      name = "|cff00ff00Enable CDM Module|r",
+      disabled = function() return false end,  -- Always enabled so user can re-enable CDM
+      desc = "Master toggle to enable/disable all ArcUI CDM icon styling and group management.\n\n|cffffaa00Reload recommended after changing.|r\n\nWhen disabled, icons stay under default CDM control.",
       order = 2,
       width = 1.0,
       get = function() 
@@ -10319,6 +13476,26 @@ function ns.GetCDMIconsOptionsTable()
         -- Use centralized function from CDM_Shared
         if Shared and Shared.SetCDMStylingEnabled then
           Shared.SetCDMStylingEnabled(val)
+        end
+      end,
+    },
+    keepCDMStyle = {
+      type = "toggle",
+      name = "Keep CDM Styling",
+      desc = "Preserve CDM's native icon look: rounded corner mask and proportionally scaled shadow overlay.\n\nWhen enabled: the mask is shown and the shadow overlay is shown and resized with icon size. |cffffaa00Hide CDM Shadow|r is ignored.\n\n|cffffaa00Off by default. Opt-in to restore the CDM native look.|r",
+      order = 2.1,
+      width = 1.2,
+      get = function()
+        local specData = Shared and Shared.GetCurrentSpecData and Shared.GetCurrentSpecData()
+        if specData then return specData.keepCDMStyle == true end
+        return false
+      end,
+      set = function(_, val)
+        local specData = Shared and Shared.GetCurrentSpecData and Shared.GetCurrentSpecData()
+        if specData then
+          specData.keepCDMStyle = val or nil
+          if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+          if ns.CDMEnhance and ns.CDMEnhance.RefreshAllStyles then ns.CDMEnhance.RefreshAllStyles() end
         end
       end,
     },
@@ -10443,327 +13620,6 @@ function ns.GetCDMIconsOptionsTable()
         db.clickThrough = val
         if ns.CDMGroups and ns.CDMGroups.RefreshIconSettings then
           ns.CDMGroups.RefreshIconSettings()
-        end
-      end,
-    },
-    
-    -- ═══════════════════════════════════════════════════════════════════
-    -- KEYBINDS SECTION
-    -- ═══════════════════════════════════════════════════════════════════
-    keybindsToggle = {
-      type = "toggle",
-      name = "Keybind Display",
-      desc = "Click to expand/collapse",
-      dialogControl = "CollapsibleHeader",
-      order = 6,
-      width = "full",
-      get = function() return not collapsedSections.keybinds end,
-      set = function(_, v)
-        collapsedSections.keybinds = not v
-        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-      end,
-    },
-    showKeybinds = {
-      type = "toggle",
-      name = "Enable",
-      desc = "When enabled, action bar keybinds are displayed on cooldown icons.\n\nShows the key you press to activate each ability.",
-      order = 6.02,
-      width = 0.5,
-      hidden = function() return collapsedSections.keybinds end,
-      get = function()
-        return ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled() or false
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetEnabled then
-          ns.Keybinds.SetEnabled(val)
-        end
-      end,
-    },
-    keybindFont = {
-      type = "select",
-      name = "Font",
-      dialogControl = "LSM30_Font",
-      values = LSM and LSM:HashTable("font") or {},
-      order = 6.03,
-      width = 0.9,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.font or "Friz Quadrata TT"
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("font", val)
-        end
-      end,
-    },
-    keybindFontSize = {
-      type = "range",
-      name = "Size",
-      desc = "Font size for keybind text",
-      order = 6.04,
-      width = 0.7,
-      min = 6, max = 32, step = 1,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.fontSize or 12
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("fontSize", val)
-        end
-      end,
-    },
-    keybindOutline = {
-      type = "select",
-      name = "Outline",
-      values = {
-        [""] = "None",
-        ["OUTLINE"] = "Outline",
-        ["THICKOUTLINE"] = "Thick",
-        ["MONOCHROME"] = "Mono",
-      },
-      order = 6.05,
-      width = 0.55,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.fontOutline or "OUTLINE"
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("fontOutline", val)
-        end
-      end,
-    },
-    keybindColor = {
-      type = "color",
-      name = "Color",
-      hasAlpha = true,
-      order = 6.06,
-      width = 0.45,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        local c = settings and settings.color or { 1, 1, 1, 1 }
-        return c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1
-      end,
-      set = function(_, r, g, b, a)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("color", { r, g, b, a })
-        end
-      end,
-    },
-    keybindAnchor = {
-      type = "select",
-      name = "Anchor",
-      desc = "Position to display keybind text on the icon",
-      order = 6.07,
-      width = 0.65,
-      values = {
-        TOPLEFT = "Top Left",
-        TOP = "Top",
-        TOPRIGHT = "Top Right",
-        LEFT = "Left",
-        CENTER = "Center",
-        RIGHT = "Right",
-        BOTTOMLEFT = "Bottom Left",
-        BOTTOM = "Bottom",
-        BOTTOMRIGHT = "Bottom Right",
-      },
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.anchor or "TOPRIGHT"
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("anchor", val)
-        end
-      end,
-    },
-    keybindOffsetX = {
-      type = "range",
-      name = "X Offset",
-      desc = "Horizontal offset for keybind text",
-      order = 6.08,
-      width = 0.6,
-      min = -50, max = 50, step = 1,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.offsetX or -1
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("offsetX", val)
-        end
-      end,
-    },
-    keybindOffsetXInput = {
-      type = "input",
-      name = "X",
-      desc = "Type an exact X offset value (any integer)",
-      dialogControl = "ArcUI_EditBox",
-      order = 6.081,
-      width = 0.35,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return tostring(settings and settings.offsetX or -1)
-      end,
-      set = function(_, val)
-        local num = tonumber(val)
-        if num and ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("offsetX", math.floor(num))
-        end
-      end,
-    },
-    keybindOffsetY = {
-      type = "range",
-      name = "Y Offset",
-      desc = "Vertical offset for keybind text",
-      order = 6.09,
-      width = 0.6,
-      min = -50, max = 50, step = 1,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.offsetY or -1
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("offsetY", val)
-        end
-      end,
-    },
-    keybindOffsetYInput = {
-      type = "input",
-      name = "Y",
-      desc = "Type an exact Y offset value (any integer)",
-      dialogControl = "ArcUI_EditBox",
-      order = 6.091,
-      width = 0.35,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return tostring(settings and settings.offsetY or -1)
-      end,
-      set = function(_, val)
-        local num = tonumber(val)
-        if num and ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("offsetY", math.floor(num))
-        end
-      end,
-    },
-    keybindStrata = {
-      type = "select",
-      name = "Strata",
-      desc = "Frame strata for keybind text. 'Inherit' uses the icon's strata.",
-      order = 6.10,
-      width = 0.55,
-      values = {
-        [""] = "Inherit",
-        ["BACKGROUND"] = "Background",
-        ["LOW"] = "Low",
-        ["MEDIUM"] = "Medium",
-        ["HIGH"] = "High",
-        ["DIALOG"] = "Dialog",
-        ["TOOLTIP"] = "Tooltip",
-      },
-      sorting = { "", "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "TOOLTIP" },
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.frameStrata or ""
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("frameStrata", val)
-        end
-      end,
-    },
-    keybindLevel = {
-      type = "input",
-      name = "Level",
-      desc = "Frame level for keybind text (higher = on top). 0 = inherit from icon.",
-      dialogControl = "ArcUI_EditBox",
-      order = 6.11,
-      width = 0.4,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return tostring(settings and settings.frameLevel or 0)
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          local num = tonumber(val)
-          if num then
-            ns.Keybinds.SetSetting("frameLevel", math.max(0, math.floor(num)))
-          end
-        end
-      end,
-    },
-    keybindCustomReplacementsLabel = {
-      type = "description",
-      name = "\n|cff888888Custom Text Replacements|r",
-      order = 6.12,
-      width = "full",
-      hidden = function() return collapsedSections.keybinds end,
-    },
-    keybindReplaceFindText = {
-      type = "input",
-      name = "Find",
-      desc = "Text to find in keybinds (comma-separated).\n\nExample: META,CTRL,ALT\n\nMatched by position with 'Replace With' field.",
-      dialogControl = "ArcUI_EditBox",
-      order = 6.13,
-      width = 0.75,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.replaceFindText or ""
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("replaceFindText", val or "")
-          if ns.Keybinds.RefreshAll then
-            ns.Keybinds.RefreshAll()
-          end
-        end
-      end,
-    },
-    keybindReplaceWithText = {
-      type = "input",
-      name = "Replace",
-      desc = "Replacement text (comma-separated).\n\nExample: M,C,A\n\nMatched by position with 'Find' field.\nLeave a position empty to remove text.",
-      dialogControl = "ArcUI_EditBox",
-      order = 6.14,
-      width = 0.75,
-      hidden = function() return collapsedSections.keybinds end,
-      disabled = function() return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled()) end,
-      get = function()
-        local settings = ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
-        return settings and settings.replaceWithText or ""
-      end,
-      set = function(_, val)
-        if ns.Keybinds and ns.Keybinds.SetSetting then
-          ns.Keybinds.SetSetting("replaceWithText", val or "")
-          if ns.Keybinds.RefreshAll then
-            ns.Keybinds.RefreshAll()
-          end
         end
       end,
     },
@@ -10910,27 +13766,6 @@ function ns.GetCDMIconsOptionsTable()
   -- Add catalog icons
   for i = 1, 50 do
     args["catalogIcon" .. i] = CreateUnifiedCatalogIconEntry(i)
-  end
-  
-  -- Merge Assisted Combat Highlight options directly into unified panel
-  -- Override orders to 7.xx (between keybinds at 6 and catalog at 9)
-  if ns.AssistedCombatHighlightOptions and ns.AssistedCombatHighlightOptions.GetCooldownArgs then
-    local orderMap = {
-      achHeader = 7, achDesc = 7.01, achEnabled = 7.02, achStyle = 7.025, achArcAuras = 7.03,
-      achCombatOnly = 7.035, achStrata = 7.036, achLevel = 7.037, achScale = 7.038,
-      achAlwaysAnimate = 7.039, achShowBurst = 7.0395,
-      achColor = 7.04, achResetColor = 7.05, achStatus = 7.06,
-    }
-    for k, v in pairs(ns.AssistedCombatHighlightOptions.GetCooldownArgs()) do
-      if orderMap[k] then
-        local copy = {}
-        for vk, vv in pairs(v) do copy[vk] = vv end
-        copy.order = orderMap[k]
-        args[k] = copy
-      else
-        args[k] = v
-      end
-    end
   end
   
   -- Copy AURA per-icon options (order 100-199) - they use HideIfNoAuraSelection
@@ -11165,10 +14000,29 @@ local glowPreviewActive = {}  -- cdID -> true/false
 -- Set glow preview state for an icon
 function ns.CDMEnhanceOptions.SetGlowPreview(cdID, enabled)
   glowPreviewActive[cdID] = enabled or nil
-  -- Trigger update to show/hide glow
-  if ns.CDMEnhance then
-    if ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
-    if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
+  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
+    ns.CDMEnhance.InvalidateCache()
+  end
+  -- Arc Aura spell frames: RefreshSpellVisuals does stop+cache-clear+re-eval in one pass
+  if type(cdID) == "string" and cdID:match("^arc_") then
+    if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals then
+      ns.ArcAurasCooldown.RefreshSpellVisuals(cdID)
+    end
+  else
+    local data = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+    if data and data.frame then
+      -- For aura frames (_isAura), CooldownState returns early so use UpdateAuraFrame directly
+      local cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(data.frame)
+      if cfg and cfg._isAura and ns.AuraFrames and ns.AuraFrames.UpdateAuraFrame then
+        ns.AuraFrames.UpdateAuraFrame(data.frame)
+      else
+        if ns.CDMEnhance.UpdateIcon then ns.CDMEnhance.UpdateIcon(cdID) end
+      end
+    else
+      if ns.CDMEnhance and ns.CDMEnhance.UpdateIcon then
+        ns.CDMEnhance.UpdateIcon(cdID)
+      end
+    end
   end
 end
 
@@ -11193,6 +14047,15 @@ function ns.CDMEnhanceOptions.ClearAllGlowPreviews()
   if ns.CDMEnhance and ns.CDMEnhance.UpdateIcon then
     for _, cdID in ipairs(cdIDs) do
       ns.CDMEnhance.UpdateIcon(cdID)
+    end
+  end
+  -- Arc Aura spell frames: force-stop ready glows + re-evaluate
+  if ns.ArcAurasCooldown then
+    if ns.ArcAurasCooldown.StopAllReadyGlows then
+      ns.ArcAurasCooldown.StopAllReadyGlows()
+    end
+    if ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+      ns.ArcAurasCooldown.RefreshAllSpellVisuals()
     end
   end
 end
@@ -11596,5 +14459,222 @@ function ns.CDMEnhanceOptions.GetEditModeState()
   }
 end
 
--- Start a ticker to monitor options panel state
-C_Timer.NewTicker(0.5, CheckOptionsStateChange)
+-- ===================================================================
+-- UTILITIES TAB
+-- Keybind Display globals, Assisted Combat Highlight, Button Press Highlight
+-- ===================================================================
+function ns.GetCDMUtilitiesOptionsTable()
+  local cs = collapsedSections
+
+  local function keybindDisabled()
+    return not (ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled())
+  end
+  local function keybindHidden()
+    return cs.keybinds
+  end
+  local function getKBSettings()
+    return ns.Keybinds and ns.Keybinds.GetSettings and ns.Keybinds.GetSettings()
+  end
+  local function setKBSetting(key, val)
+    if ns.Keybinds and ns.Keybinds.SetSetting then
+      ns.Keybinds.SetSetting(key, val)
+    end
+  end
+
+  local args = {
+    -- ═══════════════════════════════════════════════════════════════════
+    -- KEYBIND DISPLAY (global settings)
+    -- ═══════════════════════════════════════════════════════════════════
+    keybindsToggle = {
+      type = "toggle",
+      name = "Keybind Display",
+      desc = "Click to expand/collapse",
+      dialogControl = "CollapsibleHeader",
+      order = 1, width = "full",
+      get = function() return not cs.keybinds end,
+      set = function(_, v) cs.keybinds = not v; LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI") end,
+    },
+    showKeybinds = {
+      type = "toggle", name = "Enable",
+      desc = "When enabled, action bar keybinds are displayed on cooldown icons.\n\nShows the key you press to activate each ability.",
+      order = 1.02, width = 0.5, hidden = keybindHidden,
+      get = function() return ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled() or false end,
+      set = function(_, val) if ns.Keybinds and ns.Keybinds.SetEnabled then ns.Keybinds.SetEnabled(val) end end,
+    },
+    keybindFont = {
+      type = "select", name = "Font", dialogControl = "LSM30_Font",
+      values = LSM and LSM:HashTable("font") or {},
+      order = 1.03, width = 0.9, hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.font or "Friz Quadrata TT" end,
+      set = function(_, val) setKBSetting("font", val) end,
+    },
+    keybindFontSize = {
+      type = "range", name = "Size", desc = "Font size for keybind text",
+      order = 1.04, width = 0.7, min = 6, max = 32, step = 1,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.fontSize or 12 end,
+      set = function(_, val) setKBSetting("fontSize", val) end,
+    },
+    keybindOutline = {
+      type = "select", name = "Outline",
+      values = { [""] = "None", ["OUTLINE"] = "Outline", ["THICKOUTLINE"] = "Thick", ["MONOCHROME"] = "Mono" },
+      order = 1.05, width = 0.55, hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.fontOutline or "OUTLINE" end,
+      set = function(_, val) setKBSetting("fontOutline", val) end,
+    },
+    keybindColor = {
+      type = "color", name = "Color", hasAlpha = true,
+      order = 1.06, width = 0.45, hidden = keybindHidden, disabled = keybindDisabled,
+      get = function()
+        local s = getKBSettings(); local c = s and s.color or { 1, 1, 1, 1 }
+        return c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1
+      end,
+      set = function(_, r, g, b, a) setKBSetting("color", { r, g, b, a }) end,
+    },
+    keybindAnchor = {
+      type = "select", name = "Anchor", desc = "Position to display keybind text on the icon",
+      order = 1.07, width = 0.65,
+      values = {
+        TOPLEFT = "Top Left", TOP = "Top", TOPRIGHT = "Top Right",
+        LEFT = "Left", CENTER = "Center", RIGHT = "Right",
+        BOTTOMLEFT = "Bottom Left", BOTTOM = "Bottom", BOTTOMRIGHT = "Bottom Right",
+      },
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.anchor or "TOPRIGHT" end,
+      set = function(_, val) setKBSetting("anchor", val) end,
+    },
+    keybindOffsetX = {
+      type = "range", name = "X Offset", desc = "Horizontal offset for keybind text",
+      order = 1.08, width = 0.6, min = -50, max = 50, step = 1,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.offsetX or -1 end,
+      set = function(_, val) setKBSetting("offsetX", val) end,
+    },
+    keybindOffsetXInput = {
+      type = "input", name = "X", desc = "Type an exact X offset value (any integer)",
+      dialogControl = "ArcUI_EditBox", order = 1.081, width = 0.35,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return tostring(s and s.offsetX or -1) end,
+      set = function(_, val) local n = tonumber(val); if n then setKBSetting("offsetX", math.floor(n)) end end,
+    },
+    keybindOffsetY = {
+      type = "range", name = "Y Offset", desc = "Vertical offset for keybind text",
+      order = 1.09, width = 0.6, min = -50, max = 50, step = 1,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.offsetY or -1 end,
+      set = function(_, val) setKBSetting("offsetY", val) end,
+    },
+    keybindOffsetYInput = {
+      type = "input", name = "Y", desc = "Type an exact Y offset value (any integer)",
+      dialogControl = "ArcUI_EditBox", order = 1.091, width = 0.35,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return tostring(s and s.offsetY or -1) end,
+      set = function(_, val) local n = tonumber(val); if n then setKBSetting("offsetY", math.floor(n)) end end,
+    },
+    keybindStrata = {
+      type = "select", name = "Strata",
+      desc = "Frame strata for keybind text. 'Inherit' uses the icon's strata.",
+      order = 1.10, width = 0.55,
+      values = { [""] = "Inherit", ["BACKGROUND"] = "Background", ["LOW"] = "Low", ["MEDIUM"] = "Medium", ["HIGH"] = "High", ["DIALOG"] = "Dialog", ["TOOLTIP"] = "Tooltip" },
+      sorting = { "", "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "TOOLTIP" },
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.frameStrata or "" end,
+      set = function(_, val) setKBSetting("frameStrata", val) end,
+    },
+    keybindLevel = {
+      type = "input", name = "Level",
+      desc = "Frame level for keybind text (higher = on top). 0 = inherit from icon.",
+      dialogControl = "ArcUI_EditBox", order = 1.11, width = 0.4,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return tostring(s and s.frameLevel or 0) end,
+      set = function(_, val) local n = tonumber(val); if n then setKBSetting("frameLevel", math.max(0, math.floor(n))) end end,
+    },
+    keybindCustomReplacementsLabel = {
+      type = "description", name = "\n|cff888888Custom Text Replacements|r",
+      order = 1.12, width = "full", hidden = keybindHidden,
+    },
+    keybindReplaceFindText = {
+      type = "input", name = "Find",
+      desc = "Text to find in keybinds (comma-separated).\n\nExample: META,CTRL,ALT\n\nMatched by position with 'Replace With' field.",
+      dialogControl = "ArcUI_EditBox", order = 1.13, width = 0.75,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.replaceFindText or "" end,
+      set = function(_, val)
+        setKBSetting("replaceFindText", val or "")
+        if ns.Keybinds and ns.Keybinds.RefreshAll then ns.Keybinds.RefreshAll() end
+      end,
+    },
+    keybindReplaceWithText = {
+      type = "input", name = "Replace",
+      desc = "Replacement text (comma-separated).\n\nExample: M,C,A\n\nMatched by position with 'Find' field.\nLeave a position empty to remove text.",
+      dialogControl = "ArcUI_EditBox", order = 1.14, width = 0.75,
+      hidden = keybindHidden, disabled = keybindDisabled,
+      get = function() local s = getKBSettings(); return s and s.replaceWithText or "" end,
+      set = function(_, val)
+        setKBSetting("replaceWithText", val or "")
+        if ns.Keybinds and ns.Keybinds.RefreshAll then ns.Keybinds.RefreshAll() end
+      end,
+    },
+  }
+
+  -- ═══════════════════════════════════════════════════════════════════
+  -- ASSISTED COMBAT HIGHLIGHT (merged from external module)
+  -- ═══════════════════════════════════════════════════════════════════
+  if ns.AssistedCombatHighlightOptions and ns.AssistedCombatHighlightOptions.GetCooldownArgs then
+    local orderMap = {
+      achHeader = 2, achDesc = 2.01, achEnabled = 2.02, achStyle = 2.025, achArcAuras = 2.03,
+      achCombatOnly = 2.035, achStrata = 2.036, achLevel = 2.037, achScale = 2.038,
+      achAlwaysAnimate = 2.039, achShowBurst = 2.0395,
+      achColor = 2.04, achResetColor = 2.05, achStatus = 2.06,
+    }
+    for k, v in pairs(ns.AssistedCombatHighlightOptions.GetCooldownArgs()) do
+      if orderMap[k] then
+        local copy = {}
+        for vk, vv in pairs(v) do copy[vk] = vv end
+        copy.order = orderMap[k]
+        args[k] = copy
+      else
+        args[k] = v
+      end
+    end
+  end
+
+  -- ═══════════════════════════════════════════════════════════════════
+  -- BUTTON PRESS HIGHLIGHT (merged from external module)
+  -- ═══════════════════════════════════════════════════════════════════
+  if ns.ButtonPressHighlightOptions and ns.ButtonPressHighlightOptions.GetCooldownArgs then
+    local bphOrderMap = {
+      bphHeader = 3, bphDesc = 3.01, bphEnabled = 3.02, bphMode = 3.03,
+      bphFlashDuration = 3.04, bphTextureType = 3.05, bphUseCustomColor = 3.06,
+      bphColor = 3.07, bphCustomTexture = 3.08,
+      bphTxLeft = 3.081, bphTxRight = 3.082, bphTxTop = 3.083, bphTxBottom = 3.084,
+      bphUseMasqueShapes = 3.085,
+      bphArcAuras = 3.09, bphRefresh = 3.10, bphStatus = 3.11,
+    }
+    for k, v in pairs(ns.ButtonPressHighlightOptions.GetCooldownArgs()) do
+      if bphOrderMap[k] then
+        local copy = {}
+        for vk, vv in pairs(v) do copy[vk] = vv end
+        copy.order = bphOrderMap[k]
+        args[k] = copy
+      else
+        args[k] = v
+      end
+    end
+  end
+
+  return {
+    type = "group",
+    name = "Utilities",
+    order = 3,
+    args = args,
+  }
+end
+
+-- Options panel state monitoring via callback (zero polling)
+if ns.CDMShared and ns.CDMShared.RegisterPanelCallback then
+    ns.CDMShared.RegisterPanelCallback("CDMEnhanceOptions", {
+        onOpen = function() CheckOptionsStateChange() end,
+        onClose = function() CheckOptionsStateChange() end,
+    })
+end

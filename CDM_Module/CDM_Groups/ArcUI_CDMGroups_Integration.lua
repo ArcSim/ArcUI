@@ -51,6 +51,16 @@ function Integration.RegisterExternalFrame(id, frame, viewerType, defaultGroup)
         return false
     end
     
+    -- CRITICAL: If the profile hasn't finished loading, savedPositions may be empty.
+    -- Registering now would fall through to the free-icon fallback, which WRITES a
+    -- free position to the profile and overwrites the correct saved group position.
+    if ns.CDMGroups._profileNotLoaded then
+        C_Timer.After(0.5, function()
+            Integration.RegisterExternalFrame(id, frame, viewerType, defaultGroup)
+        end)
+        return false
+    end
+    
     -- ═══════════════════════════════════════════════════════════════════════════
     -- CHECK FOR SAVED POSITION FIRST
     -- ═══════════════════════════════════════════════════════════════════════════

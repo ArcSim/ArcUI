@@ -1,590 +1,846 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- ArcUI Spell Usability Options
--- External options module for the Spell Usability section.
--- Uses ns.OptionsHelpers (exported by ArcUI_CDMEnhanceOptions) so all
--- entries work with edit-all, multi-select, and per-icon customization.
+-- ArcUI CDM Spell Usability
+-- Runtime module for spell usability visuals on CDM (Cooldown Manager) frames.
+-- Handles:
+--   1. Usability vertex color tinting via RefreshIconColor hook
+--   2. Usable glow via overlay pattern (Ellesmere method)
 --
--- IMPORTANT: All closures resolve helpers via H() at CALL TIME, not at
--- table-build time, to avoid nil upvalue issues with load ordering.
+-- Shadow cooldown frame creation and feeding is owned by CooldownState.
+-- This file only READS shadow state (IsShown) for glow decisions.
 --
--- Controls icon tinting/alpha/glow based on C_Spell.IsSpellUsable() state:
---   Usable       → white (or custom)  — spell is castable right now
---   Not Enough   → blue tint          — insufficient resource (mana/energy/etc)
---   Not Usable   → gray tint          — other restriction (wrong stance, etc)
+-- ALPHA is NOT managed here. CooldownState.ApplyReadyState merges usability
+-- alpha into readyAlpha (single-writer pattern), eliminating flicker from
+-- multiple systems fighting over SetAlpha.
 --
--- Range indicator (red tint) is handled by the existing Range Indicator section.
+-- EVENT-DRIVEN: CooldownState dispatch (which calls UpdateGlow) is now
+-- triggered from SPELL_UPDATE_COOLDOWN hooks + shadow OnCooldownDone,
+-- not 20Hz polling. SPELL_UPDATE_USABLE (line 372) handles resource changes.
+--
+-- Settings are stored in cfg.spellUsability (managed by SpellUsabilityOptions).
+-- Integration: CDMEnhance calls HookFrame() during enhancement.
+--              UpdateGlow() is called from the CooldownState relay wrapper.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local addonName, ns = ...
 
-ns.SpellUsabilityOptions = ns.SpellUsabilityOptions or {}
+ns.CDMSpellUsability = {}
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- LAZY ACCESSORS  (always resolve at call time, never cache references)
+-- DEFAULT COLORS (match CDM constants and ArcAurasCooldown defaults)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function H()  return ns.OptionsHelpers end
+local NOT_ENOUGH_MANA  = { r = 0.5, g = 0.5, b = 1.0, a = 1.0 }
+local NOT_USABLE_COLOR = { r = 0.4, g = 0.4, b = 0.4, a = 1.0 }
+local ON_CD_COLOR      = { r = 0.4, g = 0.4, b = 0.4, a = 1.0 }
 
--- mode = "aura" or "cooldown"
-local function GetCfg(mode)
-  local h = H()
-  if mode == "aura" then return h.GetAuraCfg() end
-  return h.GetCooldownCfg()
-end
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DESATURATION HELPER
+-- Uses the bypass flag so CDMEnhance's desat hooks don't intercept.
+-- Also stores the request so CooldownState can respect it on next pass.
+-- ═══════════════════════════════════════════════════════════════════════════
 
-local function ApplySetting(mode, setter)
-  local h = H()
-  if mode == "aura" then return h.ApplyAuraSetting(setter) end
-  return h.ApplySharedCooldownSetting(setter)
-end
+local function ApplyUsabilityDesat(frame, iconTex, desaturate)
+    local wasRequested = frame._arcUsabilityDesatRequest
+    -- Store request for CooldownState + CDMEnhance hooks to read
+    frame._arcUsabilityDesatRequest = desaturate and true or nil
 
--- ── Hide functions (resolve at call time) ──
+    -- ONLY touch desaturation when explicitly configured (true/false).
+    -- When nil (not configured / releasing ownership), actively clear any
+    -- desaturation WE previously applied so icons snap instantly to colored
+    -- when resources become available (e.g. Elemental Blast at 80 Maelstrom).
+    -- Without this, the icon stays desaturated until CDM's next RefreshData cycle (~1s).
+    if desaturate == nil then
+        if wasRequested and iconTex then
+            frame._arcBypassDesatHook = true
+            if iconTex.SetDesaturation then
+                iconTex:SetDesaturation(0)
+            elseif iconTex.SetDesaturated then
+                iconTex:SetDesaturated(false)
+            end
+            frame._arcBypassDesatHook = false
+        end
+        return
+    end
 
-local function HideAuraUsability()
-  local h = H()
-  return h.HideIfNoAuraSelection() or h.collapsedSections.spellUsability
-end
-
-local function HideCooldownUsability()
-  local h = H()
-  if h.HideIfNoCooldownSelection() then return true end
-  if h.IsEditingMixedTypes() then return true end
-  return h.collapsedSections.spellUsability
-end
-
--- ── Refresh helper ──
-
-local function Refresh()
-  -- Invalidate settings cache so visuals update immediately
-  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
-    ns.CDMEnhance.InvalidateCache()
-  end
-  -- Refresh spell frame visuals only (no frame size rebuild)
-  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
-    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
-  end
-  -- Refresh CDM frame usability visuals
-  if ns.CDMSpellUsability and ns.CDMSpellUsability.RefreshAll then
-    ns.CDMSpellUsability.RefreshAll()
-  end
-end
-
--- Heavier refresh for glow param changes: forces glow restart with new settings
-local function RefreshGlow()
-  if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
-    ns.CDMEnhance.InvalidateCache()
-  end
-  -- Force-stop usable glows so they restart with new params
-  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllUsableGlows then
-    ns.ArcAurasCooldown.StopAllUsableGlows()
-  end
-  -- Force-stop CDM frame usable glows
-  if ns.CDMSpellUsability and ns.CDMSpellUsability.StopAllGlows then
-    ns.CDMSpellUsability.StopAllGlows()
-  end
-  -- Now re-apply visuals (will restart glow with fresh settings)
-  if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
-    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
-  end
-  -- Refresh CDM frame usability visuals
-  if ns.CDMSpellUsability and ns.CDMSpellUsability.RefreshAll then
-    ns.CDMSpellUsability.RefreshAll()
-  end
+    if not iconTex then return end
+    frame._arcBypassDesatHook = true
+    if iconTex.SetDesaturation then
+        iconTex:SetDesaturation(desaturate and 1 or 0)
+    elseif iconTex.SetDesaturated then
+        iconTex:SetDesaturated(desaturate and true or false)
+    end
+    frame._arcBypassDesatHook = false
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- GENERIC ENTRY BUILDER
--- mode = "aura" | "cooldown" — resolved lazily inside every closure
+-- OPTIONS PANEL STATE
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function BuildUsabilityEntries(orderBase, mode, hideSection)
-
-  local entries = {}
-
-  -- ───────────────────────────────────────────────────────────────────
-  -- MASTER TOGGLE
-  -- ───────────────────────────────────────────────────────────────────
-  entries["spellUsabilityEnabled"] = {
-    type = "toggle", name = "Enable Usability Tinting",
-    desc = "Tint spell icons based on whether they can be cast.\n\n"
-        .. "|cff8080ffBlue|r = Not enough resource (mana, energy, etc.)\n"
-        .. "|cff999999Gray|r = Not usable (wrong stance, missing buff, etc.)\n\n"
-        .. "When disabled, icons use default white when no custom tint is set.\n\n"
-        .. "|cffaaaaaa(Ready and On Cooldown tint/desat options are in the Icon State Visuals sections above.)|r",
-    get = function()
-      local c = GetCfg(mode)
-      return not c or not c.spellUsability or c.spellUsability.enabled ~= false
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.enabled = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.001, width = 1.2,
-    hidden = hideSection,
-  }
-
-  -- (Ready/Normal tint + desat and On Cooldown tint + desat have been moved
-  --  to the Ready State and On Cooldown State sections in Icon State Visuals.)
-
-  -- ───────────────────────────────────────────────────────────────────
-  -- NOT ENOUGH RESOURCE  (mana, energy, maelstrom, etc.)
-  -- Layout: [Description full] → [Tint Color] [Opacity Slider] on same row
-  -- ───────────────────────────────────────────────────────────────────
-  entries["spellUsabilityResourceDesc"] = {
-    type = "description", name = "|cff8080ffNot Enough Resource|r  |cff666666(mana, energy, maelstrom, etc.)|r",
-    fontSize = "medium",
-    order = orderBase + 0.010, width = "full",
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityResourceColor"] = {
-    type = "color", name = "Tint Color", hasAlpha = false,
-    desc = "Icon tint color when you don't have enough resource.\n\nDefault: |cff8080ffBlue|r (matching CDM behavior)",
-    get = function()
-      local c = GetCfg(mode)
-      local col = c and c.spellUsability and c.spellUsability.notEnoughResourceColor
-      if col then return col.r, col.g, col.b end
-      return 0.5, 0.5, 1.0  -- default blue
-    end,
-    set = function(_, r, g, b)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notEnoughResourceColor = { r = r, g = g, b = b }
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.011, width = 0.5,
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityResourceAlpha"] = {
-    type = "range", name = "Icon Opacity", min = 0, max = 1.0, step = 0.05,
-    desc = "Icon opacity when you don't have enough resource to cast.\n\nSet to 0 to hide the icon until you have enough resource.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.notEnoughResourceAlpha or 1.0
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notEnoughResourceAlpha = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.012, width = 0.8,
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityResourceDesat"] = {
-    type = "toggle", name = "Desaturate",
-    desc = "Desaturate (grayscale) the icon when you don't have enough resource.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.notEnoughResourceDesaturate or false
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notEnoughResourceDesaturate = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.013, width = 0.6,
-    hidden = hideSection,
-  }
-
-  -- ───────────────────────────────────────────────────────────────────
-  -- NOT USABLE  (wrong stance, missing buff, etc.)
-  -- Layout: [Description full] → [Tint Color] [Opacity Slider] on same row
-  -- ───────────────────────────────────────────────────────────────────
-  entries["spellUsabilityNotUsableDesc"] = {
-    type = "description", name = "|cff999999Not Usable|r  |cff666666(wrong stance, missing buff, etc.)|r",
-    fontSize = "medium",
-    order = orderBase + 0.020, width = "full",
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityNotUsableColor"] = {
-    type = "color", name = "Tint Color", hasAlpha = false,
-    desc = "Icon tint color when the spell can't be cast.\n\nDefault: |cff999999Gray|r (matching CDM behavior)",
-    get = function()
-      local c = GetCfg(mode)
-      local col = c and c.spellUsability and c.spellUsability.notUsableColor
-      if col then return col.r, col.g, col.b end
-      return 0.4, 0.4, 0.4  -- default gray
-    end,
-    set = function(_, r, g, b)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notUsableColor = { r = r, g = g, b = b }
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.021, width = 0.5,
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityNotUsableAlpha"] = {
-    type = "range", name = "Icon Opacity", min = 0, max = 1.0, step = 0.05,
-    desc = "Icon opacity when the spell can't be cast for other reasons (wrong stance, missing buff, etc.).\n\nSet to 0 to hide the icon until castable.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.notUsableAlpha or 1.0
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notUsableAlpha = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.022, width = 0.8,
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityNotUsableDesat"] = {
-    type = "toggle", name = "Desaturate",
-    desc = "Desaturate (grayscale) the icon when the spell can't be cast.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.notUsableDesaturate or false
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.notUsableDesaturate = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.023, width = 0.6,
-    hidden = hideSection,
-  }
-
-  -- ───────────────────────────────────────────────────────────────────
-  -- USABLE GLOW
-  -- ───────────────────────────────────────────────────────────────────
-  entries["spellUsabilityGlow"] = {
-    type = "toggle", name = "Show Glow When Usable",
-    desc = "Show a glow effect while the spell has enough resources to cast.\n\nUseful for resource-gated spells with no cooldown — the glow tells you at a glance that you can cast it.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlow or false
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlow = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.031, width = 1.2,
-    hidden = hideSection,
-  }
-
-  entries["spellUsabilityGlowPreview"] = {
-    type = "toggle", name = "Preview",
-    desc = "Toggle usable glow preview for selected icon(s). Preview will automatically stop when you close the options panel.",
-    get = function()
-      return ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.GetUsableGlowPreviewState
-          and ns.CDMEnhanceOptions.GetUsableGlowPreviewState(mode == "aura")
-    end,
-    set = function(_, v)
-      if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.ToggleUsableGlowPreviewForSelection then
-        ns.CDMEnhanceOptions.ToggleUsableGlowPreviewForSelection(mode == "aura")
-      end
-    end,
-    order = orderBase + 0.0315, width = 0.5,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowCombatOnly"] = {
-    type = "toggle", name = "Combat Only",
-    desc = "Only show the usable glow while in combat.\n\nOut of combat, most spells are always usable so the glow would be redundant.",
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowCombatOnly or false
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowCombatOnly = v
-      end)
-      Refresh()
-    end,
-    order = orderBase + 0.032, width = 0.7,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowType"] = {
-    type = "select", name = "Glow Type",
-    desc = "Glow animation style for the usable indicator",
-    values = {
-      button   = "Button Glow",
-      pixel    = "Pixel Glow",
-      autocast = "Autocast Shine",
-      glow     = "Blizzard Default",
-    },
-    get = function()
-      local c = GetCfg(mode)
-      local t = c and c.spellUsability and c.spellUsability.usableGlowType or "button"
-      if t == "blizzard" then t = "glow" end  -- migrate removed option
-      return t
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowType = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.033, width = 0.7,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowColor"] = {
-    type = "color", name = "Glow Color", hasAlpha = true,
-    desc = "Color of the usable glow effect",
-    get = function()
-      local c = GetCfg(mode)
-      local col = c and c.spellUsability and c.spellUsability.usableGlowColor
-      if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end
-      return 1, 1, 1, 1
-    end,
-    set = function(_, r, g, b, a)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowColor = { r = r, g = g, b = b, a = a }
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.034, width = 0.5,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowScale"] = {
-    type = "range", name = "Scale", min = 0.25, max = 4.0, step = 0.05,
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowScale or 1.0
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowScale = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.035, width = 0.55,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowSpeed"] = {
-    type = "range", name = "Speed", min = 0.05, max = 1.0, step = 0.05,
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowSpeed or 0.25
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowSpeed = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.036, width = 0.55,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-    end,
-  }
-
-  entries["spellUsabilityGlowLines"] = {
-    type = "range", name = "Lines", min = 1, max = 16, step = 1,
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowLines or 8
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowLines = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.037, width = 0.55,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-          or (c.spellUsability.usableGlowType ~= "pixel")
-    end,
-  }
-
-  entries["spellUsabilityGlowThickness"] = {
-    type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowThickness or 2
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowThickness = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.038, width = 0.55,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-          or (c.spellUsability.usableGlowType ~= "pixel")
-    end,
-  }
-
-  entries["spellUsabilityGlowParticles"] = {
-    type = "range", name = "Particles", min = 1, max = 16, step = 1,
-    get = function()
-      local c = GetCfg(mode)
-      return c and c.spellUsability and c.spellUsability.usableGlowParticles or 4
-    end,
-    set = function(_, v)
-      ApplySetting(mode, function(c)
-        if not c.spellUsability then c.spellUsability = {} end
-        c.spellUsability.usableGlowParticles = v
-      end)
-      RefreshGlow()
-    end,
-    order = orderBase + 0.039, width = 0.55,
-    hidden = function()
-      if hideSection() then return true end
-      local c = GetCfg(mode)
-      return not (c and c.spellUsability and c.spellUsability.usableGlow)
-          or (c.spellUsability.usableGlowType ~= "autocast")
-    end,
-  }
-
-  return entries
+local function IsOptionsPanelOpen()
+    return ns.CDMEnhance and ns.CDMEnhance.IsOptionsPanelOpen
+        and ns.CDMEnhance.IsOptionsPanelOpen() or false
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- AURA OPTIONS  → called by CDMEnhanceOptions.GetCDMAuraIconsOptionsTable()
+-- HELPERS
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function ns.SpellUsabilityOptions.GetAuraArgs()
-  -- Spell Usability is COOLDOWN FRAMES ONLY - aura frames don't have usability state
-  -- This function is kept for backward compatibility but returns empty
-  return {}
+local function GetSpellIDFromFrame(frame)
+    if frame.cooldownInfo then
+        return frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
+    end
+    if frame.GetSpellID then
+        local id = frame:GetSpellID()
+        if id and not issecretvalue(id) then return id end
+    end
+    return nil
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- COOLDOWN OPTIONS  → called by CDMEnhanceOptions.GetCDMCooldownIconsOptionsTable()
+-- USABILITY TINTING (RefreshIconColor hook)
+--
+-- Runs AFTER CDM sets its native colors. Overrides vertex color based
+-- on spell usability state and user's custom tint settings.
+-- Skip when out of range (range indicator handles that independently).
+-- We do NOT check cooldown state here — cooldownDesaturated is SECRET.
+-- CDM's own desaturation makes colors subtle during cooldown anyway.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function ns.SpellUsabilityOptions.GetCooldownArgs()
-  local args = {}
-  local mode = "cooldown"
+-- Bypass keepBright hook when SpellUsability writes vertex color.
+-- SpellUsability is the authority for ready-state tinting (OOM, not-usable,
+-- normal) so keepBright must not override its writes.
+local function SetVertexColorBypassed(frame, iconTex, r, g, b, a)
+    frame._arcBypassVertexHook = true
+    iconTex:SetVertexColor(r, g, b, a or 1)
+    frame._arcBypassVertexHook = false
+end
 
-  -- Header
-  args.spellUsabilityHeader = {
-    type = "toggle",
-    name = function() return H().GetCooldownHeaderName("spellUsability", "Spell Usability") end,
-    desc = "Click to expand/collapse. Controls icon tinting, opacity, and glow based on whether the spell can be cast. Purple dot indicates per-icon customizations.",
-    dialogControl = "CollapsibleHeader",
-    get = function() return not H().collapsedSections.spellUsability end,
-    set = function(_, v) H().collapsedSections.spellUsability = not v end,
-    order = 109.65, width = "full",
-    hidden = function()
-      local h = H()
-      if h.HideIfNoCooldownSelection() then return true end
-      if h.IsEditingMixedTypes() then return true end
-      return false
-    end,
-  }
+function ns.CDMSpellUsability.OnRefreshIconColor(frame, cfg, spellID, isUsable, notEnoughMana, allDepleted)
+    if frame._arcBypassUsabilityHook then return end
 
-  -- All entries
-  for k, v in pairs(BuildUsabilityEntries(109.65, mode, HideCooldownUsability)) do
-    args[k] = v
-  end
+    -- Skip Arc Auras frames (they handle their own usability)
+    if frame._arcConfig or frame._arcAuraID then return end
+    
+    -- COOLDOWN FRAMES ONLY: Aura frames don't have spell usability state
+    if frame._arcViewerType == "aura" then return end
 
-  -- Reset (after all entries)
-  args.resetSpellUsability = {
-    type = "execute", name = "Reset Section",
-    desc = "Reset Spell Usability settings to defaults for selected icon(s)",
-    order = 109.699, width = 0.7,
-    hidden = HideCooldownUsability,
-    func = function()
-      H().ResetCooldownSectionSettings("spellUsability")
-      Refresh()
-    end,
-  }
+    -- Get settings (use pre-computed if provided)
+    if not cfg then
+        if ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame then
+            cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+        end
+    end
+    if not cfg then return end
 
-  return args
+    -- KEEP BRIGHT: When enabled, SpellUsability must not tint or desaturate.
+    -- SetVertexColorBypassed skips the keepBright vertex hook (by design),
+    -- so we must respect keepBright HERE before applying any usability visuals.
+    if cfg.keepBright then
+        local iconTex = frame.Icon or frame.icon
+        if iconTex and not iconTex.SetVertexColor and iconTex.Icon then
+            iconTex = iconTex.Icon
+        end
+        if iconTex and iconTex.SetVertexColor then
+            -- Force white (undo any CDM native tinting)
+            SetVertexColorBypassed(frame, iconTex, 1, 1, 1, 1)
+            -- Clear usability desat unless user explicitly allows desaturation with keepBright
+            if not cfg.keepBrightAllowDesat then
+                ApplyUsabilityDesat(frame, iconTex, false)
+            end
+        end
+        return
+    end
+
+    local su = cfg.spellUsability
+
+    -- Resolve icon texture early (shared by both disabled-override and enabled paths)
+    local iconTex = frame.Icon or frame.icon
+    if not iconTex then return end
+    -- Bar-style icons: frame.Icon is a Frame container with .Icon child texture
+    if not iconTex.SetVertexColor and iconTex.Icon then
+        iconTex = iconTex.Icon
+    end
+    if not iconTex or not iconTex.SetVertexColor then return end
+
+    -- When usability tinting is DISABLED, undo CDM's native tinting
+    -- (same pattern as range indicator disabled: hook fires after CDM
+    --  sets its usability colors, so we override back to white)
+    if not su or not su.enabled then
+        -- Don't override if spell is out of range AND range indicator is enabled
+        -- (let CDM/range handle the vertex color in that case)
+        if frame.spellOutOfRange then
+            local ri = cfg.rangeIndicator
+            local rangeEnabled = not ri or ri.enabled ~= false
+            if rangeEnabled then return end
+        end
+        -- Reset to full brightness (ITEM_USABLE_COLOR equivalent)
+        iconTex:SetVertexColor(1, 1, 1, 1)
+        -- Pass nil (not false!) so ApplyUsabilityDesat returns early and
+        -- does NOT clear desaturation.  CDM / CooldownState own desat when
+        -- usability tinting is disabled.
+        ApplyUsabilityDesat(frame, iconTex, nil)
+        return
+    end
+
+    -- Skip if spell is out of range AND range indicator is enabled (match ArcAuras)
+    if frame.spellOutOfRange then
+        local ri = cfg.rangeIndicator
+        local rangeEnabled = not ri or ri.enabled ~= false
+        if rangeEnabled then
+            -- Clear our desat request — range indicator owns visuals now
+            frame._arcUsabilityDesatRequest = nil
+            return
+        end
+    end
+
+    local spellID = spellID or GetSpellIDFromFrame(frame)
+    if not spellID then return end
+
+    -- ── Priority 1: On Cooldown (all charges depleted) ──────────────
+    -- Shadow CD converts secret duration into non-secret boolean.
+    -- IsShown()=true → all charges depleted / full CD active.
+    -- When called from hook, allDepleted is pre-computed (with GCD guard applied).
+    if allDepleted == nil then
+        local shadowCD = frame._arcCDMShadowCooldown
+        allDepleted = shadowCD and shadowCD:IsShown() or false
+    end
+
+    -- RECHARGING: charge shadow shown but main shadow hidden (1+ charges, one recharging).
+    -- CooldownState owns desat in this state too — bail out same as depleted.
+    local isRecharging = false
+    if not allDepleted then
+        local chargeShadow = frame._arcCDMChargeShadow
+        isRecharging = chargeShadow and chargeShadow:IsShown() or false
+    end
+
+    if allDepleted and su.useOnCooldownColor then
+        -- CooldownState's cooldownTint takes priority (enforced via _arcDesiredVertexColor).
+        -- Only set usability's on-CD color when CooldownState isn't enforcing.
+        if not frame._arcDesiredVertexColor then
+            local c = su.onCooldownColor or ON_CD_COLOR
+            SetVertexColorBypassed(frame, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+        end
+        ApplyUsabilityDesat(frame, iconTex, nil)  -- CooldownState owns desat during cooldown
+        return
+    elseif allDepleted then
+        -- Spell is fully depleted but user hasn't enabled custom on-cooldown color.
+        -- Bail out: CDM / CooldownState own desat + visuals during cooldown.
+        -- Without this, C_Spell.IsSpellUsable (resource check, not CD check)
+        -- returns true and the "normal/usable" path below would force desat=0,
+        -- wiping CDM's native cooldown desaturation.
+        ApplyUsabilityDesat(frame, iconTex, nil)  -- clear request, don't touch desat
+        return
+    elseif isRecharging then
+        -- Charge spell has 1+ charges available but is recharging.
+        -- CooldownState owns desat here too — same bail-out as depleted.
+        -- Without this, isUsable=true triggers normalDesaturate path every
+        -- RefreshIconColor (~3x/s), writing SetDesaturation(0) with bypass
+        -- and fighting CDM's charge timer desaturation continuously.
+        ApplyUsabilityDesat(frame, iconTex, nil)
+        return
+    end
+
+    -- ── Priority 2: Resource / Usability checks (non-secret bools) ──
+    -- These ONLY apply in READY state (not on cooldown). Follows ABE pattern:
+    -- on-CD → CD tint only. Ready → usability tints.
+    -- When called from hook, isUsable/notEnoughMana are pre-computed.
+    if isUsable == nil then
+        isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
+    end
+
+    if isUsable then
+        -- ── Priority 3: Normal / Usable state ──────────────────────
+        if su.useNormalColor then
+            local c = su.normalColor or { r = 1, g = 1, b = 1 }
+            SetVertexColorBypassed(frame, iconTex, c.r or 1, c.g or 1, c.b or 1, 1)
+        end
+        ApplyUsabilityDesat(frame, iconTex, su.normalDesaturate)
+        return
+    elseif notEnoughMana then
+        local c = su.notEnoughResourceColor or NOT_ENOUGH_MANA
+        SetVertexColorBypassed(frame, iconTex, c.r or 0.5, c.g or 0.5, c.b or 1.0, c.a or 1.0)
+        ApplyUsabilityDesat(frame, iconTex, su.notEnoughResourceDesaturate)
+        -- NOTE: Alpha is handled by CooldownState.ApplyReadyState which merges
+        -- usability alpha into readyAlpha (single-writer pattern, no fighting).
+    else
+        local c = su.notUsableColor or NOT_USABLE_COLOR
+        SetVertexColorBypassed(frame, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+        ApplyUsabilityDesat(frame, iconTex, su.notUsableDesaturate)
+        -- NOTE: Alpha is handled by CooldownState.ApplyReadyState (single-writer).
+    end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- GLOBAL DEFAULTS  → called by CDMEnhanceOptions global sections
+-- HOOK INSTALLER
+-- Called from CDMEnhance during frame enhancement.
+-- Installs RefreshIconColor hook for usability tinting.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function ns.SpellUsabilityOptions.GetGlobalAuraArgs(collapsedGlobalSections, GetGlobalCfg, ApplyGlobalSetting, RefreshGlobal)
-  return ns.SpellUsabilityOptions._BuildGlobalArgs(
-    collapsedGlobalSections, GetGlobalCfg, ApplyGlobalSetting, RefreshGlobal
-  )
+local function near(x, y) return math.abs((x or 0) - (y or 0)) < 0.02 end
+
+function ns.CDMSpellUsability.HookFrame(frame)
+    if not frame then return end
+    if frame._arcUsabilityTintHooked then return end
+    if not frame.RefreshIconColor then return end
+    
+    -- COOLDOWN FRAMES ONLY: Aura frames don't have spell usability state
+    if frame._arcViewerType == "aura" then return end
+
+    frame._arcUsabilityTintHooked = true
+
+    -- ── Per-button RefreshIconColor hook ──────────────────────────────
+    -- Stripped down: only handles keepBright and allDepleted/isRecharging
+    -- desat bail-outs. Custom tinting moved to Icon:SetVertexColor hook
+    -- below which fires only on actual state transitions (~8x vs 78x/s).
+    hooksecurefunc(frame, "RefreshIconColor", function(self)
+        if self._arcBypassUsabilityHook then return end
+        if self._arcConfig or self._arcAuraID then return end
+        if self._arcViewerType == "aura" then return end
+
+        local iconTex = self.Icon or self.icon
+        if iconTex and not iconTex.SetVertexColor and iconTex.Icon then iconTex = iconTex.Icon end
+        if not iconTex or not iconTex.SetVertexColor then return end
+
+        -- ── Priority 1: CooldownState tint (custom tint color during CD) ──
+        -- Set by CooldownState.Apply; overrides everything else.
+        local dvc = self._arcDesiredVertexColor
+        if dvc then
+            SetVertexColorBypassed(self, iconTex, dvc.r, dvc.g, dvc.b, 1)
+            return
+        end
+
+        local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame
+                    and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(self)
+        if not cfg then return end
+
+        -- ── Priority 2: keepBright ──
+        if cfg.keepBright then
+            SetVertexColorBypassed(self, iconTex, 1, 1, 1, 1)
+            if not cfg.keepBrightAllowDesat then
+                ApplyUsabilityDesat(self, iconTex, false)
+            end
+            return
+        end
+
+        -- ── Priority 3: Spell usability custom colors ──
+        local su = cfg.spellUsability
+        if not su or not su.enabled then
+            -- No custom colors — clear our desat request but don't touch vertex color.
+            -- CDM's native color stands.
+            ApplyUsabilityDesat(self, iconTex, nil)
+            return
+        end
+
+        local shadowCD = self._arcCDMShadowCooldown
+        local allDepleted = shadowCD and shadowCD:IsShown() or false
+        if allDepleted and self.isOnGCD then allDepleted = false end
+
+        -- On CD or recharging: CooldownState owns desat, don't apply usability color
+        if allDepleted then
+            -- Still apply on-cooldown custom tint if configured (and CooldownState isn't enforcing its own)
+            if su.useOnCooldownColor and not self._arcDesiredVertexColor then
+                local c = su.onCooldownColor or ON_CD_COLOR
+                SetVertexColorBypassed(self, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+            end
+            ApplyUsabilityDesat(self, iconTex, nil)
+            return
+        end
+        local chargeShadow = self._arcCDMChargeShadow
+        if chargeShadow and chargeShadow:IsShown() then
+            ApplyUsabilityDesat(self, iconTex, nil)
+            return
+        end
+
+        -- Read current CDM state from cached value (set by SetVertexColor detector)
+        local state = self._arcCDMUsabilityState or "USABLE"
+        if state == "USABLE" then
+            if su.useNormalColor then
+                local c = su.normalColor or { r=1, g=1, b=1 }
+                SetVertexColorBypassed(self, iconTex, c.r or 1, c.g or 1, c.b or 1, 1)
+            end
+            ApplyUsabilityDesat(self, iconTex, su.normalDesaturate)
+        elseif state == "NOT_MANA" then
+            local c = su.notEnoughResourceColor or NOT_ENOUGH_MANA
+            SetVertexColorBypassed(self, iconTex, c.r or 0.5, c.g or 0.5, c.b or 1.0, c.a or 1.0)
+            ApplyUsabilityDesat(self, iconTex, su.notEnoughResourceDesaturate)
+        elseif state == "NOT_USABLE" then
+            local c = su.notUsableColor or NOT_USABLE_COLOR
+            SetVertexColorBypassed(self, iconTex, c.r or 0.4, c.g or 0.4, c.b or 0.4, c.a or 1.0)
+            ApplyUsabilityDesat(self, iconTex, su.notUsableDesaturate)
+        end
+        -- NOT_RANGE: range indicator owns the color, we don't override
+    end)
+
+    -- ── Per-frame Icon:SetVertexColor hook — state detection only ──
+    -- CDM writes a known color to frame.Icon every RefreshIconColor call.
+    -- We classify it to drive glow and alpha — we do NOT write colors here.
+    -- Color writing moved to the RefreshIconColor hook above (single-pass, no fighting).
+    local iconWidget = frame.Icon
+    if iconWidget and iconWidget.SetVertexColor and not iconWidget._arcUsabilityColorHooked then
+        iconWidget._arcUsabilityColorHooked = true
+        local lastState = nil
+        hooksecurefunc(iconWidget, "SetVertexColor", function(self, r, g, b)
+            -- Skip writes made by us (SetVertexColorBypassed) to prevent re-entry
+            if frame._arcBypassVertexHook then return end
+            local state
+            if near(r,1.0) and near(g,1.0) and near(b,1.0) then
+                state = "USABLE"
+            elseif near(r,0.5) and near(g,0.5) and near(b,1.0) then
+                state = "NOT_MANA"
+            elseif near(r,0.4) and near(g,0.4) and near(b,0.4) then
+                state = "NOT_USABLE"
+            elseif near(r,0.64) and near(g,0.15) and near(b,0.15) then
+                state = "NOT_RANGE"
+            end
+            if not state then return end  -- skip non-CDM writes
+
+            local stateChanged = (state ~= lastState)
+            lastState = state
+            frame._arcCDMUsabilityState = state
+
+            -- Glow + alpha: only on actual state transitions
+            if stateChanged then
+                local cfg = frame._arcCfg
+                if not cfg and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame then
+                    cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+                end
+                if not cfg then return end
+                local spellID = frame._arcCachedSpellID
+                             or (frame.cooldownInfo and (frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID))
+
+                if state ~= "NOT_RANGE" then
+                    local isUsable = (state == "USABLE")
+                    local shadowCD = frame._arcCDMShadowCooldown
+                    local allDepleted = shadowCD and shadowCD:IsShown() or false
+                    if allDepleted and frame.isOnGCD then allDepleted = false end
+                    ns.CDMSpellUsability.UpdateGlow(frame, cfg, spellID, isUsable, allDepleted)
+                end
+
+                if state == "NOT_RANGE" then
+                    if spellID then
+                        local usable = C_Spell.IsSpellUsable(spellID)
+                        if usable and ns.CooldownState and ns.CooldownState.ApplyUsabilityAlpha then
+                            ns.CooldownState.ApplyUsabilityAlpha(frame, cfg)
+                        end
+                    end
+                else
+                    if ns.CooldownState and ns.CooldownState.ApplyUsabilityAlpha then
+                        ns.CooldownState.ApplyUsabilityAlpha(frame, cfg)
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Shadow cooldown frame is now created and managed by CooldownState.
+    -- Create it eagerly here so it exists before the first event fires.
+    if ns.CooldownState and ns.CooldownState.EnsureShadow then
+        ns.CooldownState.EnsureShadow(frame)
+    end
 end
 
-function ns.SpellUsabilityOptions.GetGlobalCooldownArgs(collapsedGlobalSections, GetGlobalCfg, ApplyGlobalSetting, RefreshGlobal)
-  return ns.SpellUsabilityOptions._BuildGlobalArgs(
-    collapsedGlobalSections, GetGlobalCfg, ApplyGlobalSetting, RefreshGlobal
-  )
+-- ═══════════════════════════════════════════════════════════════════════════
+-- USABLE GLOW OVERLAY (dedicated per-icon frame)
+--
+-- Creates a DEDICATED child frame per icon for usable glow.
+-- This gives usable glow its own _ButtonGlow (LCG stores one per frame),
+-- eliminating all conflicts with ready/proc/preview glow on _arcGlowOverlay.
+-- Same technique used by ArcAurasCooldown and EllesmereBarGlows.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Usable glow overlay + raw LCG removed — ns.Glows handles everything.
+-- ns.Glows uses keyed glows so ButtonGlow conflicts are impossible.
+
+local function StopUsableGlow(frame)
+    if ns.Glows then
+        ns.Glows.Stop(frame, "ArcUI_UsableGlow")
+    end
 end
 
-function ns.SpellUsabilityOptions._BuildGlobalArgs(collapsedSections, GetGlobalCfg, ApplyGlobalSetting, RefreshGlobal)
-  local args = {}
+-- ═══════════════════════════════════════════════════════════════════════════
+-- GLOW UPDATE (called from CooldownState relay + ApplyIconVisuals)
+--
+-- Manages usable glow overlay based on spell state:
+--   Show glow when: spell has resources (IsSpellUsable)
+--                   AND not all charges depleted (shadow CD not shown)
+--   Hide glow when: no resources OR all charges consumed
+--
+-- NOTE: Shadow cooldown is fed by CooldownState BEFORE this runs.
+-- The event-driven dispatch order guarantees fresh shadow state.
+-- ═══════════════════════════════════════════════════════════════════════════
 
-  args.spellUsabilityHeader = {
-    type = "toggle", name = "Spell Usability", dialogControl = "CollapsibleHeader",
-    get = function() return not collapsedSections.spellUsability end,
-    set = function(_, v) collapsedSections.spellUsability = not v end,
-    order = 55, width = "full",
-  }
+function ns.CDMSpellUsability.UpdateGlow(frame, cfg, spellID, isUsable, allDepleted)
+    if not frame then return end
+    -- Skip Arc Auras frames
+    if frame._arcConfig or frame._arcAuraID then return end
 
-  args.spellUsabilityEnabled = {
-    type = "toggle", name = "Enable Usability Tinting",
-    desc = "Tint spell icons based on whether they can be cast.\n\n"
-        .. "|cff8080ffBlue|r = Not enough resource\n"
-        .. "|cff999999Gray|r = Not usable",
-    get = function()
-      local g = GetGlobalCfg()
-      return not g.spellUsability or g.spellUsability.enabled ~= false
-    end,
-    set = function(_, v) ApplyGlobalSetting("spellUsability.enabled", v); RefreshGlobal() end,
-    order = 55.1, width = 1.0,
-    hidden = function() return collapsedSections.spellUsability end,
-  }
+    if not cfg then
+        if ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame then
+            cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+        end
+    end
+    if not cfg then return end
 
-  return args
+    local su = cfg.spellUsability
+
+    -- Use pre-computed spellID or look it up
+    spellID = spellID or GetSpellIDFromFrame(frame)
+
+    -- Check preview mode
+    local cdID = frame.cooldownID
+    local isPreview = cdID
+        and ns.CDMEnhanceOptions
+        and ns.CDMEnhanceOptions.IsUsableGlowPreviewActive
+        and ns.CDMEnhanceOptions.IsUsableGlowPreviewActive(cdID)
+
+    local shouldGlow = false
+
+    if isPreview then
+        -- Preview always shows glow
+        shouldGlow = true
+    elseif su and su.usableGlow and spellID then
+            -- Use pre-computed allDepleted or compute from shadow
+            if allDepleted == nil then
+                local shadowCD = frame._arcCDMShadowCooldown
+                allDepleted = shadowCD and shadowCD:IsShown() or false
+                -- GCD guard: use frame.isOnGCD — no API call needed
+                if allDepleted and frame.isOnGCD then
+                    allDepleted = false
+                end
+            end
+
+            -- Read CDM's usability decision from cache — zero IsSpellUsable calls
+            if isUsable == nil then
+                local cdmState = frame._arcCDMUsabilityState
+                if cdmState == "USABLE" then
+                    isUsable = true
+                elseif cdmState == "NOT_MANA" or cdmState == "NOT_USABLE" then
+                    isUsable = false
+                elseif cdmState == "NOT_RANGE" then
+                    -- Out of range doesn't mean not resource-usable — check actual state
+                    isUsable = spellID and C_Spell.IsSpellUsable(spellID) or false
+                elseif spellID then
+                    isUsable = C_Spell.IsSpellUsable(spellID)
+                end
+            end
+
+            -- Glow when: has resources AND not fully on cooldown
+            if isUsable and not allDepleted then
+                local combatOnly = su.usableGlowCombatOnly
+                shouldGlow = not combatOnly or InCombatLockdown()
+            end
+    end
+
+    if shouldGlow then
+        local glowSu = su or {}
+        local originalType = glowSu.usableGlowType or "button"
+        local glowType = originalType
+        if glowType == "blizzard" then glowType = "proc" end  -- migrate old name
+        if glowType == "glow" then glowType = "proc" end      -- migrate alt name
+        if glowType == "default" then glowType = "proc" end   -- "default" routes through LCG proc
+
+        -- Skip if glow already active with same type AND same visual signature.
+        -- Prevents restart when UpdateGlow fires multiple times with same outcome.
+        local gc = glowSu.usableGlowColor
+        local sig = glowType
+                 .. (gc and (gc.r or 0) .. (gc.g or 0) .. (gc.b or 0) or "")
+                 .. (glowSu.usableGlowScale or 1)
+                 .. (glowSu.usableGlowSpeed or 0.25)
+                 .. "|s=" .. tostring(glowSu.usableGlowFrameStrata or "inherit")
+                 .. "|l=" .. tostring(glowSu.usableGlowFrameLevel or "")
+        if frame._arcCDMUsableGlowActive
+        and frame._arcCDMUsableGlowType == glowType
+        and frame._arcCDMUsableGlowSig  == sig then
+            return
+        end
+
+        -- Color: nil for "default" with no user color = LCG native golden texture
+        local color = nil
+        if gc then
+            color = {gc.r or 1, gc.g or 0.85, gc.b or 0.1, gc.a or 1}
+        elseif originalType ~= "default" then
+            color = {1, 0.85, 0.1, 1}
+        end
+
+        -- Apply padding offset (matches CDMEnhance behavior)
+        local padding = cfg.padding or 0
+        local glowOffset = -padding
+
+        if ns.Glows then
+            local glowStrata = glowSu.usableGlowFrameStrata
+            ns.Glows.Start(frame, "ArcUI_UsableGlow", glowType, {
+                color = color,
+                lines = glowSu.usableGlowLines or 8,
+                frequency = glowSu.usableGlowSpeed or 0.25,
+                thickness = glowSu.usableGlowThickness or 2,
+                particles = glowSu.usableGlowParticles or 4,
+                scale = glowSu.usableGlowScale or 1,
+                xOffset = glowOffset + (glowSu.usableGlowXOffset or 0),
+                yOffset = glowOffset + (glowSu.usableGlowYOffset or 0),
+                strata = (glowStrata ~= "inherit") and glowStrata or nil,
+                frameLevel = glowSu.usableGlowFrameLevel,
+            })
+        end
+        frame._arcCDMUsableGlowActive = true
+        frame._arcCDMUsableGlowType   = glowType
+        frame._arcCDMUsableGlowSig    = sig
+    elseif frame._arcCDMUsableGlowActive then
+        StopUsableGlow(frame)
+        frame._arcCDMUsableGlowActive = false
+        frame._arcCDMUsableGlowType = nil
+        frame._arcCDMUsableGlowSig = nil
+    end
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CLEANUP HELPERS
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Force-stop all usable glows (for settings refresh)
+function ns.CDMSpellUsability.StopAllGlows()
+    if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
+    local enhanced = ns.CDMEnhance.GetEnhancedFrames()
+    if not enhanced then return end
+    for _, entry in pairs(enhanced) do
+        local frame = entry.frame
+        if frame and frame._arcCDMUsableGlowActive then
+            StopUsableGlow(frame)
+            frame._arcCDMUsableGlowActive = false
+            frame._arcCDMUsableGlowType = nil
+            frame._arcCDMUsableGlowSig = nil
+        end
+    end
+end
+
+-- Refresh all CDM frame usability visuals
+-- IMPORTANT: Never call Blizzard's RefreshIconColor from here — it does a
+-- boolean test on IsSpellUsable which is SECRET and taint persists even
+-- after InCombatLockdown() returns false. Call our hook directly.
+function ns.CDMSpellUsability.RefreshAll()
+    if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
+    local enhanced = ns.CDMEnhance.GetEnhancedFrames()
+    if not enhanced then return end
+    for cdID, entry in pairs(enhanced) do
+        local frame = entry.frame
+        if frame then
+            ns.CDMSpellUsability.OnRefreshIconColor(frame)
+            ns.CDMSpellUsability.UpdateGlow(frame)
+            -- Re-run CooldownState so usability alpha gets applied
+            if ns.CooldownState and ns.CooldownState.Apply then
+                local cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame
+                    and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+                if cfg then ns.CooldownState.Apply(frame, cfg) end
+            end
+        end
+    end
+end
+
+-- Refresh a single CDM frame by cooldownID
+function ns.CDMSpellUsability.RefreshFrame(cdID)
+    if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
+    local enhanced = ns.CDMEnhance.GetEnhancedFrames()
+    if not enhanced or not enhanced[cdID] then return end
+    local frame = enhanced[cdID].frame
+    if frame then
+        -- Force glow restart
+        if frame._arcCDMUsableGlowActive then
+            StopUsableGlow(frame)
+            frame._arcCDMUsableGlowActive = false
+            frame._arcCDMUsableGlowType = nil
+            frame._arcCDMUsableGlowSig = nil
+        end
+        -- Re-evaluate
+        ns.CDMSpellUsability.UpdateGlow(frame)
+        ns.CDMSpellUsability.OnRefreshIconColor(frame)
+        -- Re-run CooldownState so usability alpha gets applied
+        if ns.CooldownState and ns.CooldownState.Apply then
+            local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame
+                and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+            if cfg then ns.CooldownState.Apply(frame, cfg) end
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OPTIONS PANEL STATE — CALLBACK (zero polling)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+if ns.CDMShared and ns.CDMShared.RegisterPanelCallback then
+    ns.CDMShared.RegisterPanelCallback("CDMSpellUsability", {
+        onOpen = function() ns.CDMSpellUsability.RefreshAll() end,
+        onClose = function() ns.CDMSpellUsability.RefreshAll() end,
+    })
+end
+
+-- SPELL_UPDATE_USABLE: No longer needs its own event handler.
+-- Blizzard's CDM calls RefreshIconColor on each affected button when this
+-- event fires. Our per-button hooksecurefunc (installed in HookFrame) rides
+-- that dispatch and handles tinting, glow, and alpha-on-flip per-button.
+-- This eliminates the O(N) RefreshAll() that was the #1 source of stutter
+-- on multi-spell-change abilities like DH Metamorphosis.
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- STUCK RANGE-TINT REPAIR — two layers, both event-driven, zero idle cost.
+--
+-- VERIFIED FROM CDM SOURCE: item frames have NO OnEvent script (XML wires
+-- only OnLoad/OnEnter/OnLeave), so their RegisterEvent("SPELL_RANGE_CHECK_
+-- UPDATE") in OnCooldownIDSet is dead code. The only live delivery path is
+-- the VIEWER's OnEvent — registered in viewer OnShow, removed in OnHide.
+-- The event fires only on TRANSITIONS and each item caches the result in
+-- frame.spellOutOfRange. Two known ways the flag can freeze red:
+--   A) A transition lands while the viewers are hidden (managed-frame hides,
+--      edit mode visibility) → missed event → stale flag.
+--   B) The client-side range tracker for that spellID dies (any unbalanced
+--      EnableSpellRangeCheck(id,false) by any addon) → NO events fire at
+--      all, even with viewers shown.
+-- Casting a spell that triggers a spell-override update re-runs
+-- OnCooldownIDSet (re-poll + re-enable), which is why Wake of Ashes
+-- sometimes "fixes" it. Reload always does.
+--
+-- LAYER 1 (watcher): covers A. Permanent SPELL_RANGE_CHECK_UPDATE listener,
+-- gated to do nothing while both cooldown viewers are live (CDM-first).
+-- LAYER 2 (resync sweep): covers B and anything not yet diagnosed — it does
+-- not depend on knowing WHY the flag is stale. On combat entry and throttled
+-- target changes, re-derive truth from C_Spell.IsSpellInRange, fix only on
+-- proven mismatch, and defensively re-enable the range tracker (staleness
+-- proves events were missed). No polling, no OnUpdate, no timers.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function GetCDMRangeColor()
+    if CooldownViewerConstants and CooldownViewerConstants.ITEM_NOT_IN_RANGE_COLOR then
+        return CooldownViewerConstants.ITEM_NOT_IN_RANGE_COLOR:GetRGBA()
+    end
+    return 0.64, 0.15, 0.15, 1.0
+end
+
+-- Mirror CDM's range visuals on one frame after we corrected its flag.
+-- Raw (non-bypassed) vertex writes are intentional: the SetVertexColor
+-- state-detector hook above classifies them exactly like CDM's own writes,
+-- keeping _arcCDMUsabilityState / glow / alpha in sync.
+local function ApplyRangeStateVisuals(frame, spellID, outOfRange)
+    local rCfg = frame._arcRangeCfg
+    local rangeEnabled = not rCfg or rCfg.enabled ~= false
+    local iconTex = frame.GetIconTexture and frame:GetIconTexture() or frame.Icon
+    local oorTex = frame.GetOutOfRangeTexture and frame:GetOutOfRangeTexture() or frame.OutOfRange
+
+    if outOfRange and rangeEnabled then
+        -- Mirror CDM: red tint + OOR overlay.
+        if iconTex and iconTex.SetVertexColor then
+            iconTex:SetVertexColor(GetCDMRangeColor())
+        end
+        if oorTex then oorTex:Show() end
+    else
+        -- Back in range (or range indicator disabled): clear the overlay,
+        -- restore CDM's usability color priority, then let our hook re-apply
+        -- any custom tints on top.
+        if oorTex then oorTex:Hide() end
+        if iconTex and iconTex.SetVertexColor then
+            local isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
+            if isUsable then
+                iconTex:SetVertexColor(1, 1, 1, 1)
+            elseif notEnoughMana then
+                iconTex:SetVertexColor(0.5, 0.5, 1.0, 1)
+            else
+                iconTex:SetVertexColor(0.4, 0.4, 0.4, 1)
+            end
+        end
+        ns.CDMSpellUsability.OnRefreshIconColor(frame)
+    end
+end
+
+-- ── LAYER 1: gated transition watcher (mechanism A) ──────────────────────
+local rangeWatcher = CreateFrame("Frame")
+rangeWatcher:RegisterEvent("SPELL_RANGE_CHECK_UPDATE")
+rangeWatcher:SetScript("OnEvent", function(_, _, spellID, inRange, checksRange)
+    -- CDM-FIRST GATE: if both cooldown viewers are live, CDM's own
+    -- forwarding handles this event fully — do nothing.
+    local essential = EssentialCooldownViewer
+    local utility = UtilityCooldownViewer
+    local essLive = essential and essential:IsEventRegistered("SPELL_RANGE_CHECK_UPDATE")
+    local utiLive = utility and utility:IsEventRegistered("SPELL_RANGE_CHECK_UPDATE")
+    if essLive and utiLive then return end
+
+    if not spellID or issecretvalue(spellID) then return end
+    if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
+    local enhanced = ns.CDMEnhance.GetEnhancedFrames()
+    if not enhanced then return end
+
+    local outOfRange = (checksRange == true) and (inRange == false)
+
+    for _, entry in pairs(enhanced) do
+        local frame = entry.frame
+        -- rangeCheckSpellID is set by CDM's OnCooldownIDSet only on cooldown
+        -- item frames with ranged spells — naturally excludes aura frames and
+        -- Arc Auras frames (they track range in their own module).
+        if frame and frame.rangeCheckSpellID == spellID then
+            if frame.spellOutOfRange ~= outOfRange then
+                frame.spellOutOfRange = outOfRange
+                ApplyRangeStateVisuals(frame, spellID, outOfRange)
+            end
+        end
+    end
+end)
+
+-- ── LAYER 2: staleness resync sweep (mechanism B + unknowns) ─────────────
+-- Runs on combat entry and on target changes (throttled to 1/s). Re-derives
+-- the true range state per frame; only frames whose cached flag disagrees
+-- with reality get touched. A mismatch PROVES delivery failed for that
+-- spell, so we also re-enable its range tracker — harmless if it was alive
+-- (refcounted), resurrecting if it was dead.
+local lastResyncTime = 0
+local function ResyncAllRangeStates()
+    local now = GetTime()
+    if now - lastResyncTime < 1.0 then return end
+    lastResyncTime = now
+
+    if not ns.CDMEnhance or not ns.CDMEnhance.GetEnhancedFrames then return end
+    local enhanced = ns.CDMEnhance.GetEnhancedFrames()
+    if not enhanced then return end
+
+    for _, entry in pairs(enhanced) do
+        local frame = entry.frame
+        local sid = frame and frame.rangeCheckSpellID
+        if sid and not issecretvalue(sid) then
+            local inRange = C_Spell.IsSpellInRange(sid)
+            -- Skip if the result is secret (instance edge cases) — never
+            -- store a secret into spellOutOfRange, CDM compares it later.
+            if not issecretvalue(inRange) then
+                local outOfRange = (inRange == false)
+                if frame.spellOutOfRange ~= outOfRange then
+                    frame.spellOutOfRange = outOfRange
+                    ApplyRangeStateVisuals(frame, sid, outOfRange)
+                    -- Staleness proven → events were missed for this spell.
+                    -- Defensively resurrect its range tracker.
+                    if C_Spell.EnableSpellRangeCheck then
+                        C_Spell.EnableSpellRangeCheck(sid, true)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local resyncWatcher = CreateFrame("Frame")
+resyncWatcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+resyncWatcher:RegisterEvent("PLAYER_TARGET_CHANGED")
+resyncWatcher:SetScript("OnEvent", function()
+    ResyncAllRangeStates()
+end)
+
+-- ── CDM usability state cache via Icon:SetVertexColor ────────────────────
+-- CDM's RefreshIconColor calls IsSpellUsable then immediately writes one of
+-- four known colors to frame.Icon:SetVertexColor. We hook the mixin ONCE
+-- globally and classify the color into a usability state, stored on the frame.
+-- The diff guard means we only fire when the state actually changes — the log
+-- confirmed ~10 real transitions vs 87+ SpellUpdateUsable broadcast fires.
+-- Our RefreshIconColor hook reads _arcCDMUsabilityState instead of calling
+-- IsSpellUsable itself — drops IsSpellUsable from ~220/s to ~0/s.
+--
+-- States: "USABLE" | "NOT_MANA" | "NOT_USABLE" | "NOT_RANGE"
+--
+-- CDM color constants (CooldownViewer.lua):
+--   ITEM_USABLE_COLOR        = (1.0, 1.0, 1.0)
+--   ITEM_NOT_ENOUGH_MANA_COLOR = (0.5, 0.5, 1.0)
+--   ITEM_NOT_USABLE_COLOR    = (0.4, 0.4, 0.4)
+--   ITEM_NOT_IN_RANGE_COLOR  = (0.64, 0.15, 0.15)
+-- Per-frame hook installed in HookFrame above — fires only on state transitions.

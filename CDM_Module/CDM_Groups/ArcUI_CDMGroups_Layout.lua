@@ -97,7 +97,12 @@ local function ApplyClickThrough(frame, enable)
     if not frame then return end
     
     if enable then
-        frame:EnableMouse(false)
+        -- CRITICAL ORDER: Clear drag FIRST, then disable mouse
+        -- RegisterForDrag("LeftButton") implicitly re-enables mouse in WoW,
+        -- so we must clear it and disable movable before calling EnableMouse(false)
+        frame:RegisterForDrag()         -- Clear drag registration
+        frame:SetMovable(false)         -- Clear movable flag
+        frame:EnableMouse(false)        -- NOW disable mouse (will stick)
         
         -- Disable ArcUI overlays
         local overlays = { frame._arcOverlay, frame._arcTextOverlay, frame._arcIconOverlay }
@@ -184,11 +189,11 @@ ns.CDMGroups.ApplyClickThrough = ApplyClickThrough
 
 local function GetSlotDimensions(layout)
     local baseScale = 36
-    local iconSize = layout.iconSize or 36
-    local iconWidth = layout.iconWidth or 36
-    local iconHeight = layout.iconHeight or 36
+    local iconSize = math.floor((layout.iconSize or 36) + 0.5)
+    local iconWidth = math.floor((layout.iconWidth or 36) + 0.5)
+    local iconHeight = math.floor((layout.iconHeight or 36) + 0.5)
     local scale = iconSize / baseScale
-    return iconWidth * scale, iconHeight * scale
+    return math.floor(iconWidth * scale + 0.5), math.floor(iconHeight * scale + 0.5)
 end
 ns.CDMGroups.GetSlotDimensions = GetSlotDimensions
 
@@ -239,8 +244,17 @@ ns.CDMGroups.ApplyTooltipSettings = ApplyTooltipSettings
 
 local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
     if not frame then return slotW, slotH end
-    
-    -- CRITICAL: Clear free icon flag so parent hooks don't fight us
+
+    -- Snap slot dimensions to whole physical pixels so all frames render at identical
+    -- pixel sizes. Raw integer slotW (e.g. 47) at non-ideal scales (ppu=1.8) gives
+    -- 84.6px — WoW alternates between 84 and 85px per frame → visible size inconsistency.
+    local _ppu = 1
+    local _, _sh = GetPhysicalScreenSize()
+    local _us = UIParent:GetScale()
+    if _sh and _sh > 0 and _us and _us > 0 then _ppu = (_sh / 768) * _us end
+    slotW = math.floor(slotW * _ppu + 0.5) / _ppu
+    slotH = math.floor(slotH * _ppu + 0.5) / _ppu
+    local effectiveW, effectiveH = slotW, slotH
     frame._cdmgIsFreeIcon = nil
     frame._cdmgFreeTargetSize = nil
     
@@ -259,11 +273,23 @@ local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
     if not frame._arcHiddenUnequipped and not frame._arcHiddenByBar then
         frame:Show()
     end
+    -- Always strip IconOverlay shadow on re-layout — CDM may have re-shown it.
+    -- If keepCDMStyle is on, the deferred RefreshAllStyles below re-adds it
+    -- at the correct position after layout settles.
+    if frame._arcIconOverlay then
+        frame._arcIconOverlay:SetAlpha(0)
+        frame._arcIconOverlay:Hide()
+    end
+    for _, region in ipairs({frame:GetRegions()}) do
+        if region:IsObjectType("Texture") then
+            local atlas = region:GetAtlas()
+            if atlas and atlas:find("IconOverlay") then
+                region:SetAlpha(0)
+                region:Hide()
+            end
+        end
+    end
     frame._arcRecoveryProtection = GetTime() + 0.5
-    
-    -- Default to slot dimensions
-    local effectiveW = slotW
-    local effectiveH = slotH
     
     -- Check for per-icon size override from CDMEnhance
     -- ONLY apply custom size when useGroupScale is explicitly OFF
@@ -313,8 +339,19 @@ local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
             if db then
                 clickThroughEnabled = db.clickThrough == true
             end
+            -- CRITICAL ORDER: Tooltips FIRST, then click-through LAST.
+            -- SetScript("OnEnter", fn) implicitly re-enables mouse in WoW,
+            -- so click-through's EnableMouse(false) must come AFTER tooltip restore.
+            -- When click-through is ON, force tooltips off (can't fire without mouse anyway).
+            ApplyTooltipSettings(frame, clickThroughEnabled or ShouldDisableTooltips())
             ApplyClickThrough(frame, clickThroughEnabled)
+        else
+            -- Panel open - just apply tooltip settings normally
+            ApplyTooltipSettings(frame, ShouldDisableTooltips())
         end
+    else
+        -- Drag mode - just apply tooltip settings normally
+        ApplyTooltipSettings(frame, ShouldDisableTooltips())
     end
     
     -- Return effective dimensions for centering calculations
@@ -408,8 +445,13 @@ function ns.CDMGroups.RefreshIconSettings()
     end
     
     -- Also refresh free icons
+    -- CRITICAL: When click-through is ON, force tooltips off too.
+    -- SetScript("OnEnter", fn) implicitly re-enables mouse in WoW,
+    -- so restoring tooltip handlers after ApplyClickThrough undoes EnableMouse(false).
+    local disableTooltips = clickThrough or ShouldDisableTooltips()
     for cdID, data in pairs(ns.CDMGroups.freeIcons or {}) do
         if data.frame then
+            ApplyTooltipSettings(data.frame, disableTooltips)
             ApplyClickThrough(data.frame, clickThrough)
         end
     end
@@ -418,6 +460,19 @@ function ns.CDMGroups.RefreshIconSettings()
     for groupName, group in pairs(ns.CDMGroups.groups or {}) do
         if group and group.Layout then
             group:Layout()
+        end
+    end
+
+    -- If keepCDMStyle is on, SetupFrameInContainer stripped the shadow overlay.
+    -- Defer a CDMEnhance refresh so it gets re-applied at the correct position.
+    do
+        local specData = Shared and Shared.GetCurrentSpecData and Shared.GetCurrentSpecData()
+        if specData and specData.keepCDMStyle == true then
+            C_Timer.After(0, function()
+                if ns.CDMEnhance and ns.CDMEnhance.RefreshAllStyles then
+                    ns.CDMEnhance.RefreshAllStyles()
+                end
+            end)
         end
     end
 end
@@ -673,6 +728,19 @@ function ns.CDMGroups.RefreshIconLayout(cooldownID)
             if group.Layout then
                 group:Layout()
             end
+        end
+    end
+
+    -- If keepCDMStyle is on, shadow overlay offsets depend on frame dimensions.
+    -- Defer a CDMEnhance refresh so it recalculates after layout settles.
+    do
+        local specData = Shared and Shared.GetCurrentSpecData and Shared.GetCurrentSpecData()
+        if specData and specData.keepCDMStyle == true then
+            C_Timer.After(0, function()
+                if ns.CDMEnhance and ns.CDMEnhance.RefreshAllStyles then
+                    ns.CDMEnhance.RefreshAllStyles()
+                end
+            end)
         end
     end
 end

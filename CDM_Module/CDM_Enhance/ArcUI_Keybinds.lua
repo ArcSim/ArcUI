@@ -170,7 +170,7 @@ local keybindCache = {
 -- Stores addon bar buttons found via EnumerateFrames so we never
 -- have to iterate all UI frames again on form/bar changes.
 -- ===================================================================
-local addonButtonCache = {}    -- array of {frame=, action=, bindingName=}
+local addonButtonCache = {}    -- array of frames
 local addonButtonCacheBuilt = false
 
 local function FormatKeybind(raw)
@@ -312,12 +312,10 @@ end
 -- ===================================================================
 -- ADDON BUTTON HELPERS (used by one-time EnumerateFrames scan)
 -- ===================================================================
+
 local function IsForbiddenFrame(f)
     if not f then return true end
-    local ok, forbidden = pcall(function()
-        return f.IsForbidden and f:IsForbidden()
-    end)
-    return not ok or forbidden
+    return f.IsForbidden and f:IsForbidden()
 end
 
 local function GetHotkeyFromButton(button)
@@ -325,8 +323,8 @@ local function GetHotkeyFromButton(button)
     
     -- Try HotKey fontstring first (most addons have this)
     if button.HotKey and button.HotKey.GetText then
-        local ok, text = pcall(function() return button.HotKey:GetText() end)
-        if ok and text and text ~= "" then
+        local text = button.HotKey:GetText()
+        if text and text ~= "" then
             local clean = text:gsub("[%c]", ""):gsub("^%s+", ""):gsub("%s+$", "")
             if clean ~= "" 
                and clean:upper() ~= "UNBOUND" 
@@ -340,8 +338,8 @@ local function GetHotkeyFromButton(button)
     
     -- Try GetHotkey method
     if button.GetHotkey and type(button.GetHotkey) == "function" then
-        local ok, key = pcall(function() return button:GetHotkey() end)
-        if ok and key and type(key) == "string" and key ~= "" then
+        local key = button:GetHotkey()
+        if key and type(key) == "string" and key ~= "" then
             if not key:match("^[%.…]+$") and not key:match("%.%.") then
                 return key
             end
@@ -370,79 +368,70 @@ local function GetHotkeyFromButton(button)
     return nil
 end
 
+-- ═══════════════════════════════════════════════════════════════════
+-- KNOWN ADDON BUTTON NAME PATTERNS
+-- Looked up via _G[name] — these frames are always fully initialized.
+-- EnumerateFrames was finding partially-constructed LibActionButton
+-- objects (self.state = nil) causing crashes on any .action access.
+-- Frames registered in _G are always fully set up. Same approach as
+-- eQoL's CooldownPanels (ELVUI_ACTION_BARS=15, ELVUI_ACTION_BUTTONS=12).
+-- ═══════════════════════════════════════════════════════════════════
+local ADDON_BUTTON_PATTERNS = {
+    -- ElvUI: up to 15 bars × 12 buttons
+    { prefix = "ElvUI_Bar",        bars = 15, buttons = 12 },
+    -- Bartender4
+    { prefix = "BT4Button",        bars = 1,  buttons = 180 },
+    -- Dominos
+    { prefix = "DominosActionButton", bars = 1, buttons = 180 },
+}
+
 local function GetActionFromButton(button)
     if not button or IsForbiddenFrame(button) then return nil end
-    
-    -- Try .action property
-    if button.action and type(button.action) == "number" then
-        if HasAction(button.action) then
-            return button.action
-        end
-    end
-    
-    -- Try GetAction method
-    if button.GetAction and type(button.GetAction) == "function" then
-        local ok, action = pcall(function() return button:GetAction() end)
-        if ok and action and type(action) == "number" and action > 0 and HasAction(action) then
-            return action
-        end
-    end
-    
-    -- Try attribute
-    if button.GetAttribute and type(button.GetAttribute) == "function" then
-        local ok, action = pcall(function() return button:GetAttribute("action") end)
-        if ok and action then
-            action = tonumber(action)
-            if action and action > 0 and HasAction(action) then
-                return action
-            end
-        end
-    end
-    
+    -- rawget bypasses __index entirely. BT4/ElvUI/Dominos LibActionButton
+    -- objects proxy .action through __index → GetAction() → crash when
+    -- self.state is nil. rawget reads the raw table slot, no metamethods.
+    local action = tonumber(rawget(button, "action"))
+    if action and action > 0 and HasAction(action) then return action end
     return nil
 end
 
--- ═══════════════════════════════════════════════════════════════════
--- BUILD ADDON BUTTON CACHE (runs ONCE, not on every rebuild)
--- Finds ElvUI/Bartender/Dominos buttons via EnumerateFrames and
--- caches them so RebuildCache() never needs to iterate all frames.
--- ═══════════════════════════════════════════════════════════════════
 local function BuildAddonButtonCache()
     if addonButtonCacheBuilt then return end
     addonButtonCacheBuilt = true
     wipe(addonButtonCache)
-    
-    local f = EnumerateFrames()
-    while f do
-        if not IsForbiddenFrame(f) and type(f.GetObjectType) == "function" then
-            local objType = f:GetObjectType()
-            if objType == "CheckButton" or objType == "Button" then
-                local name = f.GetName and f:GetName() or ""
-                if type(name) ~= "string" then name = "" end
-                -- Skip standard Blizzard buttons (handled by slot mappings)
-                if not name:match("^ActionButton%d+$") 
-                   and not name:match("^MultiBar.*Button%d+$") then
-                    -- Check if this looks like an action button
-                    local action = GetActionFromButton(f)
-                    if action then
-                        -- Cache this button for future fast rescans
-                        addonButtonCache[#addonButtonCache + 1] = f
-                    end
+
+    local seen = {}
+    local function visit(button)
+        if not button or seen[button] then return end
+        seen[button] = true
+        if IsForbiddenFrame(button) then return end
+        local action = GetActionFromButton(button)
+        if action then
+            addonButtonCache[#addonButtonCache + 1] = button
+        end
+    end
+
+    for _, info in ipairs(ADDON_BUTTON_PATTERNS) do
+        if info.bars > 1 then
+            for bar = 1, info.bars do
+                for btn = 1, info.buttons do
+                    visit(_G[info.prefix .. bar .. "Button" .. btn])
                 end
             end
+        else
+            for btn = 1, info.buttons do
+                visit(_G[info.prefix .. btn])
+            end
         end
-        f = EnumerateFrames(f)
     end
 end
 
 -- ═══════════════════════════════════════════════════════════════════
--- RESCAN CACHED ADDON BUTTONS (fast - no EnumerateFrames)
--- Only re-reads the hotkey/action from already-discovered buttons.
+-- RESCAN CACHED ADDON BUTTONS (fast — no frame iteration)
 -- ═══════════════════════════════════════════════════════════════════
 local function RescanAddonButtons()
     for i = #addonButtonCache, 1, -1 do
         local button = addonButtonCache[i]
-        -- Validate button still exists and is usable
         if not button or IsForbiddenFrame(button) then
             table.remove(addonButtonCache, i)
         else
@@ -454,14 +443,11 @@ local function RescanAddonButtons()
                     if formatted and formatted ~= "" then
                         local actionType, id = GetActionInfo(action)
                         local texture = GetActionTexture(action)
-                        
                         local idIsSecret = id and issecretvalue(id)
                         local textureIsSecret = texture and issecretvalue(texture)
-                        
                         if texture and not textureIsSecret then
                             keybindCache.byTexture[texture] = keybindCache.byTexture[texture] or formatted
                         end
-                        
                         if actionType == "spell" and id and not idIsSecret then
                             keybindCache.bySpellID[id] = keybindCache.bySpellID[id] or formatted
                             if C_Spell and C_Spell.GetBaseSpell then
@@ -607,8 +593,8 @@ local function GetKeybindForFrame(frame)
                 end
             end
             if frame.Icon and frame.Icon.GetTexture then
-                local ok, tex = pcall(frame.Icon.GetTexture, frame.Icon)
-                if ok and tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
+                local tex = frame.Icon:GetTexture()
+                if tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
                     return keybindCache.byTexture[tex]
                 end
             end
@@ -619,8 +605,8 @@ local function GetKeybindForFrame(frame)
         end
         -- Final fallback for any arc aura - try texture
         if frame.Icon and frame.Icon.GetTexture then
-            local ok, tex = pcall(frame.Icon.GetTexture, frame.Icon)
-            if ok and tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
+            local tex = frame.Icon:GetTexture()
+            if tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
                 return keybindCache.byTexture[tex]
             end
         end
@@ -633,8 +619,8 @@ local function GetKeybindForFrame(frame)
         if cdID <= 0 or cdID >= 2147483647 then return nil end
         
         if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-            local ok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
-            if ok and info then
+            local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+            if info then
                 local spellID = info.spellID
                 if spellID and not issecretvalue(spellID) and keybindCache.bySpellID[spellID] then
                     return keybindCache.bySpellID[spellID]
@@ -649,8 +635,8 @@ local function GetKeybindForFrame(frame)
     
     -- Try frame's Icon texture as fallback
     if frame.Icon and frame.Icon.GetTexture then
-        local ok, tex = pcall(frame.Icon.GetTexture, frame.Icon)
-        if ok and tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
+        local tex = frame.Icon:GetTexture()
+        if tex and not issecretvalue(tex) and keybindCache.byTexture[tex] then
             return keybindCache.byTexture[tex]
         end
     end
@@ -750,7 +736,7 @@ local function ApplyKeybindToFrame(frame)
         end
     end
     
-    -- Style - use pcall in case font path is invalid
+    -- Style
     local fontSet = fs:SetFont(fontPath, fontSize, fontOutline)
     if not fontSet then
         fs:SetFont("Fonts\\FRIZQT__.TTF", fontSize, fontOutline)

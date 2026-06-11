@@ -425,8 +425,7 @@ function Registry:CleanupStaleEntries()
         local frame = entry.frame
         local isValid = false
         if frame then
-            local ok, result = pcall(function() return frame:IsObjectType("Frame") end)
-            isValid = ok and result
+            isValid = frame:IsObjectType("Frame") == true
         end
         
         if not isValid then

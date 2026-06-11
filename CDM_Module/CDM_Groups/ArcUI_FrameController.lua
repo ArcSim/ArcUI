@@ -15,6 +15,9 @@
 
 local addonName, ns = ...
 
+-- Profiler handler tracking (nil-safe if profiler not loaded)
+local Track = _G.ArcUIProfiler_Track
+
 -- Ensure namespace exists
 ns.CDMGroups = ns.CDMGroups or {}
 ns.FrameController = ns.FrameController or {}
@@ -24,6 +27,51 @@ local Controller = ns.FrameController
 -- Dependencies
 local Shared = ns.CDMShared
 local Registry = ns.FrameRegistry
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FRAME REBIND CALLBACK REGISTRY
+--
+-- CDM repools frames silently between events (spec change, talent change,
+-- pet (un)summon, instance enter, vehicle exit, etc.). When a frame's
+-- cooldownID rebinds, modules with per-frame caches keyed on that frame
+-- (visual state, throttle caches, lookup caches in Display, etc.) need to
+-- know so they can invalidate.
+--
+-- Architecture: SINGLE dispatch point. The mixin-level SetCooldownID hook
+-- below already fires for every CDM rebind across all viewers — we just
+-- add a callback registry to it. Each module subscribes once and gets
+-- notified with (frame, oldCdID, newCdID). oldCdID may be nil (first bind),
+-- newCdID may be nil (release via ClearCooldownID).
+--
+-- CPU cost: registry is a 1-3 entry array. Per rebind = O(N_subscribers)
+-- function calls. Rebinds are rare events (login, spec change, etc.) so
+-- the practical cost is negligible. No new tickers, no new event registrations.
+--
+-- Subscribers MUST NOT call any CDM API that touches secret data (no
+-- frame:ShouldBeActive, no frame:GetAuraData) — same taint rules as anywhere.
+-- ═══════════════════════════════════════════════════════════════════════════
+local frameRebindSubscribers = {}
+
+function Controller.OnFrameRebind(callback)
+    if type(callback) ~= "function" then return end
+    -- Idempotent: don't double-subscribe the same closure
+    for _, existing in ipairs(frameRebindSubscribers) do
+        if existing == callback then return end
+    end
+    frameRebindSubscribers[#frameRebindSubscribers + 1] = callback
+end
+
+local function DispatchFrameRebind(frame, oldCdID, newCdID)
+    -- Synchronous dispatch — runs in same tick as CDM's SetCooldownID.
+    -- Subscribers do their own targeted cleanup; failures in one
+    -- subscriber don't affect others.
+    for i = 1, #frameRebindSubscribers do
+        local cb = frameRebindSubscribers[i]
+        if cb then cb(frame, oldCdID, newCdID) end
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SECRET-SAFE AURA INSTANCE ID CHECK
@@ -129,7 +177,124 @@ local state = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- DEBUG HELPERS
+-- FRAME HOOK CALLBACKS (extracted for profiler tracking)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function FcOnClearAllPoints(self)
+    if self._cdmgSettingPosition then return end
+    if self._freeDragging or self._groupDragging then return end
+    
+    local parent = self:GetParent()
+    if not parent then return end
+    
+    -- Check if in container
+    if parent._isCDMGContainer and self._cdmgTargetPoint then
+        self._cdmgSettingPosition = true
+        self:SetPoint(
+            self._cdmgTargetPoint,
+            parent,
+            self._cdmgTargetRelPoint or "TOPLEFT",
+            self._cdmgTargetX or 0,
+            self._cdmgTargetY or 0
+        )
+        self._cdmgSettingPosition = false
+        state.stats.hookFights.position = state.stats.hookFights.position + 1
+    end
+end
+
+local function FcOnSetScale(self, scale)
+    if self._cdmgSettingScale then return end
+    if self._arcAuraID then return end
+    if issecretvalue and issecretvalue(scale) then return end
+    
+    local parent = self:GetParent()
+    local isManaged = (parent and parent._isCDMGContainer) or self._cdmgIsFreeIcon
+    
+    if isManaged and math.abs((scale or 1) - 1) > 0.01 then
+        self._cdmgSettingScale = true
+        self:SetScale(1)
+        self._cdmgSettingScale = false
+        state.stats.hookFights.scale = state.stats.hookFights.scale + 1
+    end
+end
+
+local function FcOnSetSize(self, w, h)
+    if self._cdmgSettingSize then return end
+    if self._arcAuraID then return end
+    if issecretvalue and (issecretvalue(w) or issecretvalue(h)) then return end
+    
+    local parent = self:GetParent()
+    local isInContainer = parent and parent._isCDMGContainer
+    local isFreeIcon = self._cdmgIsFreeIcon
+    
+    if not isInContainer and not isFreeIcon then return end
+    
+    local targetW, targetH
+    local cdID = self.cooldownID
+    
+    if cdID and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings then
+        local cfg = ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+        if cfg then
+            if isFreeIcon then
+                local freeData = cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]
+                local baseW = cfg.width or (freeData and freeData.iconSize) or 36
+                local baseH = cfg.height or (freeData and freeData.iconSize) or 36
+                local scale = cfg.scale or 1.0
+                targetW = baseW * scale
+                targetH = baseH * scale
+            elseif cfg.useGroupScale == false then
+                local baseW = cfg.width or 36
+                local baseH = cfg.height or 36
+                local scale = cfg.scale or 1.0
+                targetW = baseW * scale
+                targetH = baseH * scale
+            end
+        end
+    end
+    
+    if not targetW then
+        if isFreeIcon then
+            local freeData = cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]
+            targetW = freeData and freeData.iconSize or self._cdmgFreeTargetSize or 36
+            targetH = targetW
+        else
+            targetW = self._cdmgTargetSize or 36
+            targetH = targetW
+        end
+    end
+    
+    if math.abs((w or 0) - targetW) > 0.5 or math.abs((h or 0) - targetH) > 0.5 then
+        self._cdmgSettingSize = true
+        self:SetSize(targetW, targetH)
+        self._cdmgSettingSize = false
+        state.stats.hookFights.size = state.stats.hookFights.size + 1
+    end
+end
+
+local function FcOnSetFrameStrata(self, strata)
+    if self._cdmgSettingStrata then return end
+    
+    local parent = self:GetParent()
+    local isInContainer = parent and parent._isCDMGContainer
+    local isFreeIcon = self._cdmgIsFreeIcon
+    local isManaged = isInContainer or isFreeIcon
+    
+    if isManaged then
+        local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
+        if strata ~= expectedStrata then
+            self._cdmgSettingStrata = true
+            self:SetFrameStrata(expectedStrata)
+            self._cdmgSettingStrata = false
+            state.stats.hookFights.strata = state.stats.hookFights.strata + 1
+        end
+    end
+end
+
+-- Wrap for profiler (nil-safe)
+state._trackedFcClearAllPoints  = Track and Track("FC.ClearAllPoints",  FcOnClearAllPoints) or FcOnClearAllPoints
+state._trackedFcSetScale        = Track and Track("FC.SetScale",        FcOnSetScale) or FcOnSetScale
+state._trackedFcSetSize         = Track and Track("FC.SetSize",         FcOnSetSize) or FcOnSetSize
+state._trackedFcSetFrameStrata  = Track and Track("FC.SetFrameStrata",  FcOnSetFrameStrata) or FcOnSetFrameStrata
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local function Debug(...)
@@ -383,6 +548,7 @@ local function ScanCDMViewers()
     Debug("ScanCDMViewers: Found", CountTable(cdmState), "cooldownIDs")
     return cdmState
 end
+ScanCDMViewers = (Track and Track("FC.ScanCDMViewers", ScanCDMViewers)) or ScanCDMViewers
 
 -- Helper to count table entries
 CountTable = function(t)
@@ -612,7 +778,7 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         frame:SetParent(group.container)
         frame:SetFrameStrata(group.container._cdmgFrameStrata or "MEDIUM")
         frame:SetScale(1)
-        frame:SetAlpha(1)
+        if not (frame._arcIsArcAura or frame._arcAuraID) then frame:SetAlpha(1) end
     end
     
     -- Ensure frame is shown (unless hidden by bar tracking or unequipped hiding)
@@ -678,6 +844,7 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
     Debug("AssignFrameToGroup:", cdID, "->", groupName, "[" .. (row or 0) .. "," .. (col or 0) .. "]")
     return true
 end
+AssignFrameToGroup = (Track and Track("FC.AssignFrameToGroup", AssignFrameToGroup)) or AssignFrameToGroup
 
 local function AssignFrameToFree(cdID, frame, x, y, iconSize, viewerType, viewerName)
     ns.CDMGroups.freeIcons = ns.CDMGroups.freeIcons or {}
@@ -756,7 +923,7 @@ local function AssignFrameToFree(cdID, frame, x, y, iconSize, viewerType, viewer
     
     -- Only show if not hidden due to hideWhenUnequipped or bar tracking settings
     if not frame._arcHiddenUnequipped and not IsFrameHiddenByBar(frame) then
-        frame:SetAlpha(1)
+        if not (frame._arcIsArcAura or frame._arcAuraID) then frame:SetAlpha(1) end
         frame:Show()
     end
     
@@ -795,8 +962,13 @@ local function AssignFrameToFree(cdID, frame, x, y, iconSize, viewerType, viewer
     }
     
     -- Get verified profile table and write to it
+    -- CRITICAL: Only write to profile when it's fully loaded.
+    -- If profile isn't loaded yet, savedPositions is empty and writing here would
+    -- overwrite the correct saved group/free position with a spurious free-icon entry.
+    local profileFullyLoaded = not ns.CDMGroups.initialLoadInProgress and
+                               not ns.CDMGroups._profileNotLoaded
     local profileSavedPositions = ns.CDMGroups.GetProfileSavedPositions and ns.CDMGroups.GetProfileSavedPositions()
-    if profileSavedPositions then
+    if profileFullyLoaded and profileSavedPositions then
         profileSavedPositions[cdID] = positionData
     end
     
@@ -970,6 +1142,7 @@ local function AssignFrameToOwner(cdID, cdmData)
     Debug("AssignFrameToOwner: No default group for cdID", cdID, "- creating as free icon at", freeX, freeY)
     return AssignFrameToFree(cdID, frame, freeX, freeY, iconSize, viewerType, viewerName)
 end
+AssignFrameToOwner = (Track and Track("FC.AssignFrameToOwner", AssignFrameToOwner)) or AssignFrameToOwner
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- CORE: RECONCILE
@@ -1104,7 +1277,12 @@ local function Reconcile()
     local savedPositions = ns.CDMGroups.savedPositions or {}
     
     for cdID, saved in pairs(savedPositions) do
-        if saved.type == "group" and saved.target then
+        -- GUARD: Skip string IDs (Arc Auras) - they register via RegisterExternalFrame
+        -- Creating nil-frame members here causes Layout to search for old dead frames
+        -- and re-parent them as ghosts on top of the new frames ArcAuras creates
+        if type(cdID) == "string" then
+            -- Arc Auras managed externally - skip prepass
+        elseif saved.type == "group" and saved.target then
             -- For placeholders, skip the IsCooldownIDValid check - they're meant for unlearned spells
             local isPlaceholderEntry = saved.isPlaceholder
             local isValidForSpec = ns.CDMGroups.IsCooldownIDValid and ns.CDMGroups.IsCooldownIDValid(cdID) or true
@@ -1263,7 +1441,7 @@ local function Reconcile()
                     -- Fix the frame state (skip if legitimately hidden by bar tracking)
                     frame:SetScale(1)
                     if not frame._arcHiddenUnequipped and not IsFrameHiddenByBar(frame) then
-                        frame:SetAlpha(1)
+                        if not (frame._arcIsArcAura or frame._arcAuraID) then frame:SetAlpha(1) end
                         frame:Show()
                     end
                     frame._arcRecoveryProtection = GetTime() + 0.5
@@ -1657,6 +1835,14 @@ local function Reconcile()
             -- Refresh keybind overlays on reassigned/repooled frames
             if ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled() then
                 ns.Keybinds.RefreshAll()
+            end
+            
+            -- Restore click-through / tooltip state on newly assigned/reassigned
+            -- frames, which Reconcile left clickable. Skip while editing.
+            local editing = (ns.CDMGroups.IsOptionsPanelOpen and ns.CDMGroups.IsOptionsPanelOpen())
+                or ns.CDMGroups.dragModeEnabled
+            if not editing and ns.CDMGroups.RefreshIconSettings then
+                ns.CDMGroups.RefreshIconSettings()
             end
         end)
     end
@@ -2128,7 +2314,7 @@ local function Reconcile()
                     freeData.frame:SetParent(UIParent)
                     freeData.frame:SetFrameStrata("MEDIUM")
                     freeData.frame:SetScale(1)
-                    freeData.frame:SetAlpha(1)
+                    if not (freeData.frame._arcIsArcAura or freeData.frame._arcAuraID) then freeData.frame:SetAlpha(1) end
                     freeData.frame:Show()
                 end
             end
@@ -2255,6 +2441,100 @@ local function Reconcile()
                 TimelineAdd("ACTION", "FORCE_REFRESH_VISUALS", "Recalculating alpha/desat/glow after followup sweep")
                 ns.CDMEnhance.ForceRefreshAllVisualStates()
             end
+
+            -- Arc Aura spell frames have the same problem as CDM aura frames above:
+            -- ready-state alpha/desat doesn't apply after spec change until the options
+            -- panel is opened. RefreshAllSpellVisuals clears the state guards and re-applies.
+            if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+                TimelineAdd("ACTION", "ARC_SPELL_REFRESH_VISUALS", "Recalculating arc spell alpha/desat/glow after followup sweep")
+                ns.ArcAurasCooldown.RefreshAllSpellVisuals()
+            end
+            
+            -- ═══════════════════════════════════════════════════════════════════════════
+            -- ORPHAN CLEANUP: Hide CDM viewer children that have no cooldownID.
+            -- When switching to a spec with fewer icons, CDM repools frames but the
+            -- old frames stay visible inside the viewer with cooldownID=nil/0.
+            -- Masque skin regions (Backdrop, Shadow, Normal) are children of these
+            -- frames, so hiding the parent kills the ghost skin artifacts.
+            -- ═══════════════════════════════════════════════════════════════════════════
+            if wasSpecChange then
+                local hiddenOrphans = 0
+                
+                -- Scan CDM viewer children (frames CDM hasn't reassigned to a new spell)
+                local viewerNames = {"BuffIconCooldownViewer", "EssentialCooldownViewer", "UtilityCooldownViewer"}
+                for _, viewerName in ipairs(viewerNames) do
+                    local viewer = _G[viewerName]
+                    if viewer then
+                        local children = {viewer:GetChildren()}
+                        for _, child in ipairs(children) do
+                            if (not child.cooldownID or child.cooldownID == 0) and child:IsShown() then
+                                child:Hide()
+                                hiddenOrphans = hiddenOrphans + 1
+                            end
+                        end
+                    end
+                end
+                
+                -- Also scan CDMGroups container children for ghost frames that CDM
+                -- repooled but CDMGroups moved into a group container before cleanup ran.
+                -- These won't be in the viewer children list above.
+                for groupName, group in pairs(ns.CDMGroups.groups or {}) do
+                    if group.container then
+                        local children = {group.container:GetChildren()}
+                        for _, child in ipairs(children) do
+                            if (not child.cooldownID or child.cooldownID == 0) and child:IsShown() then
+                                -- Verify it's not a legitimate CDMGroups UI element
+                                if not child._cdmgIsContainer and not child._arcEditButton then
+                                    child:Hide()
+                                    hiddenOrphans = hiddenOrphans + 1
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                if hiddenOrphans > 0 then
+                    TimelineAdd("ACTION", "ORPHAN_CLEANUP", string.format("Hidden %d orphaned frames (no cooldownID)", hiddenOrphans))
+                    Debug("Orphan cleanup: hidden", hiddenOrphans, "frames with no cooldownID")
+                end
+            end
+            
+            -- Invalidate group visibility cache so UpdateGroupVisibility re-evaluates
+            -- conditions (e.g. hide OOC) from scratch after spec change
+            if wasSpecChange and ns.CDMGroups.InvalidateVisibilityCache then
+                ns.CDMGroups.InvalidateVisibilityCache()
+                if ns.CDMGroups.UpdateGroupVisibility then
+                    ns.CDMGroups.UpdateGroupVisibility()
+                end
+            end
+            
+            -- ═══════════════════════════════════════════════════════════════════════════
+            -- BAR RE-ANCHOR: Re-apply appearance for all bar systems.
+            -- Bars tried to anchor to CDMGroups containers during spec change but
+            -- containers didn't exist yet (Resources@0.1s, Display@0.2s, CooldownBars@0.5s
+            -- vs CDMGroups rebuild@0.8s). Now that groups are settled, re-anchor them.
+            -- ═══════════════════════════════════════════════════════════════════════════
+            if wasSpecChange then
+                -- Aura bars (Display) - calls ApplyAppearance per bar
+                if ns.Display and ns.Display.RefreshAllBars then
+                    ns.Display.RefreshAllBars()
+                    TimelineAdd("ACTION", "BAR_REANCHOR", "Display.RefreshAllBars (aura bars re-anchored)")
+                end
+                
+                -- Cooldown/Charge/Resource/Timer bars - calls ApplyAppearance per bar
+                if ns.CooldownBars and ns.CooldownBars.ReapplyAllAppearance then
+                    ns.CooldownBars.ReapplyAllAppearance()
+                    TimelineAdd("ACTION", "BAR_REANCHOR", "CooldownBars.ReapplyAllAppearance (cooldown bars re-anchored)")
+                end
+                
+                -- Resource bars - calls ApplyAppearance per bar
+                if ns.Resources and ns.Resources.RefreshAllBars then
+                    ns.Resources.RefreshAllBars()
+                    TimelineAdd("ACTION", "BAR_REANCHOR", "Resources.RefreshAllBars (resource bars re-anchored)")
+                end
+                
+                Debug("Bar re-anchor: all bar systems refreshed after spec change")
+            end
             
             -- Notify DynamicLayout that frames are now stable
             -- This triggers fill gaps logic to re-sync after talent changes
@@ -2262,10 +2542,59 @@ local function Reconcile()
             if DL and DL.OnReconcileComplete then
                 DL.OnReconcileComplete()
             end
+
+            -- ═══════════════════════════════════════════════════════════════════════════
+            -- ANCHOR RE-APPLY: Sync all proxy rects then reapply group-to-group and
+            -- group-to-frame anchors. Must run AFTER bars are re-anchored and containers
+            -- have their final sizes — SafeAnchorCenter reads GetRect() which returns wrong
+            -- values if called before containers finish resizing.
+            -- Also covers external frames (e.g. ElvUI unit frames) attached to groups:
+            -- DetachAllExternalFrames ran during OnSpecChange but ReapplyAll is the only
+            -- path that re-attaches them to the correct new-spec group.
+            -- ═══════════════════════════════════════════════════════════════════════════
+            if ns.CDMGroupsAnchors then
+                if ns.CDMGroups.SyncAllAnchorProxies then
+                    ns.CDMGroups.SyncAllAnchorProxies()
+                    TimelineAdd("ACTION", "ANCHOR_PROXY_SYNC", "SyncAllAnchorProxies after spec settle")
+                end
+                if ns.CDMGroupsAnchors.ReapplyAll then
+                    ns.CDMGroupsAnchors.ReapplyAll()
+                    TimelineAdd("ACTION", "ANCHOR_REAPPLY", "CDMGroupsAnchors.ReapplyAll after spec settle")
+                end
+            end
             
             -- Refresh keybind overlays after spec/talent change repooling
             if ns.Keybinds and ns.Keybinds.IsEnabled and ns.Keybinds.IsEnabled() then
                 ns.Keybinds.RefreshAll()
+            end
+            
+            -- Aura bars: force full segment re-layout now that containers are fully settled.
+            -- RefreshAllBars at 0.8s runs before CDMGroups reflow completes, leaving bars
+            -- sized against the old container width. InvalidateSpecCache busts the early-exit
+            -- cache so the next UpdateBar recalculates against the final container size.
+            if ns.Display then
+                if ns.Display.InvalidateSpecCache then
+                    ns.Display.InvalidateSpecCache()
+                end
+                if ns.Display.RefreshAllBars then
+                    ns.Display.RefreshAllBars()
+                    TimelineAdd("ACTION", "BAR_REANCHOR_FINAL", "Display bars re-laid out against settled containers")
+                end
+            end
+            
+            -- ═══════════════════════════════════════════════════════════════════════════
+            -- CLICK-THROUGH RE-APPLY: Reconcile re-enables mouse on repooled/reassigned
+            -- frames (and CDM re-enables it on its own frames during spec/talent rebuilds).
+            -- Nothing restores the saved click-through / tooltip state afterward unless the
+            -- user opens the options panel. Run the same RefreshIconSettings sweep the panel
+            -- triggers so click-through survives spec and talent changes. Skip while editing
+            -- (panel open / drag mode) so it doesn't fight active dragging.
+            -- ═══════════════════════════════════════════════════════════════════════════
+            local editing = (ns.CDMGroups.IsOptionsPanelOpen and ns.CDMGroups.IsOptionsPanelOpen())
+                or ns.CDMGroups.dragModeEnabled
+            if not editing and ns.CDMGroups.RefreshIconSettings then
+                ns.CDMGroups.RefreshIconSettings()
+                TimelineAdd("ACTION", "CLICKTHROUGH_REAPPLY", "RefreshIconSettings after spec/talent settle")
             end
         end)
     end
@@ -2274,6 +2603,8 @@ local function Reconcile()
     Debug("RECONCILE COMPLETE - assigned:", assigned, "skipped:", skipped, "time:", string.format("%.2fms", elapsed))
     Debug("═══════════════════════════════════════════════════")
 end
+
+Reconcile = (Track and Track("FC.Reconcile", Reconcile)) or Reconcile
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- DEBOUNCE SYSTEM
@@ -2332,6 +2663,7 @@ local function OnNotifyListeners()
         ScheduleReconcile(CONFIG.DEBOUNCE_NORMAL)
     end
 end
+OnNotifyListeners = (Track and Track("FC.OnNotifyListeners", OnNotifyListeners)) or OnNotifyListeners
 
 local function OnSpecializationChanged(unit)
     if unit and unit ~= "player" then return end
@@ -2382,6 +2714,25 @@ local function OnSpellsChanged()
     ScheduleReconcile(CONFIG.DEBOUNCE_NORMAL)
 end
 
+local function OnPvPTalentUpdate()
+    if not _cdmGroupsEnabled then return end
+
+    -- Skip if already handling a bigger change
+    if state.specChangeDetected then return end
+
+    TimelineAdd("EVENT", "PVP_TALENT_UPDATE", "War Mode / PvP talent change detected")
+    DebugEvent("PLAYER_PVP_TALENT_UPDATE")
+    state.talentChangeDetected = true
+
+    -- Notify DynamicLayout to clear stale visibility state (same as talent change)
+    local DL = ns.CDMGroups.DynamicLayout
+    if DL and DL.OnTalentChangeStart then
+        DL.OnTalentChangeStart()
+    end
+
+    ScheduleReconcile(CONFIG.DEBOUNCE_TALENT)
+end
+
 -- Called when profile or layout is loaded/changed
 -- Ensures hidden frames get fixed during reconcile
 local function OnLayoutChange()
@@ -2407,149 +2758,196 @@ InstallFrameHooks = function(frame)
     -- Hook ClearAllPoints - restore position for grouped icons
     -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
     if not frame._fcClearPointsHooked and not frame._cdmgClearPointsHooked then
-        hooksecurefunc(frame, "ClearAllPoints", function(self)
-            if self._cdmgSettingPosition then return end
-            if self._freeDragging or self._groupDragging then return end
-            
-            local parent = self:GetParent()
-            if not parent then return end
-            
-            -- Check if in container
-            if parent._isCDMGContainer and self._cdmgTargetPoint then
-                self._cdmgSettingPosition = true
-                self:SetPoint(
-                    self._cdmgTargetPoint,
-                    parent,
-                    self._cdmgTargetRelPoint or "TOPLEFT",
-                    self._cdmgTargetX or 0,
-                    self._cdmgTargetY or 0
-                )
-                self._cdmgSettingPosition = false
-                state.stats.hookFights.position = state.stats.hookFights.position + 1
-            end
-        end)
+        hooksecurefunc(frame, "ClearAllPoints", state._trackedFcClearAllPoints)
         frame._fcClearPointsHooked = true
     end
     
     -- Hook SetScale - force scale to 1
     -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
     if not frame._fcScaleHooked and not frame._cdmgScaleHooked then
-        hooksecurefunc(frame, "SetScale", function(self, scale)
-            if self._cdmgSettingScale then return end
-            
-            -- Skip Arc Aura frames - they manage their own scale
-            if self._arcAuraID then return end
-            
-            -- Skip if scale is a secret value (WoW 12.0)
-            if issecretvalue and issecretvalue(scale) then return end
-            
-            local parent = self:GetParent()
-            local isManaged = (parent and parent._isCDMGContainer) or self._cdmgIsFreeIcon
-            
-            if isManaged and math.abs((scale or 1) - 1) > 0.01 then
-                self._cdmgSettingScale = true
-                self:SetScale(1)
-                self._cdmgSettingScale = false
-                state.stats.hookFights.scale = state.stats.hookFights.scale + 1
-            end
-        end)
+        hooksecurefunc(frame, "SetScale", state._trackedFcSetScale)
         frame._fcScaleHooked = true
     end
     
     -- Hook SetSize - prevent CDM from resizing, but allow ArcUI size changes
     -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
     if not frame._fcSizeHooked and not frame._cdmgSizeHooked then
-        hooksecurefunc(frame, "SetSize", function(self, w, h)
-            if self._cdmgSettingSize then return end
-            
-            -- Skip Arc Aura frames - they manage their own size via ArcAuras.ApplySettingsToFrame
-            if self._arcAuraID then return end
-            
-            -- Skip if w or h are secret values (WoW 12.0)
-            if issecretvalue and (issecretvalue(w) or issecretvalue(h)) then return end
-            
-            local parent = self:GetParent()
-            local isInContainer = parent and parent._isCDMGContainer
-            local isFreeIcon = self._cdmgIsFreeIcon
-            
-            if not isInContainer and not isFreeIcon then return end
-            
-            -- Get the CURRENT target size from effective settings (not cached values)
-            local targetW, targetH
-            local cdID = self.cooldownID
-            
-            if cdID and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings then
-                local cfg = ns.CDMEnhance.GetEffectiveIconSettings(cdID)
-                if cfg then
-                    if isFreeIcon then
-                        -- FREE ICONS: Always apply scale/width/height (no group to inherit from)
-                        local freeData = cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]
-                        local baseW = cfg.width or (freeData and freeData.iconSize) or 36
-                        local baseH = cfg.height or (freeData and freeData.iconSize) or 36
-                        local scale = cfg.scale or 1.0
-                        targetW = baseW * scale
-                        targetH = baseH * scale
-                    elseif cfg.useGroupScale == false then
-                        -- GROUPED ICONS: Only use custom size when opted out of group scale
-                        local baseW = cfg.width or 36
-                        local baseH = cfg.height or 36
-                        local scale = cfg.scale or 1.0
-                        targetW = baseW * scale
-                        targetH = baseH * scale
-                    end
-                end
-            end
-            
-            -- If no custom settings, use group slot size or default
-            if not targetW then
-                if isFreeIcon then
-                    local freeData = cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]
-                    targetW = freeData and freeData.iconSize or self._cdmgFreeTargetSize or 36
-                    targetH = targetW
-                else
-                    targetW = self._cdmgTargetSize or 36
-                    targetH = targetW
-                end
-            end
-            
-            -- Only fight if CDM is trying to set a DIFFERENT size than what we want
-            -- Allow changes that match the current target (from options panel)
-            if math.abs((w or 0) - targetW) > 0.5 or math.abs((h or 0) - targetH) > 0.5 then
-                self._cdmgSettingSize = true
-                self:SetSize(targetW, targetH)
-                self._cdmgSettingSize = false
-                state.stats.hookFights.size = state.stats.hookFights.size + 1
-            end
-        end)
+        hooksecurefunc(frame, "SetSize", state._trackedFcSetSize)
         frame._fcSizeHooked = true
     end
     
     -- Hook SetFrameStrata - force strata to group's configured strata
     -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
     if not frame._fcStrataHooked and not frame._cdmgStrataHooked then
-        hooksecurefunc(frame, "SetFrameStrata", function(self, strata)
-            if self._cdmgSettingStrata then return end
-            
-            local parent = self:GetParent()
-            local isInContainer = parent and parent._isCDMGContainer
-            local isFreeIcon = self._cdmgIsFreeIcon
-            local isManaged = isInContainer or isFreeIcon
-            
-            if isManaged then
-                local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
-                if strata ~= expectedStrata then
-                    self._cdmgSettingStrata = true
-                    self:SetFrameStrata(expectedStrata)
-                    self._cdmgSettingStrata = false
-                    state.stats.hookFights.strata = state.stats.hookFights.strata + 1
-                end
-            end
-        end)
+        hooksecurefunc(frame, "SetFrameStrata", state._trackedFcSetFrameStrata)
         frame._fcStrataHooked = true
+    end
+    
+    -- Hook SetShown/Hide - fight CDM hiding managed frames during reshuffles
+    -- Delegate to Maintain's hooks (they handle all guard checks)
+    -- Skip if CDMGroups already hooked this (avoid duplicate hooks)
+    if ns.CDMGroups.HookFrameSetShown and not frame._cdmgSetShownHooked then
+        ns.CDMGroups.HookFrameSetShown(frame)
+    end
+    if ns.CDMGroups.HookFrameHide and not frame._cdmgHideHooked then
+        ns.CDMGroups.HookFrameHide(frame)
     end
     
     state.frameHooksInstalled[addr] = true
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ArcUI PANEL STATE CHANGE HANDLER
+-- Called directly by ArcUI_Options.lua hooks (Open/Close/OnHide)
+-- Replaces the old 1.0s polling detection for instant response.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function OnArcUIPanelChanged(isOpen)
+    if not _cdmGroupsEnabled then return end
+    
+    -- Sync flags
+    lastOptionsOpenState = isOpen
+    ns.optionsPanelOpen = isOpen
+    ns._arcUIOptionsOpen = isOpen
+    
+    -- Update caches
+    if ns.CDMGroups.UpdateCachedPanelState then
+        ns.CDMGroups.UpdateCachedPanelState()
+    end
+    if Shared and Shared.SetCDMSettingsOpen then
+        local cdmPanelOpen = ns.CDMGroups.cdmOptionsPanelOpen or false
+        Shared.SetCDMSettingsOpen(isOpen or cdmPanelOpen)
+    end
+    
+    -- Handle panel state transitions for reflow/restore
+    -- Skip during spec changes or restoration periods
+    local skipTransition = ns.CDMGroups.specChangeInProgress 
+        or ns.CDMGroups._pendingSpecChange
+        or (ns.CDMGroups._restorationProtectionEnd and GetTime() < ns.CDMGroups._restorationProtectionEnd)
+        or (ns.CDMGroups.lastSpecChangeTime and (GetTime() - ns.CDMGroups.lastSpecChangeTime) < 2)
+    
+    if not skipTransition then
+        if isOpen then
+            -- Panel just OPENED - scan for any frame changes, then restore to saved positions
+            if ns.CDMGroups.ScanAllViewers then
+                ns.CDMGroups.ScanAllViewers()
+            end
+            if ns.CDMGroups.RestoreIconsToSavedPositions then
+                ns.CDMGroups.RestoreIconsToSavedPositions()
+            end
+            -- Re-setup free icon drag — Layout() re-enables group members
+            -- but nothing re-enables free icons after click-through was applied
+            for cdID, data in pairs(ns.CDMGroups.freeIcons or {}) do
+                if data.frame and ns.CDMGroups.SetupFreeIconDrag then
+                    ns.CDMGroups.SetupFreeIconDrag(cdID)
+                end
+            end
+        else
+            -- Panel just CLOSED - trigger reflow to close gaps
+            local cdmPanelOpen = ns.CDMGroups.cdmOptionsPanelOpen or false
+            if not cdmPanelOpen and ns.CDMGroups.ReflowAllGroups then
+                ns.CDMGroups.ReflowAllGroups()
+            end
+            -- NOTE: Do NOT call SetupFreeIconDrag here!
+            -- UpdateGroupSelectionVisuals → RefreshIconSettings (below) already
+            -- handles free icons with correct click-through/tooltip state.
+        end
+    end
+    
+    -- Clear cached alpha/desat/tint/glow so icons recalculate visibility
+    if ns.CDMGroups.groups then
+        for _, group in pairs(ns.CDMGroups.groups) do
+            if group.members then
+                for _, member in pairs(group.members) do
+                    if member and member.frame then
+                        member.frame._arcTargetAlpha = nil
+                        member.frame._arcTargetDesat = nil
+                        member.frame._arcTargetTint = nil
+                        member.frame._arcTargetGlow = nil
+                        member.frame._arcCooldownEventDriven = nil
+                    end
+                end
+            end
+        end
+    end
+    for _, data in pairs(ns.CDMGroups.freeIcons or {}) do
+        if data.frame then
+            data.frame._arcTargetAlpha = nil
+            data.frame._arcTargetDesat = nil
+            data.frame._arcTargetTint = nil
+            data.frame._arcTargetGlow = nil
+            data.frame._arcCooldownEventDriven = nil
+        end
+    end
+    
+    -- Update group selection visuals (edit mode based on ArcUI panel only)
+    if ns.CDMGroups.UpdateGroupSelectionVisuals then
+        ns.CDMGroups.UpdateGroupSelectionVisuals()
+    end
+    
+    -- Update edit button visibility
+    if ns.CDMGroups.UpdateEditButtonVisibility then
+        ns.CDMGroups.UpdateEditButtonVisibility()
+    end
+    
+    -- Update placeholder editing mode (suspend/restore preserves DB preference)
+    if ns.CDMGroups.Placeholders then
+        if isOpen then
+            -- Restore from DB: only enables if user had it enabled
+            if ns.CDMGroups.Placeholders.RestoreEditingMode then
+                ns.CDMGroups.Placeholders.RestoreEditingMode()
+            end
+        else
+            -- Suspend: hides visuals WITHOUT writing false to DB
+            if ns.CDMGroups.Placeholders.SuspendEditingMode then
+                ns.CDMGroups.Placeholders.SuspendEditingMode()
+            end
+        end
+    end
+    
+    -- Update group visibility
+    if ns.CDMGroups.UpdateGroupVisibility then
+        ns.CDMGroups.UpdateGroupVisibility()
+    end
+
+    -- Re-anchor all bars after panel state change.
+    -- Container size may not change (e.g. all icons active → compact=full grid),
+    -- so OnSizeChanged never fires. We must explicitly re-apply bar appearance
+    -- so center-x anchor offsets (-barWidth/2) reflect the current container state.
+    C_Timer.After(0.05, function()
+        if ns.Display and ns.Display.RefreshAllBars then
+            ns.Display.RefreshAllBars()
+        end
+        if ns.CooldownBars and ns.CooldownBars.ReapplyAllAppearance then
+            ns.CooldownBars.ReapplyAllAppearance()
+        end
+        if ns.Resources and ns.Resources.RefreshAllBars then
+            ns.Resources.RefreshAllBars()
+        end
+        -- On panel close: re-drive aura icons so preview opacity (0.35) is cleared.
+        -- Closing the panel clears _arcTargetAlpha cache but never calls OptimizedApplyIconVisuals
+        -- with optionsPanelOpen=false, leaving icons stuck at preview alpha.
+        if not isOpen and ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+            ns.CDMEnhance.RefreshIconType("aura")
+        end
+    end)
+    
+    -- Second pass after reflow settles — aura bar segments need to recalculate
+    -- their pixel widths against the compact container size, not the open-panel size.
+    if not isOpen then
+        C_Timer.After(0.5, function()
+            if ns.Display then
+                if ns.Display.InvalidateSpecCache then
+                    ns.Display.InvalidateSpecCache()
+                end
+                if ns.Display.RefreshAllBars then
+                    ns.Display.RefreshAllBars()
+                end
+            end
+        end)
+    end
+end
+ns.CDMGroups.OnArcUIPanelChanged = OnArcUIPanelChanged
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- VISUAL MAINTAINER
@@ -2558,12 +2956,13 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local VisualMaintainer = CreateFrame("Frame")
+_G.ArcUIVisualMaintainer = VisualMaintainer  -- exposed for profiler frame discovery
 local visualMaintainerElapsed = 0
 local optionsPanelCheckElapsed = 0
 local editButtonUpdateElapsed = 0
 local lastOptionsOpenState = false
 
-VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
+local _vmOnUpdateFn = function(self, elapsed)
     if not _cdmGroupsEnabled then return end
     
     visualMaintainerElapsed = visualMaintainerElapsed + elapsed
@@ -2578,19 +2977,14 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
         end
     end
     
-    -- Check options panel state less frequently (every 1.0s, was 0.5s) - cut in half
+    -- CDM panel detection only (ArcUI panel is now handled by direct hooks)
+    -- Check every 1.0s for CDM settings panel open/close
     if optionsPanelCheckElapsed >= 1.0 then
         optionsPanelCheckElapsed = 0
-        local ACD = LibStub("AceConfigDialog-3.0", true)
-        local optionsPanelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"]
         
-        -- CDM panel only affects group visibility (combat/ooc groups stay visible)
-        -- It does NOT enable edit mode features
-        -- Use cached flag from hooks instead of expensive IsShown() call
         local cdmPanelOpen = ns.CDMGroups.cdmOptionsPanelOpen or false
         
-        -- UPDATE GLOBAL CACHE: Update CDMGroups' cached panel state
-        -- This is the SINGLE place that updates the cache, all other code just reads it
+        -- UPDATE GLOBAL CACHE
         if ns.CDMGroups.UpdateCachedPanelState then
             ns.CDMGroups.UpdateCachedPanelState()
         end
@@ -2599,92 +2993,14 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
         local lastCDMPanelOpen = state.lastCDMPanelOpen or false
         state.lastCDMPanelOpen = cdmPanelOpen
         
-        -- Update shared throttle state (for visual enhancement throttling)
+        -- Update shared throttle state
+        local arcUIOpen = ns.optionsPanelOpen
         if Shared and Shared.SetCDMSettingsOpen then
-            Shared.SetCDMSettingsOpen((optionsPanelOpen or cdmPanelOpen) and true or false)
+            Shared.SetCDMSettingsOpen((arcUIOpen or cdmPanelOpen) and true or false)
         end
         
-        -- Handle ArcUI options panel state change (this is what controls edit mode)
-        local arcUIChanged = optionsPanelOpen ~= lastOptionsOpenState
-        local cdmChanged = cdmPanelOpen ~= lastCDMPanelOpen
-        
-        if arcUIChanged then
-            lastOptionsOpenState = optionsPanelOpen
-            
-            -- Handle panel state transitions for reflow/restore
-            -- Skip during spec changes or restoration periods
-            local skipTransition = ns.CDMGroups.specChangeInProgress 
-                or ns.CDMGroups._pendingSpecChange
-                or (ns.CDMGroups._restorationProtectionEnd and GetTime() < ns.CDMGroups._restorationProtectionEnd)
-                or (ns.CDMGroups.lastSpecChangeTime and (GetTime() - ns.CDMGroups.lastSpecChangeTime) < 2)
-            
-            if not skipTransition then
-                if optionsPanelOpen then
-                    -- Panel just OPENED - scan for any frame changes, then restore to saved positions
-                    -- CRITICAL: Do NOT call AutoAssignNewIcons here - it triggers Reconcile()
-                    -- which schedules follow-up sweeps with reflow. We just want to show gaps.
-                    if ns.CDMGroups.ScanAllViewers then
-                        ns.CDMGroups.ScanAllViewers()
-                    end
-                    -- RestoreIconsToSavedPositions now checks panel state and skips Reconcile when open
-                    if ns.CDMGroups.RestoreIconsToSavedPositions then
-                        ns.CDMGroups.RestoreIconsToSavedPositions()
-                    end
-                else
-                    -- Panel just CLOSED - trigger reflow to close gaps
-                    -- BUT skip if CDM panel is open (it may be manipulating frames)
-                    if not cdmPanelOpen and ns.CDMGroups.ReflowAllGroups then
-                        ns.CDMGroups.ReflowAllGroups()
-                    end
-                end
-            end
-            
-            -- CRITICAL: Clear cached alpha/desat/tint/glow so icons recalculate visibility
-            -- This allows hidden icons to show at 0.35 when options panel opens
-            if ns.CDMGroups.groups then
-                for _, group in pairs(ns.CDMGroups.groups) do
-                    if group.members then
-                        for _, member in pairs(group.members) do
-                            if member and member.frame then
-                                member.frame._arcTargetAlpha = nil
-                                member.frame._arcTargetDesat = nil
-                                member.frame._arcTargetTint = nil
-                                member.frame._arcTargetGlow = nil
-                                member.frame._arcCooldownEventDriven = nil
-                            end
-                        end
-                    end
-                end
-            end
-            for _, data in pairs(ns.CDMGroups.freeIcons or {}) do
-                if data.frame then
-                    data.frame._arcTargetAlpha = nil
-                    data.frame._arcTargetDesat = nil
-                    data.frame._arcTargetTint = nil
-                    data.frame._arcTargetGlow = nil
-                    data.frame._arcCooldownEventDriven = nil
-                end
-            end
-            
-            -- Update group selection visuals (edit mode based on ArcUI panel only)
-            if ns.CDMGroups.UpdateGroupSelectionVisuals then
-                ns.CDMGroups.UpdateGroupSelectionVisuals()
-            end
-            
-            -- Update edit button visibility
-            if ns.CDMGroups.UpdateEditButtonVisibility then
-                ns.CDMGroups.UpdateEditButtonVisibility()
-            end
-            
-            -- Update placeholder editing mode (ArcUI panel only)
-            if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.SetEditingMode then
-                ns.CDMGroups.Placeholders.SetEditingMode(optionsPanelOpen and true or false)
-            end
-        end
-        
-        -- Update group visibility when EITHER panel state changes
-        -- This ensures combat/ooc groups stay visible when CDM panel is open
-        if arcUIChanged or cdmChanged then
+        -- Update group visibility when CDM panel state changes
+        if cdmPanelOpen ~= lastCDMPanelOpen then
             if ns.CDMGroups.UpdateGroupVisibility then
                 ns.CDMGroups.UpdateGroupVisibility()
             end
@@ -2694,6 +3010,15 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
     -- Throttle visual updates
     if visualMaintainerElapsed < CONFIG.VISUAL_THROTTLE then return end
     visualMaintainerElapsed = 0
+    
+    -- ═══════════════════════════════════════════════════════════════════
+    -- EXPERIMENTAL: Skip the frame iteration loop entirely.
+    -- This disables: ApplyIconVisuals polling, frame reassignment detection,
+    -- placeholder creation, drag handler setup, free icon size enforcement,
+    -- and position drift correction. Event-driven hooks should cover
+    -- most visual updates. Remove this return to re-enable.
+    -- ═══════════════════════════════════════════════════════════════════
+    do return end
     
     -- Skip during reconcile processing
     if state.isProcessing then return end
@@ -2747,10 +3072,12 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
                                     end
                                     
                                     -- OPTIMIZATION: Skip ApplyIconVisuals for event-driven icons
-                                    -- - Totem/aura icons: _arcTargetAlpha set by hooks
+                                    -- - Aura icons with hooks: _arcAuraEventDriven (unless ignoreAuraOverride)
                                     -- - Cooldown icons: _arcCooldownEventDriven set by SPELL_UPDATE_COOLDOWN
-                                    if frame._arcTargetAlpha == nil and not frame._arcCooldownEventDriven then
-                                        -- Not event-driven, needs 4Hz updates
+                                    local isEventDriven = frame._arcCooldownEventDriven
+                                        or (frame._arcAuraEventDriven and not frame._arcIgnoreAuraOverride)
+                                    if frame._arcTargetAlpha == nil and not isEventDriven then
+                                        -- Not event-driven, needs 2Hz updates
                                         ns.CDMEnhance.ApplyIconVisuals(frame)
                                     end
                                     
@@ -2905,9 +3232,11 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
                 end
                 
                 -- OPTIMIZATION: Skip ApplyIconVisuals for event-driven icons
-                -- - Totem/aura icons: _arcTargetAlpha set by hooks
+                -- - Aura icons with hooks: _arcAuraEventDriven (unless ignoreAuraOverride)
                 -- - Cooldown icons: _arcCooldownEventDriven set by SPELL_UPDATE_COOLDOWN
-                if frame._arcTargetAlpha == nil and not frame._arcCooldownEventDriven then
+                local isEventDriven = frame._arcCooldownEventDriven
+                    or (frame._arcAuraEventDriven and not frame._arcIgnoreAuraOverride)
+                if frame._arcTargetAlpha == nil and not isEventDriven then
                     ns.CDMEnhance.ApplyIconVisuals(frame)
                 end
                 
@@ -2967,7 +3296,8 @@ VisualMaintainer:SetScript("OnUpdate", function(self, elapsed)
             end
         end
     end
-end)
+end
+VisualMaintainer:SetScript("OnUpdate", Track and Track("FC.VisualMaintainer.OnUpdate", _vmOnUpdateFn) or _vmOnUpdateFn)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- INITIALIZATION
@@ -3002,6 +3332,141 @@ local function InstallCDMHooks()
     -- and any other CDM RefreshLayout → RefreshData cycle.
     -- Previously we only detected this on panel close. Now it's instant.
     -- ═══════════════════════════════════════════════════════════════════════════
+
+    -- ─── FAST-PATH PLACEMENT ────────────────────────────────────────────────
+    -- Problem: after CDM's RefreshLayout (ReleaseAll → reacquire → RefreshData),
+    -- frames may be parented to CDM's default container OR have stale anchors
+    -- pointing at the OLD cdID's slot. The full Reconcile() doesn't run until
+    -- DEBOUNCE_NORMAL (0.15s) later, so for that window the icon sits at the
+    -- wrong position before snapping into place.
+    --
+    -- Fix: when SetCooldownID fires for a cdID that has a known savedPosition,
+    -- synchronously reparent + reposition the frame to its target slot in the
+    -- same tick. The full reconcile still runs at +0.15s and remains the
+    -- source of truth (member tracking, partner resolution, validation, etc.)
+    -- — this is just a fast initial guess to eliminate the visible delay.
+    --
+    -- Safety: only acts when savedPositions[cooldownID] points to an existing
+    -- group/free placement. Brand-new icons or unrecognised cdIDs fall through
+    -- to reconcile as before. Skipped during spec change, talent change,
+    -- restoration protection, options panel open, and CDM panel open — those
+    -- contexts have their own placement logic.
+    local function TryFastPathPlace(itemFrame, cooldownID)
+        if not itemFrame or not cooldownID or type(cooldownID) ~= "number" then return end
+        if not ns.CDMGroups then return end
+
+        -- Bail in any state where placement is owned by another path
+        if state.specChangeDetected then return end
+        if state.talentChangeDetected then return end
+        if ns.CDMGroups.specChangeInProgress then return end
+        if ns.CDMGroups._pendingSpecChange then return end
+        if ns.CDMGroups.talentChangeInProgress then return end
+        if ns.CDMGroups._restorationProtectionEnd and GetTime() < ns.CDMGroups._restorationProtectionEnd then return end
+        if ns.CDMGroups._talentRestorationEnd and GetTime() < ns.CDMGroups._talentRestorationEnd then return end
+        if ns._arcUIOptionsOpen then return end
+        if ns.CDMGroups.cdmOptionsPanelOpen then return end
+        -- Free dragging / group dragging: don't fight the user
+        if itemFrame._freeDragging or itemFrame._groupDragging then return end
+        -- Hidden by bar tracking — that path manages its own visibility
+        if itemFrame._arcHiddenByBar then return end
+
+        -- Need a saved position to know where this cdID belongs
+        local savedPositions = ns.CDMGroups.savedPositions
+        local saved = savedPositions and savedPositions[cooldownID]
+        if not saved then return end
+
+        if saved.type == "group" and saved.target then
+            local groups = ns.CDMGroups.groups
+            local group = groups and groups[saved.target]
+            if not group or not group.container then return end
+
+            -- Prefer current member.row/col when dynamic layout is on (reflow
+            -- may have moved this cdID off its saved slot). Mirror the
+            -- AssignFrameToCooldown lookup pattern so static and dynamic
+            -- layouts converge to the same answer.
+            local row, col = saved.row, saved.col
+            if group.dynamicLayout and group.members and group.members[cooldownID] then
+                local member = group.members[cooldownID]
+                if member.row ~= nil and member.col ~= nil then
+                    row = member.row
+                    col = member.col
+                end
+            end
+            if row == nil or col == nil then return end
+
+            -- Skip if frame is already correctly parented AND already at the
+            -- right target slot (cdID didn't actually move groups/positions).
+            local currentParent = itemFrame:GetParent()
+            local alreadyInGroup = currentParent == group.container
+            if alreadyInGroup
+              and itemFrame._cdmgTargetCdID == cooldownID
+              and itemFrame._cdmgTargetRow == row
+              and itemFrame._cdmgTargetCol == col then
+                return
+            end
+
+            -- Compute slot dimensions and place
+            local slotW, slotH = 36, 36
+            if ns.CDMGroups.GetSlotDimensions and group.layout then
+                slotW, slotH = ns.CDMGroups.GetSlotDimensions(group.layout)
+            end
+
+            if ns.CDMGroups.SetupFrameInContainer then
+                -- SetupFrameInContainer parents, sizes, anchors and writes
+                -- _cdmgTargetPoint/X/Y so FcOnClearAllPoints can self-heal
+                -- if CDM re-clears anchors later in the same tick.
+                ns.CDMGroups.SetupFrameInContainer(itemFrame, group.container, slotW, slotH, cooldownID)
+                -- Stamp target slot for the early-skip check above
+                itemFrame._cdmgTargetCdID = cooldownID
+                itemFrame._cdmgTargetRow  = row
+                itemFrame._cdmgTargetCol  = col
+                -- Make sure it's visible (Pool_HideAndClearAnchors hid it)
+                if not itemFrame._arcHiddenUnequipped and not IsFrameHiddenByBar(itemFrame) then
+                    itemFrame:Show()
+                end
+                -- Install frame hooks if not yet (cheap idempotent)
+                InstallFrameHooks(itemFrame)
+                TimelineAdd("ACTION", "FAST_PATH_PLACE", string.format(
+                    "cdID=%s → group=%s row=%s col=%s",
+                    tostring(cooldownID), tostring(saved.target), tostring(row), tostring(col)))
+            end
+        elseif saved.type == "free" then
+            -- Free icon: parent to UIParent, place at saved x/y
+            local x = saved.x or 0
+            local y = saved.y or 0
+            local size = saved.iconSize or 36
+
+            -- Skip if already correctly positioned as free icon
+            if itemFrame._cdmgIsFreeIcon
+              and itemFrame._cdmgFreeTargetX == x
+              and itemFrame._cdmgFreeTargetY == y then
+                return
+            end
+
+            itemFrame._cdmgSettingPosition = true
+            itemFrame:SetParent(UIParent)
+            itemFrame:ClearAllPoints()
+            itemFrame:SetPoint("CENTER", UIParent, "CENTER", x, y)
+            itemFrame:SetSize(size, size)
+            itemFrame:SetScale(1)
+            itemFrame:SetAlpha(1)
+            itemFrame._cdmgSettingPosition = false
+
+            itemFrame._cdmgIsFreeIcon     = true
+            itemFrame._cdmgFreeTargetX    = x
+            itemFrame._cdmgFreeTargetY    = y
+            itemFrame._cdmgFreeTargetSize = size
+
+            if not itemFrame._arcHiddenUnequipped and not IsFrameHiddenByBar(itemFrame) then
+                itemFrame:Show()
+            end
+            InstallFrameHooks(itemFrame)
+            TimelineAdd("ACTION", "FAST_PATH_PLACE", string.format(
+                "cdID=%s → free x=%s y=%s",
+                tostring(cooldownID), tostring(x), tostring(y)))
+        end
+    end
+
     if CooldownViewerItemDataMixin then
         -- Hook SetCooldownID - fires when CDM assigns a (possibly new) cooldownID to a frame
         if CooldownViewerItemDataMixin.SetCooldownID then
@@ -3033,7 +3498,17 @@ local function InstallCDMHooks()
                     end
                 end
                 
+                -- ─── FAST-PATH PLACEMENT ─────────────────────────────────
+                -- Run BEFORE the in-container gate. After CDM's ReleaseAll the
+                -- frame may have lost its anchors / been demoted from our
+                -- container — fast-path reparents + repositions in the same
+                -- tick so there's no visible delay until reconcile fires.
+                -- No-ops if savedPositions[cooldownID] doesn't exist or any
+                -- protection window is active.
+                TryFastPathPlace(itemFrame, cooldownID)
+
                 -- Only care about frames we're managing (in our containers or free icons)
+                -- Re-read parent: TryFastPathPlace may have just reparented us in.
                 local parent = itemFrame:GetParent()
                 local isInContainer = parent and parent._isCDMGContainer
                 local isFreeIcon = itemFrame._cdmgIsFreeIcon
@@ -3059,6 +3534,12 @@ local function InstallCDMHooks()
                         tostring(itemFrame:GetName() or tostring(itemFrame)),
                         tostring(prevCdID), tostring(cooldownID)))
                 end
+                
+                -- Notify all module subscribers BEFORE the deferred reconcile
+                -- so they can invalidate their per-frame caches in the same
+                -- tick CDM made the rebind. Same-tick invalidation prevents
+                -- visual / data desync during the 0.15s reconcile window.
+                DispatchFrameRebind(itemFrame, prevCdID, cooldownID)
                 
                 -- Schedule a debounced reconcile to update group membership tracking
                 -- DEBOUNCE_NORMAL (0.15s) batches multiple SetCooldownID calls from a single RefreshData cycle
@@ -3099,6 +3580,7 @@ local function InstallCDMHooks()
                 if not isInContainer and not isFreeIcon then return end
                 
                 -- Frame's cooldownID was cleared - purge stale caches
+                local oldCdID = itemFrame._arcLastEnhancedCdID
                 itemFrame._arcCfg = nil
                 itemFrame._arcCfgVersion = nil
                 itemFrame._arcCfgCdID = nil
@@ -3107,6 +3589,11 @@ local function InstallCDMHooks()
                 itemFrame._arcTargetTint = nil
                 itemFrame._arcTargetGlow = nil
                 itemFrame._arcCooldownEventDriven = nil
+                
+                -- Notify subscribers of release (newCdID=nil signals "frame
+                -- returned to pool"). Modules that don't care about releases
+                -- early-return on `if not newCdID then return end`.
+                DispatchFrameRebind(itemFrame, oldCdID, nil)
             end)
             Debug("Hooked CooldownViewerItemDataMixin.ClearCooldownID")
         end
@@ -3145,7 +3632,8 @@ local function Initialize()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
     eventFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
-    
+    eventFrame:RegisterEvent("PLAYER_PVP_TALENT_UPDATE")
+
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "PLAYER_SPECIALIZATION_CHANGED" then
             OnSpecializationChanged(...)
@@ -3153,10 +3641,21 @@ local function Initialize()
             OnTalentUpdate(...)
         elseif event == "SPELLS_CHANGED" then
             OnSpellsChanged()
+        elseif event == "PLAYER_PVP_TALENT_UPDATE" then
+            OnPvPTalentUpdate()
         elseif event == "PLAYER_ENTERING_WORLD" then
             -- Install CDM hooks after entering world
             C_Timer.After(0.5, InstallCDMHooks)
             C_Timer.After(2.0, InstallCDMHooks)  -- Retry in case CDM loads late
+            -- Arc Auras spell frames: ready-state alpha does not apply on reload
+            -- until the options panel is opened. RefreshAllSpellVisuals clears the
+            -- stale _lastAppliedAlpha/_arcLastSpellState guards and re-applies visuals.
+            -- Deferred past ArcAuras.Initialize (2s) + CDMEnhance settings load.
+            C_Timer.After(3.0, function()
+                if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
+                    ns.ArcAurasCooldown.RefreshAllSpellVisuals()
+                end
+            end)
         elseif event == "COOLDOWN_VIEWER_DATA_LOADED" then
             TimelineAdd("CDM", "DATA_LOADED", "CDM finished loading/reassigning cooldown data")
             -- Also schedule a reconcile to catch any changes

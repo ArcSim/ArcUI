@@ -72,15 +72,16 @@ local SECONDARY_POWER_TYPES = {
 
 local CLASS_POWER_TYPES = {
   ["WARRIOR"] = {1}, ["PALADIN"] = {0, 9}, ["HUNTER"] = {2},
-  ["ROGUE"] = {3, 4}, ["PRIEST"] = {0, 13}, ["DEATHKNIGHT"] = {6, 5},
+  ["ROGUE"] = {3, 4}, ["PRIEST"] = {0}, ["DEATHKNIGHT"] = {6, 5},
   ["SHAMAN"] = {0}, ["MAGE"] = {0, 16}, ["WARLOCK"] = {0, 7},
   ["MONK"] = {12}, ["DRUID"] = {0, 1, 3, 8, 4},
-  ["DEMONHUNTER"] = {17, 18}, ["EVOKER"] = {0, 19}
+  ["DEMONHUNTER"] = {17}, ["EVOKER"] = {0, 19}
 }
 
 local SPEC_POWER_TYPES = {
-  ["SHAMAN"] = { [1] = {11}, [2] = {}, [3] = {} },
-  ["MONK"]   = { [1] = {3}, [2] = {0}, [3] = {3} },  -- BrM=Energy, MW=Mana, WW=Energy
+  ["SHAMAN"] = { [1] = {11}, [2] = {}, [3] = {} },       -- Ele=+Maelstrom
+  ["MONK"]   = { [1] = {3}, [2] = {0}, [3] = {3} },      -- BrM=Energy, MW=Mana, WW=Energy
+  ["PRIEST"] = { [1] = {}, [2] = {}, [3] = {13} },        -- Shadow=+Insanity
 }
 
 -- ===================================================================
@@ -120,7 +121,7 @@ end
 
 local function ShouldShowBar(cfg)
   if not cfg or not cfg.tracking then return false end
-  if not cfg.tracking.enabled and not cfg.tracking.customEnabled then return false end
+  if not cfg.tracking.enabled then return false end
   
   -- Filter out cooldownCharge bars - they belong in Cooldown Bars panel
   if cfg.tracking.trackType == "cooldownCharge" then return false end
@@ -272,32 +273,11 @@ end
 -- CATALOG DROPDOWN BUILDER
 -- ===================================================================
 
--- Helper to get selected entry info (works for both CDM and custom definitions)
+-- Helper to get selected entry info
 local function GetSelectedCatalogEntry()
   if not selectedCatalogEntry then return nil end
   
-  -- Check if it's a custom definition (format: "customAura_uuid" or "customCooldown_uuid")
-  if type(selectedCatalogEntry) == "string" then
-    if selectedCatalogEntry:find("^customAura_") then
-      local customDefID = selectedCatalogEntry:sub(12)  -- Remove "customAura_" prefix
-      local auras = ns.Catalog.GetCustomAuraEntries and ns.Catalog.GetCustomAuraEntries() or {}
-      for _, entry in ipairs(auras) do
-        if entry.customDefinitionID == customDefID then
-          return entry
-        end
-      end
-      return nil
-    elseif selectedCatalogEntry:find("^customCooldown_") then
-      local customDefID = selectedCatalogEntry:sub(16)  -- Remove "customCooldown_" prefix
-      local cooldowns = ns.Catalog.GetCustomCooldownEntries and ns.Catalog.GetCustomCooldownEntries() or {}
-      for _, entry in ipairs(cooldowns) do
-        if entry.customDefinitionID == customDefID then
-          return entry
-        end
-      end
-      return nil
-    end
-  end
+
   
   -- It's a CDM cooldownID (numeric or stringified number)
   local cooldownID = tonumber(selectedCatalogEntry) or selectedCatalogEntry
@@ -401,31 +381,9 @@ local function GetCatalogEntryByIndex(index)
     end
   end
   
-  -- Also include custom auras (always pass filter as "configured")
-  if ns.Catalog.GetCustomAuraEntries then
-    local customAuras = ns.Catalog.GetCustomAuraEntries()
-    for _, entry in ipairs(customAuras) do
-      if catalogConfigFilter ~= "notconfigured" then  -- Show in "all" or "configured"
-        visibleIndex = visibleIndex + 1
-        if visibleIndex == index then
-          return entry
-        end
-      end
-    end
-  end
+
   
-  -- Also include custom cooldowns
-  if ns.Catalog.GetCustomCooldownEntries then
-    local customCooldowns = ns.Catalog.GetCustomCooldownEntries()
-    for _, entry in ipairs(customCooldowns) do
-      if catalogConfigFilter ~= "notconfigured" then
-        visibleIndex = visibleIndex + 1
-        if visibleIndex == index then
-          return entry
-        end
-      end
-    end
-  end
+
   
   return nil
 end
@@ -443,21 +401,6 @@ local function CreateCatalogIconEntry(index)
       local entry = GetCatalogEntryByIndex(index)
       if not entry then return "" end
       
-      -- Handle custom definitions
-      if entry.isCustom then
-        local desc = "|cff00ff00[Custom]|r |cffffd700" .. entry.name .. "|r"
-        if entry.spellID and entry.spellID > 0 then
-          desc = desc .. "\nSpell ID: " .. entry.spellID
-        end
-        desc = desc .. "\nType: " .. (entry.customType == "customAura" and "Custom Aura" or "Custom Cooldown")
-        
-        if entry.arcUIBarNum then
-          desc = desc .. "\n\n|cff00ccffAlready in ArcUI:|r Bar " .. entry.arcUIBarNum
-        else
-          desc = desc .. "\n\n|cff888888Click to select, then create a bar/icon|r"
-        end
-        return desc
-      end
       
       -- CDM entries
       local cooldownID = entry.cooldownID
@@ -497,19 +440,7 @@ local function CreateCatalogIconEntry(index)
       local entry = GetCatalogEntryByIndex(index)
       if not entry then return end
       
-      -- Handle custom definitions
-      if entry.isCustom then
-        local customKey = entry.customType .. "_" .. entry.customDefinitionID
-        if selectedCatalogEntry == customKey then
-          selectedCatalogEntry = nil
-        else
-          selectedCatalogEntry = customKey
-        end
-        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-        return
-      end
-      
-      -- Warn if not configured (CDM entries only)
+            -- Warn if not configured (CDM entries only)
       if not entry.isDisplayed then
         print("|cff00ccffArcUI|r: |cffff6600" .. entry.name .. "|r is not configured in CD Manager. Please enable it there first.")
         return
@@ -593,17 +524,16 @@ local function ShowDeleteConfirmation(barNum, barType, barName)
       if cfg then
         -- Fully reset tracking config
         cfg.tracking.enabled = false
-        cfg.tracking.customEnabled = false
         cfg.tracking.buffName = ""
         cfg.tracking.spellID = 0
         cfg.tracking.cooldownID = 0
         cfg.tracking.trackType = "buff"  -- Reset to default
-        cfg.tracking.customDefinitionID = nil  -- Clear custom tracking
         cfg.tracking.sourceType = "icon"  -- Reset to default
         cfg.tracking.useDurationBar = false
         cfg.tracking.useBaseSpell = false
         cfg.tracking.trackedSpellID = nil  -- Clear tracked spell selection
         cfg.tracking.maxStacks = 10
+        if ns.API and ns.API.InvalidateActiveBarCache then ns.API.InvalidateActiveBarCache() end
         cfg.tracking.maxDuration = 30
         cfg.tracking.iconTextureID = nil
         cfg.tracking.displaySpellID = nil
@@ -642,6 +572,7 @@ local function ShowDeleteConfirmation(barNum, barType, barName)
           cfg.tracking.powerName = nil
           cfg.display.enabled = false
           if ns.Resources and ns.Resources.HideBar then ns.Resources.HideBar(barNum) end
+          if ns.API and ns.API.InvalidateActiveBarCache then ns.API.InvalidateActiveBarCache() end
         end
       end
     end
@@ -680,7 +611,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         type = "toggle",
         name = function()
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and (cfg.tracking.enabled or cfg.tracking.customEnabled) then
+          if cfg and cfg.tracking.enabled then
             local name = cfg.tracking.buffName or "(Not configured)"
             local trackType = cfg.tracking.trackType or "buff"
             local typeLabel
@@ -688,25 +619,12 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
               typeLabel = "|cffff6b6bDebuff|r"
             elseif trackType == "pet" then
               typeLabel = "|cffaa88ffPet|r"
-            elseif trackType == "customAura" then
-              typeLabel = "|cff00ff00Custom Aura|r"
-            elseif trackType == "customCooldown" then
-              typeLabel = "|cff00ccffCustom CD|r"
             else
               typeLabel = "|cff00ff00Buff|r"
             end
             
             local modeLabel = ""
-            if trackType == "customAura" or trackType == "customCooldown" then
-              -- Custom definitions show their mode
-              if cfg.tracking.useDurationBar then
-                modeLabel = " |cffff9900[Duration]|r"
-              else
-                modeLabel = " |cff00ccff[Stacks]|r"
-              end
-            elseif cfg.tracking.customEnabled then
-              modeLabel = " |cffff9900[Custom]|r"
-            elseif cfg.tracking.useDurationBar then
+            if cfg.tracking.useDurationBar then
               modeLabel = " |cffff9900[Duration]|r"
             else
               modeLabel = " |cff00ccff[Stacks]|r"
@@ -720,17 +638,14 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
                                             (cooldownID and cooldownID > 0) or 
                                             (cfg.tracking.buffName and cfg.tracking.buffName ~= "")
             local hasTrackType = cfg.tracking.trackType and cfg.tracking.trackType ~= "" and cfg.tracking.trackType ~= "none"
-            local isCustomTracking = cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown"
             
-            -- Custom tracking doesn't need spell identification from CDM
             -- All other bars need both spell identification AND trackType
-            local isProperlyConfigured = isCustomTracking or (hasSpellIdentification and hasTrackType)
+            local isProperlyConfigured = hasSpellIdentification and hasTrackType
             
             if not isProperlyConfigured then
               statusLabel = " |cffffff00[MISSING SETUP]|r"
-            elseif trackType ~= "customAura" and trackType ~= "customCooldown" then
-              -- Custom definitions don't need CDM tracking status
-              if cooldownID and cooldownID > 0 and not cfg.tracking.customEnabled then
+            else
+              if cooldownID and cooldownID > 0 then
                 local trackingOK = ns.API.IsTrackingOK and ns.API.IsTrackingOK(barNum)
                 statusLabel = trackingOK and " |cff00ff00[OK]|r" or " |cffff0000[FAIL]|r"
               end
@@ -847,11 +762,6 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if not expandedBars[barKey] then return true end
           if filterDisplayType == "icon" then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          -- Hide for custom tracking (customEnabled or custom definitions)
-          if cfg and cfg.tracking.customEnabled then return true end
-          if cfg and (cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
-            return true
-          end
           return false
         end
       },
@@ -890,7 +800,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if not expandedBars[barKey] then return true end
           if filterDisplayType == "icon" then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          return cfg and cfg.tracking.customEnabled
+          return false
         end
       },
       maxStacks = {
@@ -950,7 +860,6 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and cfg.tracking.customEnabled then return true end
           -- Hide for duration bars with Auto enabled (Max Ticks moved to Appearance panel)
           if cfg and cfg.tracking.useDurationBar and cfg.tracking.dynamicMaxDuration then return true end
           return false
@@ -979,9 +888,6 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          -- Only show for duration bars, not custom tracking
-          if cfg and cfg.tracking.customEnabled then return true end
-          if cfg and (cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then return true end
           return not (cfg and cfg.tracking.useDurationBar)
         end
       },
@@ -1035,6 +941,32 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then return true end
           -- Hide if using trackedSpellID (they're mutually exclusive)
           return cfg.tracking.trackedSpellID and cfg.tracking.trackedSpellID > 0
+        end
+      },
+      highFrequencyUpdates = {
+        type = "toggle",
+        name = "|cffFF6600High Frequency Updates|r",
+        desc = "|cffFF6600High CPU usage.|r\n\nForces this bar to update on every CDM aura refresh event. Only enable if you find this bar is not updating fast enough with the default settings.",
+        get = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          return cfg and cfg.tracking and cfg.tracking.highFrequencyUpdates or false
+        end,
+        set = function(info, value)
+          local cfg = ns.API.GetBarConfig(barNum)
+          if cfg then
+            cfg.tracking.highFrequencyUpdates = value or nil
+            -- Re-register hooks so highFreqBars is updated immediately
+            if ns.API.ValidateAllBarTracking then ns.API.ValidateAllBarTracking() end
+            if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNum) end
+          end
+        end,
+        order = 4.76,
+        width = 1.0,
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking then return true end
+          return not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0
         end
       },
       trackSpellBreak = {
@@ -1438,8 +1370,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          -- Hide for custom tracking
-          if cfg and (cfg.tracking.customEnabled or cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
+          if false then
             return true
           end
           -- Hide if no cooldownID set
@@ -1493,7 +1424,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
               table.insert(lines, string.format("|cff888888Alt %d:|r %d%s%s", i, altCdID, spellName, activeMarker))
             end
           else
-            table.insert(lines, "|cff666666No alternates - verify to auto-discover|r")
+            table.insert(lines, "|cff666666No alternates — use Find Alt ID to search|r")
           end
           
           return table.concat(lines, "\n")
@@ -1504,7 +1435,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and (cfg.tracking.customEnabled or cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
+          if false then
             return true
           end
           if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then
@@ -1534,12 +1465,32 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and (cfg.tracking.customEnabled or cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
+          if false then
             return true
           end
           if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then
             return true
           end
+          return false
+        end
+      },
+      findAltIDBtn = {
+        type = "execute",
+        name = "Find Alt ID",
+        desc = "Search CDM for an alternate cooldown ID matching this bar's spell. Only runs when you click — nothing is added automatically.",
+        func = function()
+          if ns.API.DiscoverAlternateCooldownID then
+            local cdID, msg = ns.API.DiscoverAlternateCooldownID(barNum)
+            print("|cff00ccffArc UI|r: " .. msg)
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+          end
+        end,
+        order = 7.35,
+        width = 0.7,
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then return true end
           return false
         end
       },
@@ -1573,7 +1524,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and (cfg.tracking.customEnabled or cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
+          if false then
             return true
           end
           if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then
@@ -1586,6 +1537,62 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           return false
         end
       },
+      excludedCdIDsInfo = {
+        type = "description",
+        name = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking.excludedCooldownIDs or #cfg.tracking.excludedCooldownIDs == 0 then
+            return ""
+          end
+          local lines = { "|cffff6600Excluded (won't be re-discovered):|r" }
+          for _, exID in ipairs(cfg.tracking.excludedCooldownIDs) do
+            table.insert(lines, string.format("|cff888888  %d|r", exID))
+          end
+          return table.concat(lines, "\n")
+        end,
+        order = 7.5,
+        width = "full",
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then return true end
+          return not cfg.tracking.excludedCooldownIDs or #cfg.tracking.excludedCooldownIDs == 0
+        end
+      },
+      unexcludeCdIDDropdown = {
+        type = "select",
+        name = "Un-exclude",
+        desc = "Remove a cooldown ID from the excluded list so it can be found by 'Find Alt ID' again",
+        values = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          local vals = { [""] = "-- Select --" }
+          if cfg and cfg.tracking.excludedCooldownIDs then
+            for _, exID in ipairs(cfg.tracking.excludedCooldownIDs) do
+              vals[tostring(exID)] = tostring(exID)
+            end
+          end
+          return vals
+        end,
+        get = function() return "" end,
+        set = function(info, value)
+          if value ~= "" then
+            local cdID = tonumber(value)
+            if cdID and ns.API.UnexcludeCooldownID then
+              local success, msg = ns.API.UnexcludeCooldownID(barNum, cdID)
+              print("|cff00ccffArc UI|r: " .. msg)
+              LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            end
+          end
+        end,
+        order = 7.6,
+        width = 0.7,
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then return true end
+          return not cfg.tracking.excludedCooldownIDs or #cfg.tracking.excludedCooldownIDs == 0
+        end
+      },
       linkedCdIDsBreak = {
         type = "description",
         name = "",
@@ -1594,7 +1601,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          if cfg and (cfg.tracking.customEnabled or cfg.tracking.trackType == "customAura" or cfg.tracking.trackType == "customCooldown") then
+          if false then
             return true
           end
           if not cfg or not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0 then
@@ -1795,7 +1802,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if not selectedCatalogEntry then return "" end
           local entry = GetSelectedCatalogEntry()
           if entry then
-            local prefix = entry.isCustom and "|cff00ff00[Custom]|r " or ""
+            local prefix = ""
             return string.format("%s|T%d:20:20:0:0|t %s", prefix, entry.icon, entry.name)
           end
           return "Selected Aura"
@@ -1810,33 +1817,6 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           local entry = GetSelectedCatalogEntry()
           if not entry then return "" end
           
-          -- Handle custom definitions
-          if entry.isCustom then
-            local typeText = entry.customType == "customAura" and "Custom Aura" or "Custom Cooldown"
-            local barsText = ""
-            if entry.arcUIBarNum then
-              barsText = "\n|cff00ff00ArcUI Bar:|r #" .. entry.arcUIBarNum
-            end
-            
-            local stackInfo = ""
-            if entry.maxStacks then
-              stackInfo = string.format("    |cffffd700Max Stacks:|r %d", entry.maxStacks)
-            end
-            if entry.maxCharges then
-              stackInfo = string.format("    |cffffd700Max Charges:|r %d", entry.maxCharges)
-            end
-            
-            -- Custom auras can create both stack and duration bars
-            local canCreate = ""
-            if entry.customType == "customAura" then
-              canCreate = "\n|cff00ff00Can create:|r Stack Bar or Duration Bar"
-            else
-              canCreate = "\n|cff00ff00Can create:|r Stack Bar (Charges)"
-            end
-            
-            return string.format("|cffffd700Type:|r %s%s%s%s",
-              typeText, stackInfo, barsText, canCreate)
-          end
           
           -- CDM entries
           local existingBars = ns.Catalog.FindAllArcUIBarsByCooldownID and 
@@ -1872,24 +1852,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
           
-          -- Handle custom definitions
-          if entry and entry.isCustom then
-            local success, result = ns.Catalog.CreateCustomArcUIDisplay(
-              entry.customDefinitionID, 
-              entry.customType, 
-              "bar",
-              { showOnSpecs = {GetCurrentSpecIndex()} }
-            )
-            if success then
-              print(string.format("|cff00ccffArc UI|r: Created custom bar #%d", result))
-            else
-              print("|cff00ccffArc UI|r: " .. (result or "Failed"))
-            end
-            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-            return
-          end
-          
-          -- CDM entries
+                    -- CDM entries
           -- Use bar source if available (Tracked Bars), otherwise use icon source (Tracked Buffs)
           local sourceType = (entry and entry.isTrackedBar) and "bar" or "icon"
           local success, result = ns.Catalog.CreateArcUIDisplay(selectedCatalogEntry, "bar", {
@@ -1911,8 +1874,6 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         disabled = function()
           if not selectedCatalogEntry then return true end
           local entry = GetSelectedCatalogEntry()
-          -- Enable for custom definitions always
-          if entry and entry.isCustom then return false end
           -- Enable if in Tracked Buffs OR Tracked Bars
           return not entry or (not entry.isTrackedBuff and not entry.isTrackedBar)
         end
@@ -1922,14 +1883,6 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         name = function()
           if not selectedCatalogEntry then return "Create Duration Bar" end
           local entry = GetSelectedCatalogEntry()
-          -- Enable for custom auras (we track duration ourselves)
-          if entry and entry.isCustom and entry.customType == "customAura" then
-            return "Create Duration Bar"
-          end
-          -- Disable for custom cooldowns (no duration tracking)
-          if entry and entry.isCustom and entry.customType == "customCooldown" then
-            return "|cff888888Create Duration Bar|r"
-          end
           -- Enable for any CDM entry (bar, buff, or displayed)
           if entry and (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed) then
             return "Create Duration Bar"
@@ -1942,14 +1895,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
             return "Create a bar that depletes as the buff expires."
           end
           local entry = GetSelectedCatalogEntry()
-          -- Enable for custom auras
-          if entry and entry.isCustom and entry.customType == "customAura" then
-            return "Create a bar that depletes based on the custom aura's duration.\nYou will need to configure Max Duration after creation."
-          end
-          -- Disable for custom cooldowns
-          if entry and entry.isCustom and entry.customType == "customCooldown" then
-            return "Duration bars are not available for custom cooldowns.\nUse Stack Bar instead to show charge counts."
-          end
+
           -- Enable for any CDM entry
           if entry and (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed) then
             return "Create a bar that depletes as the buff expires.\nYou will need to configure Type and Max Duration after creation."
@@ -1961,31 +1907,9 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
           
-          -- Handle custom auras - create duration bar
-          if entry and entry.isCustom and entry.customType == "customAura" then
-            local success, result = ns.Catalog.CreateCustomArcUIDisplay(
-              entry.customDefinitionID, 
-              entry.customType, 
-              "bar",
-              { 
-                showOnSpecs = {GetCurrentSpecIndex()},
-                useDurationBar = true,
-              }
-            )
-            if success then
-              print(string.format("|cff00ccffArc UI|r: Created custom duration bar #%d - |cffFF6600Please configure Type (buff/debuff)|r", result))
-            else
-              print("|cff00ccffArc UI|r: " .. (result or "Failed"))
-            end
-            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-            return
-          end
+
           
-          -- Deny for custom cooldowns
-          if entry and entry.isCustom and entry.customType == "customCooldown" then
-            print("|cff00ccffArc UI|r: |cffff6b6bDuration bars are not available for custom cooldowns.|r")
-            return
-          end
+
           
           -- Check if we can actually create a duration bar (CDM entries)
           if not entry or not (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed) then
@@ -2015,10 +1939,6 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         disabled = function()
           if not selectedCatalogEntry then return true end
           local entry = GetSelectedCatalogEntry()
-          -- Enable for custom auras
-          if entry and entry.isCustom and entry.customType == "customAura" then return false end
-          -- Disable for custom cooldowns
-          if entry and entry.isCustom and entry.customType == "customCooldown" then return true end
           -- Enable for any CDM entry
           return not entry or not (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed)
         end
@@ -2046,7 +1966,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
       verifyTrackingBtn = {
         type = "execute",
         name = "Verify Tracking",
-        desc = "Check if all bars can find their auras. Also auto-discovers alternate cooldown IDs for cross-spec tracking.",
+        desc = "Check if all bars can find their auras.",
         func = function()
           if ns.API.ValidateAllBarTracking then ns.API.ValidateAllBarTracking() end
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
@@ -2235,25 +2155,7 @@ function ns.TrackingOptions.GetIconSetupTable()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
           
-          -- Handle custom definitions
-          if entry and entry.isCustom then
-            local success, result = ns.Catalog.CreateCustomArcUIDisplay(
-              entry.customDefinitionID, 
-              entry.customType, 
-              "icon",
-              { showOnSpecs = {GetCurrentSpecIndex()} }
-            )
-            if success then
-              print(string.format("|cff00ccffArc UI|r: Created custom icon #%d", result))
-              selectedCatalogEntry = nil
-            else
-              print("|cff00ccffArc UI|r: " .. (result or "Failed"))
-            end
-            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-            return
-          end
-          
-          -- CDM entries
+                    -- CDM entries
           local success, result = ns.Catalog.CreateIcon(selectedCatalogEntry, 10, {GetCurrentSpecIndex()})
           if success then
             print(string.format("|cff00ccffArc UI|r: Created icon #%d - |cffFF6600Please configure Max Stacks|r", result))
@@ -2269,8 +2171,6 @@ function ns.TrackingOptions.GetIconSetupTable()
         disabled = function()
           if not selectedCatalogEntry then return true end
           local entry = GetSelectedCatalogEntry()
-          -- Enable for custom definitions
-          if entry and entry.isCustom then return false end
           -- Allow both Tracked Buffs AND Tracked Bars for icons
           return not entry or (not entry.isTrackedBuff and not entry.isTrackedBar)
         end
@@ -2446,6 +2346,64 @@ function ns.TrackingOptions.GetResourceSetupTable()
     return false
   end
   
+  -- Helper: check if a power type is available for the current class (any spec)
+  local function IsPowerTypeForClass(powerType)
+    local _, playerClass = UnitClass("player")
+    local classPowers = CLASS_POWER_TYPES[playerClass] or {}
+    for _, pType in ipairs(classPowers) do
+      if pType == powerType and not SECONDARY_POWER_TYPES[powerType] then return true end
+    end
+    -- Check all specs
+    local specPowers = SPEC_POWER_TYPES[playerClass]
+    if specPowers then
+      for _, specList in pairs(specPowers) do
+        for _, pType in ipairs(specList) do
+          if pType == powerType and not SECONDARY_POWER_TYPES[powerType] then return true end
+        end
+      end
+    end
+    return false
+  end
+  
+  -- Create a track toggle for one power type inside an autoPrimary bar
+  local function CreateAutoPowerToggleEntry(barNum, barKey, powerType, order)
+    local powerName = ALL_POWER_TYPES[powerType] or ("Power " .. powerType)
+    return {
+      type = "toggle",
+      name = powerName,
+      desc = "Track " .. powerName .. " on this bar.\n\nUnchecking will hide the bar when this power type is active.",
+      get = function()
+        local cfg = ns.API.GetResourceBarConfig(barNum)
+        if not cfg or not cfg.tracking then return true end
+        local excl = cfg.tracking.autoPowerExclude
+        if not excl then return true end
+        return not excl[powerType]
+      end,
+      set = function(info, value)
+        local cfg = ns.API.GetResourceBarConfig(barNum)
+        if cfg then
+          if not cfg.tracking.autoPowerExclude then cfg.tracking.autoPowerExclude = {} end
+          if value then
+            cfg.tracking.autoPowerExclude[powerType] = nil
+          else
+            cfg.tracking.autoPowerExclude[powerType] = true
+          end
+          if ns.Resources and ns.Resources.UpdateAllBars then
+            ns.Resources.UpdateAllBars()
+          end
+        end
+      end,
+      order = order,
+      width = 1.0,
+      hidden = function()
+        if not expandedResources[barKey] then return true end
+        local cfg = ns.API.GetResourceBarConfig(barNum)
+        if not cfg or cfg.tracking.resourceCategory ~= "autoPrimary" then return true end
+        return not IsPowerTypeForClass(powerType)
+      end
+    }
+  end
+  
   -- Create collapsible resource bar entry (matches Bars tab style)
   local function CreateResourceBarEntry(barNum, orderBase)
     local barKey = "resource_" .. barNum
@@ -2475,7 +2433,13 @@ function ns.TrackingOptions.GetResourceSetupTable()
               local resourceCategory = cfg.tracking.resourceCategory or "primary"
               local icon
               
-              if resourceCategory == "secondary" then
+              if resourceCategory == "autoPrimary" then
+                -- Show current power type dynamically
+                local currentPower = UnitPowerType("player")
+                icon = GetPowerIcon(currentPower)
+                local currentName = ALL_POWER_TYPES[currentPower] or "Unknown"
+                name = "Auto Primary (" .. currentName .. ")"
+              elseif resourceCategory == "secondary" then
                 icon = GetSecondaryIcon(cfg.tracking.secondaryType)
               else
                 icon = GetPowerIcon(cfg.tracking.powerType)
@@ -2489,10 +2453,12 @@ function ns.TrackingOptions.GetResourceSetupTable()
                 end
               end
               
-              -- Add category label for secondary
+              -- Add category label
               local categoryLabel = ""
               if resourceCategory == "secondary" then
                 categoryLabel = " |cff00ccff(Secondary)|r"
+              elseif resourceCategory == "autoPrimary" then
+                categoryLabel = " |cff00ff00(Auto)|r"
               end
               
               return string.format("|T%d:16:16:0:0|t Resource %d: %s%s%s", icon, barNum, name, categoryLabel, talentLabel)
@@ -2843,6 +2809,39 @@ function ns.TrackingOptions.GetResourceSetupTable()
           width = "full",
           hidden = function() return not expandedResources[barKey] end
         },
+        autoPowerColorsHeader = {
+          type = "description",
+          name = "|cffffd700Per-Resource Settings|r",
+          fontSize = "medium",
+          order = 5.91,
+          width = "full",
+          hidden = function()
+            if not expandedResources[barKey] then return true end
+            local cfg = ns.API.GetResourceBarConfig(barNum)
+            return not cfg or cfg.tracking.resourceCategory ~= "autoPrimary"
+          end
+        },
+        autoPowerColorsDesc = {
+          type = "description",
+          name = "|cff888888Uncheck a resource to hide the bar when that power type is active.|r",
+          fontSize = "small",
+          order = 5.911,
+          width = "full",
+          hidden = function()
+            if not expandedResources[barKey] then return true end
+            local cfg = ns.API.GetResourceBarConfig(barNum)
+            return not cfg or cfg.tracking.resourceCategory ~= "autoPrimary"
+          end
+        },
+        autoPowerToggle0  = CreateAutoPowerToggleEntry(barNum, barKey, 0,  5.9200),
+        autoPowerToggle1  = CreateAutoPowerToggleEntry(barNum, barKey, 1,  5.9210),
+        autoPowerToggle2  = CreateAutoPowerToggleEntry(barNum, barKey, 2,  5.9220),
+        autoPowerToggle3  = CreateAutoPowerToggleEntry(barNum, barKey, 3,  5.9230),
+        autoPowerToggle6  = CreateAutoPowerToggleEntry(barNum, barKey, 6,  5.9240),
+        autoPowerToggle8  = CreateAutoPowerToggleEntry(barNum, barKey, 8,  5.9250),
+        autoPowerToggle11 = CreateAutoPowerToggleEntry(barNum, barKey, 11, 5.9260),
+        autoPowerToggle13 = CreateAutoPowerToggleEntry(barNum, barKey, 13, 5.9270),
+        autoPowerToggle17 = CreateAutoPowerToggleEntry(barNum, barKey, 17, 5.9280),
         hideBlizzFrame = {
           type = "toggle",
           name = "Hide Blizzard Frame",
@@ -2998,7 +2997,51 @@ function ns.TrackingOptions.GetResourceSetupTable()
         order = 1
       },
       
-      -- Primary power type icon grid
+      -- Auto Primary Resource (one bar for all specs)
+      autoPrimary = {
+        type = "execute",
+        name = "Auto",
+        desc = "|cff00ff00Auto Primary Resource|r\n\nCreates a single bar that |cff00ccffautomatically switches|r power type per spec and form.\n\n"
+            .. "Examples:\n"
+            .. "- Shaman: Maelstrom (Ele) \226\134\148 Mana (Enh/Resto)\n"
+            .. "- Druid: Astral Power (Moonkin) \226\134\148 Energy (Cat) \226\134\148 Rage (Bear)\n"
+            .. "- DH: Fury on all specs\n\n"
+            .. "|cff888888Click to create.|r",
+        func = function()
+          local barNum = ns.API.InitializeNewResourceBar(nil, "Auto Primary", "autoPrimary", nil)
+          if barNum then
+            print("|cff00ccffArc UI|r: Created auto-switching primary resource bar #" .. barNum)
+          else
+            print("|cff00ccffArc UI|r: All resource bar slots are full")
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        image = function()
+          local CLASS_ICONS = {
+            ["WARRIOR"]     = 626008,
+            ["PALADIN"]     = 626003,
+            ["HUNTER"]      = 626000,
+            ["ROGUE"]       = 626005,
+            ["PRIEST"]      = 626004,
+            ["DEATHKNIGHT"] = 135771,
+            ["SHAMAN"]      = 626006,
+            ["MAGE"]        = 626001,
+            ["WARLOCK"]     = 626007,
+            ["MONK"]        = 626002,
+            ["DRUID"]       = 625999,
+            ["DEMONHUNTER"] = 1260827,
+            ["EVOKER"]      = 4574311,
+          }
+          local _, playerClass = UnitClass("player")
+          return CLASS_ICONS[playerClass] or 134400
+        end,
+        imageWidth = 32,
+        imageHeight = 32,
+        order = 1.5,
+        width = 0.22,
+      },
+      
+      -- Primary power type icon grid (manual — one power type per bar)
       powerMana = CreatePowerIconEntry(0, 2.0),
       powerRage = CreatePowerIconEntry(1, 2.1),
       powerFocus = CreatePowerIconEntry(2, 2.2),

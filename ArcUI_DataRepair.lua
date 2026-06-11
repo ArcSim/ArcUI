@@ -516,6 +516,137 @@ local function RestoreCurrentCharDefaults()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- CDMGROUPS DEAD-WEIGHT CLEANUP
+-- Strips migration flags, empty containers, and legacy duplicate fields
+-- that were left behind by one-time migrations and early addon versions.
+--
+-- SAFE BECAUSE:
+--   - Migration flags are boolean gates already passed on first login
+--   - Empty containers are recreated on-demand by EnsureSpecData/GetSpecData
+--   - Legacy spec-level fields are only stripped when the profile already
+--     has the migrated data (migration ran successfully)
+--   - Runs on ALL characters during PLAYER_LOGOUT (same as bar compaction)
+-- ═══════════════════════════════════════════════════════════════════════════
+local function CompactCDMGroupsData(charData)
+    if not charData then return 0 end
+    local stripped = 0
+    
+    -- 1) Empty importRestore table (pre-created but never populated for most chars)
+    if charData.importRestore and type(charData.importRestore) == "table" and not next(charData.importRestore) then
+        charData.importRestore = nil
+        stripped = stripped + 1
+    end
+    
+    local cdmGroups = charData.cdmGroups
+    if not cdmGroups or type(cdmGroups) ~= "table" then return stripped end
+    
+    -- 2) Top-level migration flags on cdmGroups (checked once, never again)
+    if cdmGroups.migratedFromProfile ~= nil then
+        cdmGroups.migratedFromProfile = nil
+        stripped = stripped + 1
+    end
+    if cdmGroups.migratedOldKeys and type(cdmGroups.migratedOldKeys) == "table" then
+        cdmGroups.migratedOldKeys = nil
+        stripped = stripped + 1
+    end
+    
+    -- 3) Per-spec cleanup inside specData
+    if not cdmGroups.specData or type(cdmGroups.specData) ~= "table" then return stripped end
+    
+    for specKey, specData in pairs(cdmGroups.specData) do
+        if type(specData) == "table" then
+            -- 3a) Migration flags (boolean gates, already passed)
+            if specData.initialized ~= nil then
+                specData.initialized = nil
+                stripped = stripped + 1
+            end
+            if specData.migratedFromCDMEnhance ~= nil then
+                specData.migratedFromCDMEnhance = nil
+                stripped = stripped + 1
+            end
+            
+            -- 3b) Empty groupSettings sub-tables
+            --     Only strip sub-tables that are truly empty {}
+            --     Leave sub-tables with actual data (e.g. keybinds with fontSize)
+            if specData.groupSettings and type(specData.groupSettings) == "table" then
+                local allEmpty = true
+                for subKey, subTable in pairs(specData.groupSettings) do
+                    if type(subTable) == "table" and not next(subTable) then
+                        specData.groupSettings[subKey] = nil
+                        stripped = stripped + 1
+                    else
+                        allEmpty = false
+                    end
+                end
+                -- Remove parent if all children were empty
+                if allEmpty and not next(specData.groupSettings) then
+                    specData.groupSettings = nil
+                    stripped = stripped + 1
+                end
+            end
+            
+            -- 3c) Legacy spec-level fields that have been migrated to layoutProfiles
+            --     ONLY strip if the active profile already has the migrated data
+            if specData.layoutProfiles and type(specData.layoutProfiles) == "table" then
+                local activeProfile = specData.activeProfile or "Default"
+                local profile = specData.layoutProfiles[activeProfile]
+                
+                if profile and type(profile) == "table" then
+                    -- Legacy savedPositions → profile.savedPositions
+                    if specData.savedPositions and type(specData.savedPositions) == "table" then
+                        if profile.savedPositions and next(profile.savedPositions) then
+                            -- Profile has data = migration ran successfully
+                            specData.savedPositions = nil
+                            stripped = stripped + 1
+                        elseif not next(specData.savedPositions) then
+                            -- Legacy is empty anyway, safe to remove
+                            specData.savedPositions = nil
+                            stripped = stripped + 1
+                        end
+                    end
+                    
+                    -- Legacy freeIcons → profile.freeIcons
+                    if specData.freeIcons and type(specData.freeIcons) == "table" then
+                        if profile.freeIcons and next(profile.freeIcons) then
+                            specData.freeIcons = nil
+                            stripped = stripped + 1
+                        elseif not next(specData.freeIcons) then
+                            specData.freeIcons = nil
+                            stripped = stripped + 1
+                        end
+                    end
+                    
+                    -- Legacy groups → profile.groupLayouts
+                    if specData.groups and type(specData.groups) == "table" then
+                        if profile.groupLayouts and next(profile.groupLayouts) then
+                            specData.groups = nil
+                            stripped = stripped + 1
+                        elseif not next(specData.groups) then
+                            specData.groups = nil
+                            stripped = stripped + 1
+                        end
+                    end
+                    
+                    -- Legacy spec-level iconSettings (code already nils this after migration,
+                    -- but catch any stragglers from older versions)
+                    if specData.iconSettings and type(specData.iconSettings) == "table" then
+                        if profile.iconSettings and next(profile.iconSettings) then
+                            specData.iconSettings = nil
+                            stripped = stripped + 1
+                        elseif not next(specData.iconSettings) then
+                            specData.iconSettings = nil
+                            stripped = stripped + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return stripped
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- COMPACT ALL CHARACTERS on logout
 -- Walks the raw ArcUIDB.char table to strip ALL characters, not just current
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -529,6 +660,7 @@ local function CompactAllCharacters()
     for charKey, charData in pairs(svTable.char) do
         if type(charData) == "table" then
             local stripped = CompactCharacterBars(charData)
+            stripped = stripped + CompactCDMGroupsData(charData)
             totalStripped = totalStripped + stripped
             if stripped > 0 then
                 charCount = charCount + 1
@@ -608,7 +740,13 @@ function DR.RunAutoCleanup()
     local cooldowns = CleanEmptyCooldownBars()
     local profiles = FixMissingActiveProfile(true)  -- silent on auto cleanup
     
-    totalRemoved = bars + resources + cooldowns + profiles
+    -- CDMGroups dead-weight cleanup (migration flags, empty containers, legacy dupes)
+    local cdmCleaned = 0
+    if ns.db and ns.db.char then
+        cdmCleaned = CompactCDMGroupsData(ns.db.char)
+    end
+    
+    totalRemoved = bars + resources + cooldowns + profiles + cdmCleaned
     
     return totalRemoved
 end
@@ -676,6 +814,61 @@ SlashCmdList["ARCUIREPAIR"] = function(msg)
     
     if cmd == "emergency" then
         DR.EmergencyRepair()
+    elseif cmd == "groupdump" then
+        -- Dump live group layout values for debugging
+        if ns.CDMGroups and ns.CDMGroups.groups then
+            for name, g in pairs(ns.CDMGroups.groups) do
+                PrintMsg(string.format("[%s] iconSize=%s iconWidth=%s spacing=%s containerPadding=%s cols=%s rows=%s",
+                    name,
+                    tostring(g.layout and g.layout.iconSize),
+                    tostring(g.layout and g.layout.iconWidth),
+                    tostring(g.layout and g.layout.spacing),
+                    tostring(g.containerPadding),
+                    tostring(g.layout and g.layout.gridCols),
+                    tostring(g.layout and g.layout.gridRows)
+                ))
+                -- Also check member frame sizes
+                local count = 0
+                for cdID, member in pairs(g.members or {}) do
+                    if member.frame and count < 2 then
+                        local fw, fh = member.frame:GetSize()
+                        PrintMsg(string.format("  frame[%s] size=%.1fx%.1f _cdmgSlotW=%s _cdmgTargetSize=%s",
+                            tostring(cdID), fw, fh,
+                            tostring(member.frame._cdmgSlotW),
+                            tostring(member.frame._cdmgTargetSize)
+                        ))
+                        count = count + 1
+                    end
+                end
+            end
+        else
+            PrintMsg("No CDMGroups groups found")
+        end
+    elseif cmd == "cdmclean" then
+        -- Manual CDMGroups cleanup (preview what logout will strip)
+        local svTable = _G.ArcUIDB
+        if svTable and svTable.char then
+            local totalStripped = 0
+            local charCount = 0
+            for charKey, charData in pairs(svTable.char) do
+                if type(charData) == "table" then
+                    local stripped = CompactCDMGroupsData(charData)
+                    totalStripped = totalStripped + stripped
+                    if stripped > 0 then
+                        charCount = charCount + 1
+                        PrintMsg("  " .. charKey .. ": " .. stripped .. " dead-weight entries removed")
+                    end
+                end
+            end
+            if totalStripped > 0 then
+                PrintMsg("|cff00ff00Cleaned " .. totalStripped .. " entries across " .. charCount .. " character(s)|r")
+                PrintMsg("Migration flags, empty containers, and legacy duplicates removed.")
+            else
+                PrintMsg("CDMGroups data is already clean!")
+            end
+        else
+            PrintMsg("No character data found")
+        end
     elseif cmd == "compact" then
         -- Manual compaction (preview what logout will do)
         local stripped, chars = CompactAllCharacters()
@@ -705,7 +898,7 @@ SlashCmdList["ARCUIREPAIR"] = function(msg)
         else
             PrintMsg("|cff00ff00Completed " .. count .. " repairs|r")
         end
-        PrintMsg("Commands: compact, restore, purge, list, emergency")
+        PrintMsg("Commands: compact, cdmclean, restore, purge, list, emergency")
     end
 end
 
