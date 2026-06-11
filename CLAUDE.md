@@ -134,6 +134,18 @@ locally-tracked cast times, isActive/isEnabled flags.
 
 ---
 
+## Reference Sources
+
+- **Blizzard's full UI source** (Gethe/wow-ui-source, beta branch) lives at
+  `E:\WoWDev\wow-ui-source` — grep/read it directly when diagnosing CDM interactions or verifying
+  API behavior. CDM (CooldownViewer) source:
+  `E:\WoWDev\wow-ui-source\Interface\AddOns\Blizzard_CooldownViewer`.
+- **API signatures and secret-value annotations:**
+  `E:\WoWDev\wow-ui-source\Interface\AddOns\Blizzard_APIDocumentationGenerated`.
+- Run `git pull` in `E:\WoWDev\wow-ui-source` to update on new builds.
+
+---
+
 ## Architecture / File Map
 
 Load order is defined by `ArcUI.toc` (libs → core → options → CDM module → Arc Auras → CDM
