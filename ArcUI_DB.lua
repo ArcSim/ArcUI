@@ -553,6 +553,39 @@ ns.DB_DEFAULTS = {
       }
     },
     
+    -- ===============================================================
+    -- CASTBAR
+    -- Single player castbar, similar in style to resource bars
+    -- ===============================================================
+    castbar = {
+      enabled = false,
+      width = 250,
+      height = 20,
+      barColor = {r=0.2, g=0.8, b=1, a=1},
+      channelColor = {r=0.2, g=1, b=0.4, a=1},
+      texture = "Blizzard",
+      opacity = 1.0,
+      showBackground = true,
+      backgroundColor = {r=0.1, g=0.1, b=0.1, a=0.9},
+      showBorder = true,
+      borderColor = {r=0, g=0, b=0, a=1},
+      drawnBorderThickness = 2,
+      showIcon = true,
+      iconSize = 20,
+      showText = true,
+      showTimer = true,
+      font = "2002 Bold",
+      fontSize = 14,
+      textColor = {r=1, g=1, b=1, a=1},
+      textOutline = "THICKOUTLINE",
+      barMovable = true,
+      barPosition = {point="CENTER", relPoint="CENTER", x=0, y=-100},
+      barFrameStrata = "MEDIUM",
+      barFrameLevel = 10,
+      hideOutOfCombat = false,
+      hideChannels = false,
+    },
+
     -- LEGACY: CDM Enhancement settings were moved to profile storage
     -- This stub exists only for migration purposes (CDMEnhance.lua migrates to profile)
     -- DO NOT add new fields here - use profile.cdmEnhance instead

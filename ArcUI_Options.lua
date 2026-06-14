@@ -534,7 +534,18 @@ local function GetOptionsTable()
             tbl.order = 2.5
             return tbl
           end)(),
-          
+
+          castbar = (function()
+            local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Castbar",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name = "Castbar"
+            tbl.order = 2.8
+            return tbl
+          end)(),
+
           appearance = (function()
             local tbl = ns.AppearanceOptions and ns.AppearanceOptions.GetOptionsTable() or {
               type = "group",
@@ -1026,6 +1037,9 @@ initFrame:SetScript("OnEvent", function(self, event)
       end
       if ns.CustomTracking and ns.CustomTracking.Init then
         ns.CustomTracking.Init()
+      end
+      if ns.Castbar and ns.Castbar.Init then
+        ns.Castbar.Init()
       end
       
       print("|cff00ccffArc UI|r v" .. ns.AddonInfo.Version .. " loaded. Type /arcui for options, /cdm for CDM settings, /arcui recenter to move panel back to screen.")

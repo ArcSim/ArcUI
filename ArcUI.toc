@@ -44,6 +44,7 @@ ArcUI_CooldownBars.lua
 ArcUI_CustomTracking.lua
 ArcUI_TalentPicker.lua
 ArcUI_DataRepair.lua
+ArcUI_Castbar.lua
 
 # Main Options (creates AceDB)
 ArcUI_Options.lua
@@ -59,6 +60,7 @@ ArcUI_AppearanceOptions.lua
 ArcUI_CooldownBarOptions.lua
 ArcUI_TimerBarOptions.lua
 ArcUI_CustomOptions.lua
+ArcUI_Castbar_Options.lua
 
 # Import/Export
 ArcUI_Bars_ImportExport.lua
