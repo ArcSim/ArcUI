@@ -2,7 +2,7 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.6.8
+## Version: 3.7.1
 ## X-Wago-ID:mNw7Q2No
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
 
@@ -80,6 +80,7 @@ CDM_Module\CDM_Enhance\ArcUI_CDMSpellUsability.lua
 CDM_Module\CDM_Enhance\ArcUI_AssistedCombatHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_ButtonPressHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_CDMTextColor.lua
+CDM_Module\CDM_Enhance\ArcUI_DurationOverride.lua
 
 # CDM Groups Registry (frame tracking - must load before CDMGroups)
 CDM_Module\CDM_Groups\ArcUI_CDMGroups_Registry.lua
@@ -102,6 +103,7 @@ CDM_Module\CDM_Groups\ArcUI_CDMGroups_Integration.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAuras.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAurasCooldown.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAurasTimer.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasTotems.lua
 CDM_Module\Arc_Auras\ArcUI_CustomIcons_Presets.lua
 CDM_Module\Arc_Auras\ArcUI_CustomIcons_Options.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAuras_Options.lua

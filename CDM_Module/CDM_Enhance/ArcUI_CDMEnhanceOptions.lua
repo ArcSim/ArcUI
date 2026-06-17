@@ -54,6 +54,7 @@ local collapsedSections = {
   spellUsability = true,   -- Per-icon spell usability tinting/glow
   assistedCombatHighlight = true, -- Assisted Combat next-cast highlight (opt-in)
   buttonPressHighlight = true,    -- Button Press keybind overlay (opt-in)
+  durationOverride = true,        -- push a totem/manual duration onto the icon on cast
 }
 
 -- Cache for unified icon list
@@ -288,6 +289,40 @@ local function IsCurrentCooldownSelectionAllCustomTimer()
     return isCustomTimerCdID(selectedCooldownIcon)
   end
 
+  return false
+end
+
+-- ───────────────────────────────────────────────────────────────────────
+-- Detect whether the currently-selected cooldown icon(s) are ALL totem-slot
+-- icons (arcType == "totem"). Totems use the active/inactive model but map
+-- OPPOSITE to timers internally (active → readyState so they reuse the glow
+-- suite). Headers therefore label readyState "Active State" and cooldownState
+-- "Not Active" for totems — the inverse of the timer relabel. Also used to hide
+-- spell-only sections (Range Indicator, Spell Usability) that don't apply to
+-- totems. Same gating rules as the timer check.
+-- ───────────────────────────────────────────────────────────────────────
+local function IsCurrentCooldownSelectionAllTotem()
+  if editAllUnifiedMode then return false end
+  if cachedUnifiedFilterMode ~= unifiedFilterMode then
+    RebuildUnifiedIconCache()
+  end
+  local function isTotemCdID(cdID)
+    for _, entry in ipairs(cachedUnifiedIcons) do
+      if entry.cooldownID == cdID then
+        return entry.arcType == "totem"
+      end
+    end
+    return false
+  end
+  if next(selectedCooldownIcons) then
+    for cdID, _ in pairs(selectedCooldownIcons) do
+      if not isTotemCdID(cdID) then return false end
+    end
+    return true
+  end
+  if selectedCooldownIcon then
+    return isTotemCdID(selectedCooldownIcon)
+  end
   return false
 end
 
@@ -1327,6 +1362,7 @@ end
 local function HideCooldownChargeText()
   if HideIfNoCooldownSelection() then return true end
   if IsEditingMixedTypes() then return true end
+  if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems have no charges/stacks
   return collapsedSections.chargeText
 end
 
@@ -1382,12 +1418,14 @@ end
 local function HideCooldownRangeIndicator()
   if HideIfNoCooldownSelection() then return true end
   if IsEditingMixedTypes() then return true end
+  if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems have no spell range
   return collapsedSections.rangeIndicator
 end
 
 local function HideCooldownProcGlow()
   if HideIfNoCooldownSelection() then return true end
   if IsEditingMixedTypes() then return true end
+  if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems don't proc
   return collapsedSections.procGlow
 end
 
@@ -1406,6 +1444,7 @@ local function HideCooldownInactiveState()
 end
 
 local function HideCooldownAuraActiveState()
+  if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems aren't auras
   -- Show for both cooldown AND aura icon selections - aura active glow applies to both
   local hasAura = next(selectedAuraIcons) ~= nil or selectedAuraIcon ~= nil
   local hasCooldown = not HideIfNoCooldownSelection()
@@ -1801,6 +1840,7 @@ ns.OptionsHelpers = {
   HideIfNoAuraSelection   = HideIfNoAuraSelection,
   HideIfNoCooldownSelection = HideIfNoCooldownSelection,
   IsEditingMixedTypes     = IsEditingMixedTypes,
+  IsCurrentCooldownSelectionAllTotem = IsCurrentCooldownSelectionAllTotem,
   GetAuraHeaderName       = GetAuraHeaderName,
   GetCooldownHeaderName   = GetCooldownHeaderName,
   ResetAuraSectionSettings   = ResetAuraSectionSettings,
@@ -6669,7 +6709,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
     readyStateHeader = {
       type = "toggle",
       name = function()
-        local label = IsCurrentCooldownSelectionAllCustomTimer() and "Not Active" or "Cooldown Ready State"
+        -- Totems AND custom timers both map their ACTIVE state to readyState
+        -- (the bucket that owns the glow suite), so this section is "Active State"
+        -- for both. Normal cooldown icons keep "Cooldown Ready State".
+        local label = (IsCurrentCooldownSelectionAllTotem() or IsCurrentCooldownSelectionAllCustomTimer())
+                   and "Active State" or "Cooldown Ready State"
         return GetCooldownHeaderName("activeState", label)
       end,
       desc = "Click to expand/collapse. Configure how the icon appears when the ability IS READY (not on cooldown). Purple dot indicates per-icon customizations.",
@@ -6707,6 +6751,40 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       order = 107.83, width = 0.8,
       hidden = function() return HideIfNoCooldownSelection() or collapsedSections.readyState end,
+    },
+    readyStateDesaturate = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Desaturate (grayscale) the icon while ACTIVE.\n\nOff by default — enable to gray the icon while the timer is running / the totem is up.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.desaturate end,
+          function()
+            local c = GetCooldownCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+              return c.cooldownStateVisuals.readyState.desaturate or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.desaturate = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.8305, width = 0.6,
+      -- Only custom timers / totems use the readyState bucket as their ACTIVE
+      -- state, so this positive Desaturate toggle is shown only for them.
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        return not (IsCurrentCooldownSelectionAllCustomTimer() or IsCurrentCooldownSelectionAllTotem())
+      end,
     },
     readyStateProcOverride = {
       type = "toggle",
@@ -7285,7 +7363,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
     cooldownStateHeader = {
       type = "toggle",
       name = function()
-        local label = IsCurrentCooldownSelectionAllCustomTimer() and "Active State" or "On Cooldown State"
+        -- Totems AND custom timers map their INACTIVE state to cooldownState,
+        -- so this section is "Not Active" for both. Normal cooldown icons keep
+        -- "On Cooldown State".
+        local label = (IsCurrentCooldownSelectionAllTotem() or IsCurrentCooldownSelectionAllCustomTimer())
+                   and "Not Active" or "On Cooldown State"
         return GetCooldownHeaderName("inactiveState", label)
       end,
       desc = "Click to expand/collapse. Configure how the icon appears when the ability IS ON COOLDOWN. Purple dot indicates per-icon customizations.",
@@ -7354,7 +7436,47 @@ function ns.GetCDMCooldownIconsOptionsTable()
         end
       end,
       order = 107.94, width = 1.0,
-      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.cooldownState end,
+      -- "No Desaturation" is the inverted control for NORMAL cooldown icons
+      -- (which desaturate by default). Custom timers / totems default to NOT
+      -- desaturated and use the positive "Desaturate" toggle below instead, so
+      -- hide this one for them to avoid two confusing controls.
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
+        return IsCurrentCooldownSelectionAllCustomTimer() or IsCurrentCooldownSelectionAllTotem()
+      end,
+    },
+    cooldownStateDesaturatePositive = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Desaturate (grayscale) the icon while NOT ACTIVE.\n\nOff by default — enable to gray the icon while the timer isn't running / the totem slot is empty.",
+      get = function()
+        return GetCooldownBoolSetting(
+          function(c) return c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState and c.cooldownStateVisuals.cooldownState.desaturate end,
+          function()
+            local c = GetCooldownCfg()
+            if c and c.cooldownStateVisuals and c.cooldownStateVisuals.cooldownState then
+              return c.cooldownStateVisuals.cooldownState.desaturate or false
+            end
+            return false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.cooldownState then c.cooldownStateVisuals.cooldownState = {} end
+          c.cooldownStateVisuals.cooldownState.desaturate = v
+        end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 107.941, width = 0.6,
+      -- Shown only for custom timers / totems (positive default-off control).
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
+        return not (IsCurrentCooldownSelectionAllCustomTimer() or IsCurrentCooldownSelectionAllTotem())
+      end,
     },
     cooldownStateTint = {
       type = "toggle",
@@ -7574,7 +7696,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v) collapsedSections.auraActiveState = not v end,
       order = 107.95,
       width = "full",
-      hidden = HideIfNoCooldownSelection,
+      hidden = function()
+        if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems aren't auras
+        return HideIfNoCooldownSelection()
+      end,
     },
     auraActiveStateDesc = {
       type = "description",
@@ -8202,6 +8327,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if HideIfNoCooldownSelection() then return true end
         if IsEditingMixedTypes() then return true end
+        if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems have no range
         return false
       end,
     },
@@ -8237,6 +8363,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if HideIfNoCooldownSelection() then return true end
         if IsEditingMixedTypes() then return true end
+        if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems don't proc
         return false
       end,
     },
@@ -8518,7 +8645,474 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = HideCooldownBorder,
       func = function() ResetCooldownSectionSettings("border") end,
     },
-    
+
+    -- ═══════════════════════════════════════════════════════════════════
+    -- DURATION OVERRIDE SECTION (EXPERIMENTAL)
+    -- Push a totem/manual duration onto the icon's cooldown on cast — the
+    -- inverse of "ignore aura override" (driven by ns.DurationOverride).
+    -- ═══════════════════════════════════════════════════════════════════
+    durationOverrideHeader = {
+      type = "toggle",
+      name = function() return GetCooldownHeaderName("durationOverride", "Duration Override") end,
+      desc = "Click to expand/collapse. When you cast this spell, show a custom duration on the icon instead of the spell cooldown (the totem's duration, or a manual fixed duration). When it runs out, the real spell cooldown shows again.",
+      dialogControl = "CollapsibleHeader",
+      get = function() return not collapsedSections.durationOverride end,
+      set = function(_, v) collapsedSections.durationOverride = not v end,
+      order = 119.5, width = "full",
+      hidden = function()
+        if HideIfNoCooldownSelection() then return true end
+        if IsEditingMixedTypes() then return true end
+        -- Timers/totems ARE durations — an override doesn't apply to them.
+        if IsCurrentCooldownSelectionAllTotem() or IsCurrentCooldownSelectionAllCustomTimer() then return true end
+        return false
+      end,
+    },
+    durationOverrideDesc = {
+      type = "description",
+      name = "|cff888888On this spell's cast the icon's cooldown is replaced by your chosen duration until it ends, then the real spell cooldown shows through. Totem mode auto-detects the totem from the next slot that fills right after the cast.|r",
+      order = 119.51, width = "full",
+      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.durationOverride end,
+    },
+    durationOverrideEnabled = {
+      type = "toggle",
+      name = "Enable Duration Override",
+      desc = "Show a custom duration on this icon when the spell is cast.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.enabled or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.enabled = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.52, width = 1.2,
+      hidden = function() return HideIfNoCooldownSelection() or collapsedSections.durationOverride end,
+    },
+    durationOverrideMode = {
+      type = "select",
+      name = "Duration Source",
+      desc = "|cffffd700Totem Duration|r - shows the remaining time of the totem this spell drops (auto-detected from the next totem slot that fills after the cast).\n\n|cffffd700Manual Duration|r - shows a fixed number of seconds you set below.",
+      values = { totem = "Totem Duration", manual = "Manual Duration" },
+      sorting = { "totem", "manual" },
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.mode or "totem"
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.mode = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.53, width = 1.1,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideManual = {
+      type = "input",
+      name = "Manual Duration (sec)",
+      desc = "Seconds to show on the icon when the spell is cast (Manual mode only).",
+      get = function()
+        local c = GetCooldownCfg()
+        local v = c and c.durationOverride and c.durationOverride.manual
+        return v and tostring(v) or ""
+      end,
+      set = function(_, v)
+        local num = tonumber(v)
+        if num and num < 0 then num = 0 end
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.manual = num or 0
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.54, width = 1.2,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled
+               and c.durationOverride.mode == "manual")
+      end,
+    },
+    durationOverrideEndSpells = {
+      type = "input",
+      name = "End on Cast Of (spell IDs)",
+      desc = "Comma-separated spell IDs whose cast ENDS this override early (a 'spender' consuming the duration). Leave blank to only end on natural expiry.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.endSpells or ""
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.endSpells = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.55, width = 1.5,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideApprDesc = {
+      type = "description",
+      name = "|cffaaaaaa— While active (treated as an aura override) —|r",
+      order = 119.59, width = "full",
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideDesaturate = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Desaturate (grayscale) the icon while the override is active.\n\nOFF by default — the override is treated as an active aura, so the icon stays full color even though the spell is on cooldown.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.desaturate or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.desaturate = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.6, width = 0.7,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideShowSwipe = {
+      type = "toggle",
+      name = "Show Swipe",
+      desc = "Show the radial swipe for the override duration. Turn off for a clean icon with just the countdown text.",
+      get = function()
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.showSwipe == false)
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.showSwipe = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.61, width = 0.7,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideShowEdge = {
+      type = "toggle",
+      name = "Show Edge",
+      desc = "Show the bright leading edge on the override swipe.",
+      get = function()
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.showEdge == false)
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.showEdge = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.62, width = 0.7,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideGlow = {
+      type = "toggle",
+      name = "Glow While Active",
+      desc = "Show a glow on the icon while the override duration is running.",
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glow or false
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glow = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.63, width = 1.0,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled)
+      end,
+    },
+    durationOverrideGlowPreview = {
+      type = "toggle",
+      name = "Preview Glow",
+      desc = "Preview the glow on the selected icon(s) while you edit, so you can see your changes. Stops automatically when you close the options panel.",
+      get = function()
+        if not (ns.DurationOverride and ns.DurationOverride.IsGlowPreviewActive) then return false end
+        for _, cdID in ipairs(GetCooldownIconsToUpdate()) do
+          if ns.DurationOverride.IsGlowPreviewActive(cdID) then return true end
+        end
+        return false
+      end,
+      set = function()
+        if not (ns.DurationOverride and ns.DurationOverride.SetGlowPreview) then return end
+        local icons = GetCooldownIconsToUpdate()
+        local anyActive = false
+        for _, cdID in ipairs(icons) do
+          if ns.DurationOverride.IsGlowPreviewActive(cdID) then anyActive = true break end
+        end
+        local newState = not anyActive
+        for _, cdID in ipairs(icons) do
+          ns.DurationOverride.SetGlowPreview(cdID, newState)
+        end
+      end,
+      order = 119.635, width = 0.8,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowType = {
+      type = "select",
+      name = "Glow Type",
+      desc = "Glow animation style while the override is active.",
+      values = {
+        default  = "Default (Golden)", button = "Button Glow", pixel = "Pixel Glow",
+        autocast = "Autocast Shine", proc = "Blizzard Proc", ants = "Ants (Marching)",
+        ach_proc = "Proc Loop",
+      },
+      get = function()
+        local c = GetCooldownCfg()
+        local t = c and c.durationOverride and c.durationOverride.glowType or "button"
+        if t == "blizzard" or t == "glow" then t = "proc" end
+        return t
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowType = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.64, width = 1.0,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowColor = {
+      type = "color",
+      name = "Glow Color", hasAlpha = true,
+      desc = "Color of the glow while the override is active.",
+      get = function()
+        local c = GetCooldownCfg()
+        local col = c and c.durationOverride and c.durationOverride.glowColor
+        if col then return col.r or 1, col.g or 0.85, col.b or 0.1, col.a or 1 end
+        return 1, 0.85, 0.1, 1
+      end,
+      set = function(_, r, g, b, a)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowColor = { r = r, g = g, b = b, a = a }
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.65, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowScale = {
+      type = "range", name = "Glow Scale", min = 0.25, max = 4.0, step = 0.05,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowScale or 1.0
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowScale = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.66, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowSpeed = {
+      type = "range", name = "Glow Speed", min = 0.05, max = 1.0, step = 0.05,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowSpeed or 0.25
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowSpeed = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.67, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        if not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow) then return true end
+        local t = c.durationOverride.glowType or "button"
+        return t == "proc" or t == "default" or t == "ants" or t == "ach_proc"
+      end,
+    },
+    durationOverrideGlowLines = {
+      type = "range", name = "Glow Lines", min = 1, max = 16, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowLines or 8
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowLines = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.68, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow
+               and (c.durationOverride.glowType or "button") == "pixel")
+      end,
+    },
+    durationOverrideGlowThickness = {
+      type = "range", name = "Glow Thickness", min = 1, max = 10, step = 0.5,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowThickness or 2
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowThickness = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.69, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow
+               and (c.durationOverride.glowType or "button") == "pixel")
+      end,
+    },
+    durationOverrideGlowParticles = {
+      type = "range", name = "Glow Particles", min = 1, max = 16, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowParticles or 4
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowParticles = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.70, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow
+               and (c.durationOverride.glowType or "button") == "autocast")
+      end,
+    },
+    durationOverrideGlowXOffset = {
+      type = "range", name = "Glow X Offset", min = -50, max = 50, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowXOffset or 0
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowXOffset = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.71, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowYOffset = {
+      type = "range", name = "Glow Y Offset", min = -50, max = 50, step = 1,
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowYOffset or 0
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowYOffset = v
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.72, width = 0.9,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+    durationOverrideGlowStrata = {
+      type = "select", name = "Glow Strata",
+      desc = "Frame strata of the glow. Inherit uses the icon's strata.",
+      values = { inherit = "Inherit (Default)", LOW = "LOW", MEDIUM = "MEDIUM", HIGH = "HIGH", DIALOG = "DIALOG" },
+      sorting = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+      get = function()
+        local c = GetCooldownCfg()
+        return c and c.durationOverride and c.durationOverride.glowFrameStrata or "inherit"
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          if not c.durationOverride then c.durationOverride = {} end
+          c.durationOverride.glowFrameStrata = (v ~= "inherit") and v or nil
+        end)
+        if ns.DurationOverride and ns.DurationOverride.RefreshAll then ns.DurationOverride.RefreshAll() end
+      end,
+      order = 119.73, width = 1.0,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.durationOverride then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.durationOverride and c.durationOverride.enabled and c.durationOverride.glow)
+      end,
+    },
+
     -- ═══════════════════════════════════════════════════════════════════
     -- COOLDOWN SWIPE SECTION
     -- ═══════════════════════════════════════════════════════════════════
@@ -8815,6 +9409,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if HideIfNoCooldownSelection() then return true end
         if IsEditingMixedTypes() then return true end
+        if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems have no charges/stacks
         return false
       end,
     },

@@ -297,9 +297,30 @@ end
 local function ApplyVisuals(td)
     local fd = td.fd
     if not fd then return end
-    local isOnCD = IsTimerActive(td)
+    local active = IsTimerActive(td)
+    -- On a real active/inactive TRANSITION, force a full re-application by
+    -- nilling the visual-state cache and the alpha dedup memo. External code
+    -- (group visibility, layouts, CDM maintenance) can change the frame's
+    -- real alpha without updating _lastAppliedAlpha; a stale memo makes
+    -- ApplySpellStateVisuals skip its SetAlpha ("value unchanged") and the
+    -- icon stays invisible while the timer is active until something else
+    -- (reload, options panel cycle) clears the caches. Transitions are rare,
+    -- so the forced re-application costs nothing at idle.
+    if fd._arcLastTimerActive ~= active then
+        fd._arcLastTimerActive = active
+        if fd.frame then
+            fd.frame._arcLastSpellState = nil
+            fd.frame._lastAppliedAlpha  = nil
+        end
+    end
     if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ApplySpellStateVisuals then
-        ns.ArcAurasCooldown.ApplySpellStateVisuals(fd, isOnCD, nil, false)
+        -- FLIP (matches GetCooldownState + FeedCooldown): a RUNNING timer maps to
+        -- the readyState bucket ("Active State") so it reuses the glow suite.
+        -- The isOnCD param passed here = not active. Passing the UN-flipped value
+        -- here was the cause of the active⇄not-active flicker: this path fought
+        -- the flipped FeedCooldown / RefreshAllSpellVisuals paths every refresh
+        -- (constant with independent-duration stacks).
+        ns.ArcAurasCooldown.ApplySpellStateVisuals(fd, not active, nil, false)
     end
 end
 
@@ -742,6 +763,15 @@ function ArcAurasTimer.CreateTimer(arcID, config)
     frame._arcIsSpellCooldown = true
     frame._arcIsCustomTimer   = true
 
+    -- Alpha enforcement hook — same one InitializeSpellFrame installs for
+    -- regular spell frames. Timer frames bypass InitializeSpellFrame, so
+    -- without this the frame's real alpha and _lastAppliedAlpha drift apart
+    -- whenever external code touches SetAlpha, and the active/inactive alpha
+    -- from the options panel stops applying until a reload/panel cycle.
+    if ns.ArcAurasCooldown and ns.ArcAurasCooldown.InstallAlphaEnforcementHook then
+        ns.ArcAurasCooldown.InstallAlphaEnforcementHook(frame)
+    end
+
     if not frame._durationObj and C_DurationUtil and C_DurationUtil.CreateDuration then
         frame._durationObj = C_DurationUtil.CreateDuration()
     end
@@ -772,7 +802,11 @@ function ArcAurasTimer.CreateTimer(arcID, config)
         -- Engine state (match normal spell fd shape for compatibility)
         isCustomTimer    = true,
         isChargeSpell    = false,
-        desaturate       = true,
+        -- Custom-icon frames never desaturate in EITHER state (Active or Not
+        -- Active) — desaturation isn't wanted for timer icons. The cooldown
+        -- bucket reads fd.desaturate==false to force no-desat; the ready bucket
+        -- is guarded the same way in ApplySpellStateVisuals.
+        desaturate       = false,
         lastIsOnGCD      = nil,
         lastIsOnCD       = false,
         procGlowActive   = false,
@@ -1280,8 +1314,72 @@ end
 local cooldownSuppressUntil = 0
 local COOLDOWN_SUPPRESS_SECONDS = 2
 
+-- ───────────────────────────────────────────────────────────────────────────
+-- ONE-TIME MIGRATION: custom-timer state-visual FLIP.
+-- Earlier builds mapped a RUNNING timer to the cooldownState visual bucket; it
+-- now maps to readyState (so "Active State" reuses the glow suite, matching
+-- totems). That inverts the meaning of any per-timer appearance the user already
+-- set, so swap cooldownStateVisuals.readyState ↔ .cooldownState for every
+-- custom-timer (arc_timer_*) icon — their configured intent is preserved under
+-- the new mapping. Runs once per character (flag persisted in the cdmGroups DB).
+-- Global defaults are intentionally NOT swapped: they apply to all cooldown
+-- icons, and the flip makes them read more sensibly for timers anyway
+-- (running → bright readyState defaults, stopped → dimmed cooldownState).
+-- ───────────────────────────────────────────────────────────────────────────
+local function MigrateTimerStateFlip()
+    local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
+    if not db or db._timerStateFlipMigrated then return end
+
+    local function swapStore(iconSettings)
+        if type(iconSettings) ~= "table" then return end
+        for arcID, s in pairs(iconSettings) do
+            if type(arcID) == "string" and arcID:find("^arc_timer_")
+               and type(s) == "table" and type(s.cooldownStateVisuals) == "table" then
+                local csv = s.cooldownStateVisuals
+                csv.readyState, csv.cooldownState = csv.cooldownState, csv.readyState
+                -- Desaturation normalization. The OLD model used the inverted "No
+                -- Desaturation" toggle (and defaulted to desaturated-while-running);
+                -- the NEW model uses a positive "Desaturate" toggle that defaults
+                -- OFF. Per the chosen "clean default = colored": drop the orphaned
+                -- noDesaturate cruft AND clear desaturate so every migrated timer
+                -- starts NOT desaturated. An old "keep colored" choice stays colored;
+                -- the old auto-gray default becomes colored. Users re-enable via the
+                -- new per-state Desaturate toggle.
+                if type(csv.readyState) == "table" then
+                    csv.readyState.noDesaturate = nil
+                    csv.readyState.desaturate   = nil
+                end
+                if type(csv.cooldownState) == "table" then
+                    csv.cooldownState.noDesaturate = nil
+                    csv.cooldownState.desaturate   = nil
+                end
+            end
+        end
+    end
+
+    if type(db.specData) == "table" then
+        for _, specData in pairs(db.specData) do
+            if type(specData) == "table" and type(specData.layoutProfiles) == "table" then
+                for _, profile in pairs(specData.layoutProfiles) do
+                    if type(profile) == "table" then swapStore(profile.iconSettings) end
+                end
+            end
+        end
+    end
+
+    -- Legacy per-icon store, if it still exists on this character.
+    if ns.db and ns.db.profile and ns.db.profile.cdmEnhance then
+        swapStore(ns.db.profile.cdmEnhance.iconSettings)
+    end
+
+    db._timerStateFlipMigrated = true
+    if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+end
+
 evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
     if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        -- Run the state-flip migration before any timer visuals are applied.
+        MigrateTimerStateFlip()
         -- Arm cooldown-event suppression: ignore SPELL_UPDATE_COOLDOWN
         -- triggers for a short window to absorb the burst Blizzard sends
         -- on zone changes / load-in.

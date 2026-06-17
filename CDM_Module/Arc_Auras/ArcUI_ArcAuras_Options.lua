@@ -21,6 +21,7 @@ local selectedArcAuras = {}
 local collapsedSections = {
     trackedItems = false,
     autoTrackSlots = false,
+    totemSlots = true,
     management = true,
 }
 
@@ -1797,6 +1798,72 @@ function ns.GetArcAurasOptionsTable()
     -- AUTO-DISABLE: Gray out all interactive controls when Arc Auras is off
     -- Skip the enable toggle itself, descriptions, and headers
     -- ═══════════════════════════════════════════════════════════════
+    -- ═══════════════════════════════════════════════════════════════
+    -- TOTEM SLOTS  (only shown for classes that have totem slots)
+    -- Enabling creates a centered "Totems" group with every slot; slots stay
+    -- independent so the user can drag any into another group. Master enable
+    -- turns them all on; per-slot toggles switch individual slots off.
+    -- ═══════════════════════════════════════════════════════════════
+    local function HasTotemSlots()
+        return ns.ArcAurasTotems and ns.ArcAurasTotems.GetNumSlots
+           and ns.ArcAurasTotems.GetNumSlots() > 0
+    end
+    -- Collapsible header (matches "Auto-Track Equipped Slots"): click to expand.
+    args.totemHeader = {
+        type = "toggle",
+        name = "Totem Slots",
+        desc = "Click to expand/collapse.\n\nTrack your totem slots as icons — each slot shows whatever totem is currently in it.",
+        dialogControl = "CollapsibleHeader",
+        get = function() return not collapsedSections.totemSlots end,
+        set = function(_, v) collapsedSections.totemSlots = not v end,
+        order = 4, width = "full",
+        hidden = function() return not HasTotemSlots() end,
+    }
+    local function HideTotemContent()
+        return not HasTotemSlots() or collapsedSections.totemSlots
+    end
+    args.totemDesc = {
+        type = "description",
+        name = "Each slot shows whatever totem is currently in it. Enabling creates a centered \"Totems\" group with all slots; drag any of them into another group to mix and match.",
+        order = 4.05, fontSize = "small",
+        hidden = HideTotemContent,
+    }
+    args.totemEnable = {
+        type = "toggle",
+        name = "Enable Totem Slot Tracking",
+        desc = "Show an icon for each of your totem slots.",
+        order = 4.1, width = 1.5,
+        hidden = HideTotemContent,
+        get = function() return ns.ArcAurasTotems and ns.ArcAurasTotems.IsEnabled() end,
+        set = function(_, v)
+            if ns.ArcAurasTotems then ns.ArcAurasTotems.SetEnabled(v) end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+    }
+    -- Per-slot toggles, generated up to a safe maximum; each hides past the
+    -- real slot count, when collapsed, and when totem tracking is disabled.
+    for slot = 1, 8 do
+        local thisSlot = slot
+        args["totemSlot" .. thisSlot] = {
+            type = "toggle",
+            name = "Slot " .. thisSlot,
+            desc = "Track totem slot " .. thisSlot .. ".",
+            order = 4.1 + thisSlot * 0.01, width = 0.7,
+            hidden = function()
+                if HideTotemContent() then return true end
+                if not (ns.ArcAurasTotems and ns.ArcAurasTotems.IsEnabled()) then return true end
+                return thisSlot > ns.ArcAurasTotems.GetNumSlots()
+            end,
+            get = function()
+                return ns.ArcAurasTotems and ns.ArcAurasTotems.IsSlotEnabled(thisSlot)
+            end,
+            set = function(_, v)
+                if ns.ArcAurasTotems then ns.ArcAurasTotems.SetSlotEnabled(thisSlot, v) end
+                LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            end,
+        }
+    end
+
     local skipKeys = { enabled = true, description = true, disabledNotice = true }
     for key, entry in pairs(args) do
         if not skipKeys[key] and entry.type ~= "header" and entry.type ~= "description" then
@@ -1805,7 +1872,7 @@ function ns.GetArcAurasOptionsTable()
             end
         end
     end
-    
+
     return {
         type = "group",
         name = "Arc Auras",

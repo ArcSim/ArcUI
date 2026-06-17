@@ -4,7 +4,9 @@ ArcUI is a comprehensive World of Warcraft addon suite for WoW 12.0 (Midnight), 
 It covers cooldown management, buff/debuff tracking bars, resource bars, CDM (CooldownViewer)
 integration, custom icons/timers, and proc tracking. Related addon: ArcUI_ProcTracker (v1.0.5+).
 
-Target client: WoW 12.0 Midnight Beta — Interface 120001.
+Target client: WoW 12.0.5 (Midnight), Interface 120005 — current live build 12.0.5.67823.
+(The .toc supports 120000/120001/120005. Verify the live build against the API mirror per the
+build-check protocol in Reference Sources before doing API work.)
 
 ---
 
@@ -20,6 +22,10 @@ Target client: WoW 12.0 Midnight Beta — Interface 120001.
   per-icon hooks. Avoid OnUpdate when events exist. ALWAYS ask before adding any constant polling.
 - **Never re-copy files from old uploads or backups over the working tree** unless explicitly told
   "use these new files." Always work from the live project files.
+- **Option labels must never truncate.** Every AceConfig control (toggle, select, input, color,
+  range, execute) MUST have a `width` large enough that its full `name` is visible in the panel —
+  truncated labels like "Glow Col..." are BANNED. When in doubt, widen (a color/short toggle
+  usually needs ≥0.8; longer names ≥1.0–1.5). Check new options render cleanly, not just compile.
 
 ---
 
@@ -33,7 +39,13 @@ Secret values are tainted runtime values addons cannot inspect.
 - Passing a secret into an API call marks the receiving object secret.
 
 **Can do:**
-- `if x then` works as a nil check on secrets.
+- `if x then` works as a nil check on a secret VALUE (number/string/table/userdata) — BUT a
+  secret BOOLEAN throws on a boolean test (`if secretBool then` errors "attempt to perform boolean
+  test on a secret boolean value"). And don't rely on `if` for truthiness of secret numbers either
+  (`a or b` / `and` truth-test a secret the same way). Detect-don't-test: derive state from a
+  non-secret signal. Concrete: `GetTotemInfo`'s `haveTotem` is a secret boolean — NEVER `if
+  haveTotem`. Instead use `GetTotemDuration(slot)` (returns nothing when empty, a durObj when
+  active — a normal nil-testable userdata) fed into a Cooldown, then read `Cooldown:IsShown()`.
 - `issecretvalue(x)` to test. `HasSecretAspect()` on objects; `SetToDefaults()` clears all secret
   state on a frame. `IsAnchoringSecret()` to test anchor taint (secret anchors propagate DOWN the
   anchor chain, not up).
@@ -75,6 +87,41 @@ charge GCD; catch final-charge spends with `UNIT_SPELLCAST_SUCCEEDED` on "player
 
 **Scheduling that needs real numbers:** only use NON-secret sources — `GetTime()` plus
 locally-tracked cast times, isActive/isEnabled flags.
+
+---
+
+## TAINT RULES (12.0) — how addon code silently breaks Blizzard's CDM
+
+Taint is an execution credential. Addon code always runs tainted; Blizzard code runs secure
+until it READS any value an addon wrote — from that read onward the rest of that execution is
+"tainted by 'ArcUI'", protected APIs hand BLIZZARD'S OWN CODE secret values, and its unguarded
+comparisons throw. A tainted Blizzard run can also STORE a secret into Blizzard state (e.g.
+`previousCooldownChargesCount`), after which every later refresh of that frame errors until
+reload. Errors abort CDM's refresh loop mid-iteration → icons vanish.
+
+**NEVER:**
+- Write any non-`_arc` field on a Blizzard frame (`frame.spellOutOfRange = x` caused the 3.6.9
+  vanishing-icons regression — CDM read the tainted flag in RefreshData, then died comparing
+  secret charges in CacheChargeValues/SetCachedChargeValues).
+- Insert/replace entries in Blizzard-owned tables, or replace Blizzard methods (`frame.X = fn`).
+- Call Blizzard refresh entry points directly from addon code (`viewer:RefreshData()`,
+  `item:RefreshIconColor()`) — the run executes tainted and can poison stored state. (Known
+  pre-existing instance: CDMEnhance.lua ~3271 calls `viewerFrame:RefreshData()` on a timer —
+  predates 3.6.8 and hasn't manifested, but it's an audit candidate, not a pattern to copy.)
+
+**SAFE:**
+- `hooksecurefunc` (global or object method) — does not taint the original.
+- READING Blizzard fields (reading never taints Blizzard; only their reads of OUR writes do).
+- Safe-sink widget methods (SetText/SetAlpha/SetVertexColor/SetTexture/Show/Hide).
+- Writing anything on ArcUI-created frames, and `_arc*`-prefixed fields on Blizzard frames —
+  Blizzard never reads `_arc*` keys, so taint can't propagate from them.
+
+**Why taint bugs look intermittent / class-specific:** the tainted write is usually conditional
+(stale-state mismatch), secrets only materialize under combat/instance restrictions, the error
+depends on frame iteration order (taint starts mid-loop at the read), and the trigger population
+is config-dependent (e.g. `rangeCheckSpellID` only exists on ranged-spell cooldown frames — why
+hunters hit the 3.6.9 bug and self-buff-heavy melee never did). "Works on my character" proves
+nothing for taint bugs.
 
 ---
 
@@ -131,9 +178,10 @@ locally-tracked cast times, isActive/isEnabled flags.
 - Before any risky change, ensure the current state is committed so it can be rolled back.
 - After edits: `luac -p` every touched file, then summarize briefly what changed and why.
 - Communication style: be direct and concise. No lengthy preambles or restated requirements.
-- When a new WoW patch drops, re-mirror the relevant API_changes wiki page into
-  `E:\WoWDev\reference\wiki\` and `git pull` `E:\WoWDev\wow-ui-source`. All reference material
-  goes in `E:\WoWDev\`, never in the addon folder.
+- When a new WoW patch drops: `git -C E:\WoWDev\wow-ui-source pull` (BigWigs `live` branch), verify
+  its build now matches `.build.info` per the Reference Sources build-check protocol, and re-mirror
+  the relevant API_changes wiki page into `E:\WoWDev\reference\wiki\`. All reference material goes
+  in `E:\WoWDev\`, never in the addon folder.
 
 ---
 
@@ -142,11 +190,26 @@ locally-tracked cast times, isActive/isEnabled flags.
 Reference material lives OUTSIDE this addon folder — never save reference files, mirrors, or
 clones inside the ArcUI directory.
 
-- **E:\WoWDev\wow-ui-source** — local clone of Blizzard's UI source (beta branch). Ground truth
-  for actual API/CDM behavior; grep and read it directly. CDM (CooldownViewer) source:
-  `Interface\AddOns\Blizzard_CooldownViewer`. API signatures and secret-value annotations are in
-  `Interface\AddOns\Blizzard_APIDocumentationGenerated`. Run `git pull` there to update on new
-  builds.
+- **E:\WoWDev\wow-ui-source** — local clone of **BigWigsMods/WoWUI, `live` branch** (NOT
+  Gethe/wow-ui-source — Gethe's `beta` froze at 12.0.1.66220 when 12.0.5 went live, which is what
+  caused stale-API mistakes). BigWigs commits every retail build within hours, so it tracks the
+  live client. Ground truth for actual API/CDM behavior; grep and read it directly. NOTE the
+  layout: files live under `AddOns\` with NO `Interface\` prefix. CDM (CooldownViewer) source:
+  `AddOns\Blizzard_CooldownViewer`. API signatures and secret-value annotations:
+  `AddOns\Blizzard_APIDocumentationGenerated`.
+- **Build-check protocol (run before trusting the clone for API work):** the clone's commit
+  message IS its build number. Compare it to the live client:
+  - clone build: `git -C E:\WoWDev\wow-ui-source log -1 --format=%s` → e.g. `12.0.5.67823`
+  - client build: the `12.0.x.xxxxx` token on line 2 of `E:\World of Warcraft\.build.info`
+  - if the clone is behind, `git -C E:\WoWDev\wow-ui-source pull`. Branch must match the client's
+    track: **`live`** for current retail (default); `ptr`/`ptr2` for an upcoming PTR (e.g. a
+    12.0.7 line); **`beta` is frozen/dead — never use it.**
+- **townlong-yak** (https://www.townlong-yak.com/framexml/) — fastest mirror, updates within
+  minutes of a build dropping. Browse `/framexml/builds` for the newest build list and per-build
+  files. Use it to grab a single file at the bleeding edge, diff two builds, or read a PTR line
+  the local clone isn't tracking — i.e. whenever even BigWigs lags or you need a build the clone
+  doesn't have. When the clone and the live client disagree, the client wins; townlong-yak is how
+  you see what the client actually has.
 - **warcraft.wiki.gg** — community WoW API wiki. Fetch for event payloads, API signatures, and
   per-patch change lists (e.g. https://warcraft.wiki.gg/wiki/Patch_12.0.0/API_changes). If the
   wiki and the Blizzard source disagree, trust the source and say so.
@@ -380,6 +443,12 @@ options). Everything shares one private namespace: `local ADDON, ns = ...`.
   ready/proc glows; `spellData`/`spellsByID` consumed by ACH/BPH/Keybinds.
 - **ArcUI_ArcAurasTimer.lua** — `ns.ArcAurasTimer`: custom timer engine (cast/cooldown/proc
   triggers, stack modes refresh/independent/consume), persists active state across reloads.
+- **ArcUI_ArcAurasTotems.lua** — `ns.ArcAurasTotems`: per-totem-slot icons (frame type `"totem"`,
+  arcID `arc_totem_<slot>`). COPY approach: `GetTotemDuration(slot)` durObj → cooldown →
+  `IsShown()` = active (secret-safe, combat+instances, zero taint). Active maps to `readyState`
+  (reuses its glow suite), empty to `cooldownState`. NOT in `ArcAurasCooldown.spellData`
+  (nil-spellID would crash spell loops); self-drives off `PLAYER_TOTEM_UPDATE`. Enable UI in the
+  Arc Auras Main panel; auto-creates a centered "Totems" group. See memory `totem-slots-feature`.
 - **ArcUI_CustomIcons_Presets.lua** — `ns.CustomIconsPresets`: pure-data preset timer library +
   install helpers (`ns.AddTimerFromPreset`).
 - **ArcUI_CustomIcons_Options.lua** — `ns.GetCustomIconsOptionsTable()`: Custom Icons tab

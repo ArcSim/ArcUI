@@ -1,0 +1,17 @@
+# CurseForge / BigWigs packager metadata.
+# If you ever connect this repo to CurseForge's automatic packager (it builds the
+# zip for you on each GitHub release), everything listed under `ignore` is left
+# OUT of the packaged addon. This file is also the single source of truth for the
+# exclude list used by package.ps1.
+package-as: ArcUI
+
+ignore:
+  - .git
+  - .github
+  - .gitignore
+  - .gitattributes
+  - .claude
+  - CLAUDE.md
+  - .pkgmeta
+  - package.ps1
+  - CHANGELOG_*.md

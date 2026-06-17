@@ -534,13 +534,25 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                 local t = getTrigger(idx); if not t then return end
                 if not TYPE_VALUES[val] then return end
                 t.type = val
+                -- Timed types need a concrete seconds value. The slider below
+                -- only writes on user interaction while displaying 3 as its
+                -- fallback — without this, a trigger switched to a timed type
+                -- kept seconds=nil and never fired despite looking configured.
+                if (val == "after_ready" or val == "into_cooldown")
+                   and tonumber(t.seconds) == nil then
+                    t.seconds = 3
+                end
                 NotifyChange()
             end,
         }
 
-        -- Seconds slider — only shown for after_ready / into_cooldown.
+        -- Seconds input — only shown for after_ready / into_cooldown.
+        -- Deliberately an INPUT, not a range slider: AceConfig sliders fire
+        -- set() continuously while dragging, and each set() runs NotifyChange()
+        -- which re-renders the entire ArcUI options tree — that made dragging
+        -- freeze the game. An input commits once on Enter.
         entry.args[string.format("trigger_%d_seconds", idx)] = {
-            type    = "range",
+            type    = "input",
             name    = function()
                 local t = getTrigger(idx)
                 if not t then return "Seconds" end
@@ -548,23 +560,23 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                 if t.type == "into_cooldown" then return "Seconds after cast" end
                 return "Seconds"
             end,
-            desc    = "How many seconds the trigger waits before firing.",
+            desc    = "How many seconds the trigger waits before firing. Accepts decimals (e.g. 1.5). Press Enter to apply.",
             order   = rowOrder + 0.003,
-            width   = "full",
-            min     = 0.5,
-            max     = 60,
-            step    = 0.5,
+            width   = 0.8,
             hidden  = function()
                 if hideContent() then return true end
                 local t = getTrigger(idx); if not t then return true end
                 return t.type ~= "after_ready" and t.type ~= "into_cooldown"
             end,
             get = function()
-                local t = getTrigger(idx); return t and tonumber(t.seconds) or 3
+                local t = getTrigger(idx)
+                return tostring(t and tonumber(t.seconds) or 3)
             end,
             set = function(_, val)
                 local t = getTrigger(idx); if not t then return end
-                t.seconds = tonumber(val) or 3
+                local n = tonumber(val)
+                if not n or n <= 0 then return end
+                t.seconds = math.min(n, 600)
                 NotifyChange()
             end,
         }

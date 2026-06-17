@@ -786,8 +786,10 @@ function Engine:_EvaluateRecord(rec, source)
                     -- (which bumps the token in _CancelTriggerTimers via
                     -- _StartWatching) cancels any pending after_ready
                     -- pulses from the previous cycle.
-                    local secs = tonumber(t.seconds)
-                    if secs and secs > 0 then
+                    -- Default 3 when seconds was never written (same nil-
+                    -- seconds trap as into_cooldown; matches the UI slider).
+                    local secs = tonumber(t.seconds) or 3
+                    if secs > 0 then
                         local capturedT = t
                         local token = rec._triggerToken or 0
                         C_Timer.After(secs, function()
@@ -934,6 +936,11 @@ function Engine:_StartWatching(rec)
     -- watch token so delayed reminders aren't disrupted.
     if rec.watchToken then
         self:_FeedRecordShadows(rec)
+        -- Re-anchor into_cooldown ("N sec after cast") triggers to THIS cast
+        -- and cancel stale pending trigger timers from the previous cycle.
+        -- Without this, only the cast that STARTED the watch session ever
+        -- armed the after-cast timer (recasts mid-watch were silently ignored).
+        self:_ScheduleTriggerArray(rec)
         return
     end
 
@@ -1091,13 +1098,21 @@ function Engine:_ScheduleTriggerArray(rec)
     for i = 1, #triggers do
         local t = triggers[i]
         if t.type == "into_cooldown" then
-            local secs = tonumber(t.seconds)
-            if secs and secs > 0 then
+            -- Default 3 when seconds was never written. The options slider
+            -- only WRITES on user interaction while DISPLAYING 3 as fallback,
+            -- and migration-built when_ready entries have no seconds field —
+            -- switching their type left seconds=nil and the trigger silently
+            -- never scheduled. 3 matches what the UI shows.
+            local secs = tonumber(t.seconds) or 3
+            if secs > 0 then
                 local capturedT = t
                 C_Timer.After(secs, function()
                     if not Engine or not Engine.records then return end
                     if (rec._triggerToken or 0) ~= token then return end
-                    if not rec.watchToken then return end
+                    -- No watchToken guard: "N seconds after cast" anchors to
+                    -- the cast event itself (non-secret, deterministic). The
+                    -- spell cycling back to ready before N elapses must not
+                    -- silently eat the pulse. Recasts still cancel via token.
                     Engine:_FireTrigger(rec, capturedT, tostring(secs) .. "s")
                 end)
             end

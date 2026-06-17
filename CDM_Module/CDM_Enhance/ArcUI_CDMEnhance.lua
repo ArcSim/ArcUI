@@ -3609,7 +3609,20 @@ ApplyIconStyle = function(frame, cdID)
         local pf = self._arcParentFrame
         if not pf then return end
         if pf._arcBypassDesatHook then pf._arcLastDesatHookAction = "BYPASS" return end
-        
+
+        -- DURATION OVERRIDE owns desaturation entirely while active — highest
+        -- priority, beating CDM's native desat, the forceValue staleness-clear
+        -- below, and usability desat. _arcForceDesatValue is 0 (colored, default)
+        -- or 1 (user opted into desaturate while active).
+        if pf._arcDurOvActive then
+          local v = pf._arcForceDesatValue or 0
+          pf._arcLastDesatHookAction = "DUROV→" .. tostring(v)
+          pf._arcBypassDesatHook = true
+          if self.SetDesaturation then self:SetDesaturation(v) else self:SetDesaturated(v == 1) end
+          pf._arcBypassDesatHook = false
+          return
+        end
+
         -- FAST PATH: Skip all work when no dynamic overrides are active AND
         -- cfg says no intercept is needed. Avoids GetEffectiveIconSettingsForFrame
         -- and GetEffectiveStateVisuals (which allocates a table) on PASSTHROUGH calls.
@@ -3702,7 +3715,18 @@ ApplyIconStyle = function(frame, cdID)
           local pf = self._arcParentFrame
           if not pf then return end
           if pf._arcBypassDesatHook then pf._arcLastDesatHookAction = "BYPASS" return end
-          
+
+          -- DURATION OVERRIDE owns desaturation entirely while active (highest
+          -- priority — see the SetDesaturated hook above).
+          if pf._arcDurOvActive then
+            local v = pf._arcForceDesatValue or 0
+            pf._arcLastDesatHookAction = "DUROV→" .. tostring(v)
+            pf._arcBypassDesatHook = true
+            self:SetDesaturation(v)
+            pf._arcBypassDesatHook = false
+            return
+          end
+
           -- FAST PATH: same as SetDesaturated hook
           if not pf._arcUsabilityDesatRequest and pf._arcForceDesatValue == nil then
             if pf._arcCfgCdID == pf.cooldownID and pf._arcCfgVersion == effectiveSettingsCacheVersion
@@ -6398,6 +6422,14 @@ function ns.CDMEnhance.GetEnhancedFrameData(cdID)
   return enhancedFrames[cdID]
 end
 
+-- Iterate every enhanced CDM frame: fn(cdID, frame, data). Used by feature
+-- modules (e.g. DurationOverride) that need to (re)scan per-icon settings.
+function ns.CDMEnhance.ForEachEnhancedFrame(fn)
+  for cdID, data in pairs(enhancedFrames) do
+    if data and data.frame then fn(cdID, data.frame, data) end
+  end
+end
+
 -- Hide all combat-only glows for a specific viewer type
 function ns.CDMEnhance.HideAllCombatOnlyGlows(viewerType)
   for cdID, data in pairs(enhancedFrames) do
@@ -7853,9 +7885,21 @@ function ns.CDMEnhance.RefreshIconType(iconType)
   if not InCombatLockdown() then
     ns.CDMEnhance.ScanCDM()
   end
-  
+
   InvalidateEffectiveSettingsCache()
-  
+
+  -- Totem-slot frames self-drive (not in the standard cooldown refresh sweep),
+  -- so refresh them here too. This is what makes the per-icon glow PREVIEW toggle
+  -- — and any other cooldown settings change — actually re-apply to totem icons.
+  if (iconType == "cooldown" or iconType == "all") and ns.ArcAurasTotems and ns.ArcAurasTotems.ForceRefreshAll then
+    ns.ArcAurasTotems.ForceRefreshAll()
+  end
+
+  -- Duration Override re-syncs its enabled-frame registry on cooldown/all refreshes.
+  if (iconType == "cooldown" or iconType == "all") and ns.DurationOverride and ns.DurationOverride.RefreshAll then
+    ns.DurationOverride.RefreshAll()
+  end
+
   -- Helper to clear all cached visual state flags so ApplyCooldownStateVisuals recalculates
   local function ClearFrameVisualFlags(frame)
     if frame then

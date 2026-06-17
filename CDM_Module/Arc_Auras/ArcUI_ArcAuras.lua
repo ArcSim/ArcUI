@@ -69,6 +69,7 @@ local ID_PREFIX = {
     ITEM = "arc_item_",
     SPELL = "arc_spell_",
     TIMER = "arc_timer_",
+    TOTEM = "arc_totem_",
 }
 
 -- Frame Strata/Level Constants - Standardized to match CDM icons
@@ -369,8 +370,12 @@ function ArcAuras.ParseArcID(arcID)
         local tail = arcID:sub(#ID_PREFIX.TIMER + 1)
         local spellID = tonumber(tail:match("^(%d+)"))
         return "timer", spellID
+    elseif arcID:find("^" .. ID_PREFIX.TOTEM) then
+        -- Totem IDs are "arc_totem_<slot>" — the trailing number is the totem slot.
+        local slot = tonumber(arcID:sub(#ID_PREFIX.TOTEM + 1))
+        return "totem", slot
     end
-    
+
     return nil
 end
 
@@ -854,7 +859,7 @@ local function CreateArcAuraFrame(arcID, config)
     --   SetCooldownFromDurationObject(durObj) → frame shown → IsShown()=true → desat ON
     --   OnCooldownDone fires → CD expired → desat OFF instantly
     -- ═══════════════════════════════════════════════════════════════════════════
-    if config.type == "spell" or config.type == "timer" then
+    if config.type == "spell" or config.type == "timer" or config.type == "totem" then
         frame._arcIsSpellCooldown = true  -- Flag: OnUpdate loop skips this frame
         frame._arcSpellID = config.spellID
         
@@ -1708,6 +1713,12 @@ end
 
 -- Called only when isOnCooldown flips. Updates desat/alpha/tint/glow for cooldown state.
 local function ApplyCooldownStateVisuals(frame, arcID, isOnCooldown)
+    -- DURATION OVERRIDE: while active on this Arc item/trinket frame, the override
+    -- owns the whole visual (treated as an aura override). Delegate and stop.
+    if frame._arcDurOvActive and ns.DurationOverride and ns.DurationOverride.ApplyVisuals then
+        ns.DurationOverride.ApplyVisuals(frame)
+        return
+    end
     local sv, settings = GetCachedStateVisuals(frame, arcID)
     local csv = settings and settings.cooldownStateVisuals or {}
     local rs = csv.readyState or {}
@@ -5362,17 +5373,26 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
             icon = timerCfg.icon
         end
         name = (name or ("Spell " .. spellID)) .. " |cff888888(Timer)|r"
+    elseif arcType == "totem" and id then
+        -- Totem-slot frame. The live totem icon is a SECRET fileID (we SetTexture
+        -- it from GetTotemInfo), so the catalog must NOT read the frame's texture
+        -- — it always uses a stable placeholder + "Totem Slot N" label.
+        name = "Totem Slot " .. id .. " |cff888888(Totem)|r"
+        icon = 310731  -- totem glyph placeholder (matches ArcAurasTotems.PLACEHOLDER_ICON)
     end
-    
+
     -- Fallback to frame data if available
     if frame then
         if frame._currentItemName and frame._currentItemName ~= "" then
-            -- Don't clobber the timer suffix
-            if arcType ~= "timer" then name = frame._currentItemName end
+            -- Don't clobber the timer/totem suffix
+            if arcType ~= "timer" and arcType ~= "totem" then name = frame._currentItemName end
         end
-        if frame.Icon and frame.Icon.GetTexture then
+        -- Skip the live frame icon for totems (secret) and guard every type
+        -- against a secret texture value — comparing a secret number throws.
+        if arcType ~= "totem" and frame.Icon and frame.Icon.GetTexture then
             local frameIcon = frame.Icon:GetTexture()
-            if frameIcon and frameIcon ~= 134400 then
+            if frameIcon and not (issecretvalue and issecretvalue(frameIcon))
+               and frameIcon ~= 134400 then
                 icon = icon or frameIcon
             end
         end

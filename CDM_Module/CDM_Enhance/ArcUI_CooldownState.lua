@@ -1393,6 +1393,15 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
   -- Never process CDM aura viewer frames (buff/debuff icons) — they have no cooldown state
   if frame._arcViewerType == "aura" then return end
 
+  -- DURATION OVERRIDE: while an experimental duration override is active, it owns
+  -- the entire visual (treated as an aura-active override) and drives the same
+  -- _arc desat/swipe/edge levers. Delegate and stop so we don't paint cooldown
+  -- state over it.
+  if frame._arcDurOvActive and ns.DurationOverride and ns.DurationOverride.ApplyVisuals then
+    ns.DurationOverride.ApplyVisuals(frame)
+    return
+  end
+
   local iconTex = ResolveIconTexture(frame)
   if not iconTex then return end
 

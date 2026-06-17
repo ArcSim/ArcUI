@@ -766,7 +766,13 @@ end
 -- OPTIONS REGISTRATION
 -- ===================================================================
 local function RegisterOptions()
-  AceConfig:RegisterOptionsTable("ArcUI", GetOptionsTable)
+  -- skipValidation=true (3rd arg, AceConfigRegistry direct): every edit in an
+  -- open panel triggers NotifyChange → re-fetch → full recursive VALIDATION of
+  -- the entire tree on top of the rebuild. The lib documents skipValidation as
+  -- "primarily useful for extremely huge options, with a noticeable slowdown"
+  -- — which is exactly this tree. (AceConfig:RegisterOptionsTable's 3rd arg is
+  -- a slash command, not skipValidation, hence the direct registry call.)
+  LibStub("AceConfigRegistry-3.0"):RegisterOptionsTable("ArcUI", GetOptionsTable, true)
   AceConfigDialog:SetDefaultSize("ArcUI", 900, 700)
   optionsRegistered = true
 end
