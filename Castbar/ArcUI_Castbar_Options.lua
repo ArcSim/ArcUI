@@ -10,6 +10,9 @@ ns.CastbarOptions = ns.CastbarOptions or {}
 local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
+local lastCastbarExportString = ""
+local lastCastbarImportString = ""
+
 -- Collapsible-section state (true = collapsed). Same mechanism the aura panel uses.
 local collapsedSections = {
   autoShare      = true,
@@ -197,6 +200,94 @@ function ns.CastbarOptions.GetOptionsTable()
               ns.Castbar.ApplyAppearance()
             end
           end
+        end,
+      },
+
+      -- ── Import / Export ──────────────────────────────────────────
+      ieHeader = {
+        type  = "header",
+        name  = "Import / Export",
+        order = 0.57,
+      },
+      ieDesc = {
+        type     = "description",
+        name     = "Copy castbar settings to another character — export here, paste on the alt.",
+        order    = 0.575,
+        fontSize = "small",
+      },
+      exportBtn = {
+        type  = "execute",
+        name  = "Export Settings",
+        desc  = "Generates a string you can paste on another character to copy these castbar settings.",
+        order = 0.58,
+        width = 1.2,
+        func  = function()
+          if not (ns.BarsImportExport and ns.BarsImportExport.ExportCastbarOnly) then
+            print("|cffFF0000[ArcUI]|r Import/Export module not ready.")
+            return
+          end
+          local str, err = ns.BarsImportExport.ExportCastbarOnly()
+          if err then
+            print("|cffFF0000[ArcUI]|r Export failed: " .. err)
+            lastCastbarExportString = ""
+          else
+            lastCastbarExportString = str
+            print("|cff00FF00[ArcUI]|r Castbar exported — copy the string from the box below.")
+          end
+          if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
+        end,
+      },
+      exportString = {
+        type      = "input",
+        name      = "Export String (copy this)",
+        order     = 0.585,
+        multiline = 4,
+        width     = "full",
+        hidden    = function() return lastCastbarExportString == "" end,
+        get       = function() return lastCastbarExportString end,
+        set       = function() end,
+      },
+      importInput = {
+        type      = "input",
+        name      = "Paste Import String",
+        order     = 0.59,
+        multiline = 4,
+        width     = "full",
+        get       = function() return lastCastbarImportString end,
+        set       = function(_, val) lastCastbarImportString = val end,
+      },
+      importBtn = {
+        type  = "execute",
+        name  = "Import Settings",
+        desc  = "Apply the pasted castbar settings from another character.",
+        order = 0.595,
+        width = 1.2,
+        func  = function()
+          if not lastCastbarImportString or lastCastbarImportString == "" then
+            print("|cffFF0000[ArcUI]|r Paste an import string first.")
+            return
+          end
+          if not (ns.BarsImportExport and ns.BarsImportExport.ParseImportString) then
+            print("|cffFF0000[ArcUI]|r Import/Export module not ready.")
+            return
+          end
+          local data, err = ns.BarsImportExport.ParseImportString(lastCastbarImportString)
+          if err then
+            print("|cffFF0000[ArcUI]|r Parse error: " .. err)
+            return
+          end
+          if not data.castbars then
+            print("|cffFF0000[ArcUI]|r This string does not contain castbar settings.")
+            return
+          end
+          local ok, result = ns.BarsImportExport.ImportBars(data, "replace")
+          if ok then
+            print("|cff00FF00[ArcUI]|r " .. result)
+            lastCastbarImportString = ""
+          else
+            print("|cffFF0000[ArcUI]|r Import failed: " .. result)
+          end
+          if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
         end,
       },
 

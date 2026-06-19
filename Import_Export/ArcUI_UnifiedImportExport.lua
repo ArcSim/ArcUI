@@ -198,15 +198,18 @@ local function BuildPreview(t, d)
         local cooldownCount = d.cooldownBars and #d.cooldownBars or 0
         local resourceCount = d.resourceBars and #d.resourceBars or 0
         local timerCount    = d.timerBars and #d.timerBars or 0
+        local hasCastbar    = d.castbars ~= nil
         local total         = auraCount + cooldownCount + resourceCount + timerCount
         table.insert(lines, string.format(
             "|cff888888From:|r %s @ %s\n",
             d.exportedBy or "?", d.realm or "?"
         ))
-        table.insert(lines, string.format(
+        local barLine = string.format(
             "%d bar(s) — |cffFFFF00%d aura|r  |cff00FFFF%d cooldown|r  |cff00FF88%d resource|r  |cffCC66FF%d timer|r",
             total, auraCount, cooldownCount, resourceCount, timerCount
-        ))
+        )
+        if hasCastbar then barLine = barLine .. "  |cff00FFFFCastbar|r" end
+        table.insert(lines, barLine)
 
     elseif t == "cr" then
         if ns.CRImportExport and ns.CRImportExport.GenerateImportPreview then

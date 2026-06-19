@@ -20,6 +20,7 @@ local selectedBarsForExport = {}
 local selectedCooldownBarsForExport = {}  -- keyed by "spellID_barType"
 local selectedResourceBarsForExport = {}  -- keyed by slot number
 local selectedTimerBarsForExport = {}     -- keyed by timerID
+local includeCastbarInExport = false      -- opt-in toggle in export UI
 local importPreviewData = nil
 local lastExportString = ""
 local lastImportString = ""
@@ -374,11 +375,20 @@ local function ExportSelectedBars()
         end
     end
     
+    -- Export castbar settings if requested
+    local castbarToExport = nil
+    if includeCastbarInExport then
+        local cbdb = ns.API.GetDB and ns.API.GetDB()
+        if cbdb and cbdb.castbars then
+            castbarToExport = DeepCopy(cbdb.castbars)
+        end
+    end
+
     local totalCount = auraExportCount + cooldownExportCount + resourceExportCount + timerExportCount
-    if totalCount == 0 then
+    if totalCount == 0 and not castbarToExport then
         return nil, "No bars selected for export"
     end
-    
+
     -- Build export data structure
     local exportData = {
         version = EXPORT_VERSION,
@@ -395,6 +405,7 @@ local function ExportSelectedBars()
         cooldownBars = cooldownBarsToExport,  -- Cooldown bars
         resourceBars = resourceBarsToExport,  -- Resource bars
         timerBars = timerBarsToExport,        -- Timer bars
+        castbars = castbarToExport,           -- Castbar settings (optional)
     }
     
     -- Serialize → Compress → Encode
@@ -455,8 +466,9 @@ local function ParseImportString(importString)
     local hasCooldownBars = data.cooldownBars and #data.cooldownBars > 0
     local hasResourceBars = data.resourceBars and #data.resourceBars > 0
     local hasTimerBars = data.timerBars and #data.timerBars > 0
-    
-    if not hasAuraBars and not hasCooldownBars and not hasResourceBars and not hasTimerBars then
+    local hasCastbarData = data.castbars ~= nil
+
+    if not hasAuraBars and not hasCooldownBars and not hasResourceBars and not hasTimerBars and not hasCastbarData then
         return nil, "No bars found in import data"
     end
     
@@ -474,13 +486,16 @@ local function GenerateImportPreview(data)
     local resourceCount = data.resourceBars and #data.resourceBars or 0
     local timerCount = data.timerBars and #data.timerBars or 0
     local totalCount = auraCount + cooldownCount + resourceCount + timerCount
-    
-    table.insert(lines, string.format(
+    local hasCastbar = data.castbars ~= nil
+
+    local header = string.format(
         "|cff00FF00Found %d bar(s)|r from %s @ %s",
         totalCount,
         data.exportedBy or "Unknown",
         data.realm or "Unknown"
-    ))
+    )
+    if hasCastbar then header = header .. " (+ Castbar)" end
+    table.insert(lines, header)
     
     -- Aura bars
     if auraCount > 0 then
@@ -541,14 +556,23 @@ local function GenerateImportPreview(data)
     -- Timer bars
     if timerCount > 0 then
         local barNames = {}
-        for i, bar in ipairs(data.timerBars) do
+        for _, bar in ipairs(data.timerBars) do
             local name = bar.tracking and bar.tracking.barName or "Timer"
             local duration = bar.tracking and bar.tracking.customDuration or 10
             table.insert(barNames, name .. " (" .. duration .. "s)")
         end
         table.insert(lines, "|cffCC66FFTimer Bars:|r " .. table.concat(barNames, ", "))
     end
-    
+
+    -- Castbar settings
+    if hasCastbar then
+        local instCount = 0
+        for _, v in pairs(data.castbars) do
+            if type(v) == "table" then instCount = instCount + 1 end
+        end
+        table.insert(lines, string.format("|cff00FFFFCastbar:|r %d instance(s)", instCount))
+    end
+
     return table.concat(lines, "\n")
 end
 
@@ -893,6 +917,28 @@ local function ImportBars(data, mode)
         end
     end
     
+    -- ═══════════════════════════════════════════════════════════════
+    -- IMPORT CASTBAR SETTINGS
+    -- ═══════════════════════════════════════════════════════════════
+    local castbarImported = false
+    if data.castbars then
+        local cbdb = ns.API.GetDB and ns.API.GetDB()
+        if cbdb then
+            if not cbdb.castbars then cbdb.castbars = {} end
+            for idx, instCfg in pairs(data.castbars) do
+                if type(idx) == "number" and type(instCfg) == "table" then
+                    cbdb.castbars[idx] = DeepCopy(instCfg)
+                end
+            end
+            castbarImported = true
+            C_Timer.After(0.15, function()
+                if ns.Castbar and ns.Castbar.ApplyAppearance then
+                    ns.Castbar.ApplyAppearance()
+                end
+            end)
+        end
+    end
+
     -- Trigger validation for imported aura bars
     if ns.API.ValidateAllBarTracking then
         C_Timer.After(0.1, function()
@@ -933,20 +979,59 @@ local function ImportBars(data, mode)
     end
     
     local result = string.format("Imported %d bar(s)", imported)
+    if castbarImported then
+        result = result .. " + castbar settings"
+    end
     if skipped > 0 then
         result = result .. string.format(", skipped %d", skipped)
     end
-    
+
     if #messages > 0 then
         result = result .. "\n" .. table.concat(messages, "\n")
     end
-    
+
     return true, result
 end
 
 -- Expose for master import and unified import window
 ns.BarsImportExport.ImportBars = ImportBars
 ns.BarsImportExport.ParseImportString = ParseImportString
+
+-- Export just the castbar config as a standalone ARCUI_BARS string.
+function ns.BarsImportExport.ExportCastbarOnly()
+    local db = ns.API.GetDB and ns.API.GetDB()
+    if not db then return nil, "Database not available" end
+    if not db.castbars then return nil, "No castbar configuration found" end
+
+    local exportData = {
+        version  = EXPORT_VERSION,
+        prefix   = EXPORT_PREFIX,
+        timestamp    = time(),
+        exportedBy   = UnitName("player") or "Unknown",
+        realm        = GetRealmName() or "Unknown",
+        barCount          = 0,
+        auraBarCount      = 0,
+        cooldownBarCount  = 0,
+        resourceBarCount  = 0,
+        timerBarCount     = 0,
+        bars         = {},
+        cooldownBars = {},
+        resourceBars = {},
+        timerBars    = {},
+        castbars     = DeepCopy(db.castbars),
+    }
+
+    local serialized = AceSerializer:Serialize(exportData)
+    if not serialized then return nil, "Serialization failed" end
+
+    local compressed = LibDeflate:CompressDeflate(serialized)
+    if not compressed then return nil, "Compression failed" end
+
+    local encoded = LibDeflate:EncodeForPrint(compressed)
+    if not encoded then return nil, "Encoding failed" end
+
+    return encoded, nil
+end
 
 -- ===================================================================
 -- OPTIONS TABLE
@@ -1204,7 +1289,25 @@ function ns.BarsImportExport.GetOptionsTable()
                     return args
                 end)(),
             },
-            
+
+            castbarSelectionGroup = {
+                type = "group",
+                name = "Castbar Settings",
+                order = 7.7,
+                inline = true,
+                args = {
+                    castbarInclude = {
+                        type    = "toggle",
+                        name    = "|cff00FFFFCastbar|r: Include Castbar Settings",
+                        desc    = "Include castbar appearance and positioning in the export string.",
+                        order   = 1,
+                        width   = 1.6,
+                        get     = function() return includeCastbarInExport end,
+                        set     = function(_, val) includeCastbarInExport = val end,
+                    },
+                },
+            },
+
             exportBtn = {
                 type = "execute",
                 name = "Export Selected",
@@ -1241,7 +1344,7 @@ function ns.BarsImportExport.GetOptionsTable()
             
             importDesc = {
                 type = "description",
-                name = "Paste an export string below to import bar configurations. Supports aura bars, cooldown bars, resource bars, and timer bars.",
+                name = "Paste an export string below to import bar configurations. Supports aura bars, cooldown bars, resource bars, timer bars, and castbar settings.",
                 order = 21,
             },
             
