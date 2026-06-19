@@ -700,6 +700,17 @@ local function GetOptionsTable()
         return tbl
       end)(),
 
+      advancedDebuffs = (function()
+        local tbl = ns.AdvancedDebuffs and ns.AdvancedDebuffs.GetOptionsTable and ns.AdvancedDebuffs.GetOptionsTable() or {
+          type = "group",
+          name = "Advanced Debuffs",
+          args = { loading = { type = "description", name = "Loading...", order = 1 } }
+        }
+        tbl.name  = "Advanced Debuffs"
+        tbl.order = 3.8
+        return tbl
+      end)(),
+
       settings = {
         type = "group",
         name = "Settings",
@@ -1227,7 +1238,10 @@ initFrame:SetScript("OnEvent", function(self, event)
       if ns.Castbar and ns.Castbar.Init then
         ns.Castbar.Init()
       end
-      
+      if ns.AdvancedDebuffs and ns.AdvancedDebuffs.Init then
+        ns.AdvancedDebuffs.Init()
+      end
+
       print("|cff00ccffArc UI|r v" .. ns.AddonInfo.Version .. " loaded. Type /arcui for options, /cdm for CDM settings, /arcui recenter to move panel back to screen.")
     end)
   end

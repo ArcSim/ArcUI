@@ -698,6 +698,52 @@ ns.DB_DEFAULTS = {
       hiddenSpells = {},     -- {[spellID] = true, ...} - Hidden from catalog
     },
     
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- ADVANCED DEBUFFS (standalone draggable icon frame)
+    -- Shows harmful auras on the player with dispel-type border coloring.
+    -- ═══════════════════════════════════════════════════════════════════════════
+    advancedDebuffs = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 2,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColorMode = "dispel",
+      borderColor = { r=0.8, g=0.8, b=0.8, a=1 },
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-200 },
+      filters = {
+        PLAYER = false,
+        RAID = false,
+        CROWD_CONTROL = false,
+        RAID_IN_COMBAT = false,
+        RAID_PLAYER_DISPELLABLE = false,
+        IMPORTANT = false,
+      },
+    },
+
+    advancedExternals = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 1,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColor = { r=0.2, g=0.8, b=0.2, a=1 },
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-260 },
+      showBigDefensives = false,
+    },
+
     configVersion = 1
   }
 }
