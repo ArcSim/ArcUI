@@ -659,6 +659,8 @@ ns.DB_DEFAULTS = {
       interruptFeedbackEnabled = false,
       interruptColor = {r=1, g=0.15, b=0.15, a=1},
       interruptFadeDuration = 1.0,
+      -- Hide the default Blizzard castbar (PlayerCastingBarFrame)
+      hideCastBar = false,
       -- Spell name shortening (display only; off by default)
       spellShortenEnabled = false,
       spellShortenLength = 20,

@@ -574,9 +574,29 @@ local function ApplyBorder(mainFrame, cfg, borderColorOverride)
 end
 
 -- ===================================================================
+-- BLIZZARD CASTBAR VISIBILITY
+-- ===================================================================
+local blizzCastBarHooked = false
+local function ApplyBlizzCastBarVisibility()
+  local cfg = GetCastbarDB()
+  local frame = PlayerCastingBarFrame
+  if not frame then return end
+  if cfg and cfg.hideCastBar then
+    frame:Hide()
+    if not blizzCastBarHooked then
+      blizzCastBarHooked = true
+      hooksecurefunc(frame, "Show", function(self) self:Hide() end)
+    end
+  elseif not blizzCastBarHooked then
+    frame:Show()
+  end
+end
+
+-- ===================================================================
 -- APPLY APPEARANCE
 -- ===================================================================
 function ns.Castbar.ApplyAppearance()
+  ApplyBlizzCastBarVisibility()
   local cfg = GetEffectiveCfg()  -- per-type appearance for the current display/cast type
   if not cfg then return end
 
@@ -1568,6 +1588,7 @@ end
 
 function ns.Castbar.Init()
   MigrateLegacyCastbar()
+  ApplyBlizzCastBarVisibility()
   ns.Castbar.ApplyAppearance()
   if ns.CDMShared and ns.CDMShared.RegisterPanelCallback then
     ns.CDMShared.RegisterPanelCallback("Castbar", {

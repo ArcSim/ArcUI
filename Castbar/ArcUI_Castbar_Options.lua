@@ -177,9 +177,27 @@ function ns.CastbarOptions.GetOptionsTable()
         name  = "|cffffd100Enable Castbar|r",
         desc  = "Show the castbar while casting or channeling spells.",
         order = 0.55,
-        width = "full",
+        width = 1.2,
         get   = function() local c = GetCastbarDB(); return c and c.enabled end,
         set   = function(_, v) local c = GetCastbarDB(); if c then c.enabled = v; Refresh() end end,
+      },
+
+      hideCastBar = {
+        type  = "toggle",
+        name  = "Hide Blizzard Castbar",
+        desc  = "Hide the default Blizzard castbar (PlayerCastingBarFrame).\n\n|cffff9900Requires /reload to restore if disabled.|r",
+        order = 0.56,
+        width = 1.3,
+        get   = function() local c = GetCastbarDB(); return c and c.hideCastBar end,
+        set   = function(_, v)
+          local c = GetCastbarDB()
+          if c then
+            c.hideCastBar = v
+            if ns.Castbar and ns.Castbar.ApplyAppearance then
+              ns.Castbar.ApplyAppearance()
+            end
+          end
+        end,
       },
 
       profileSelector = {
