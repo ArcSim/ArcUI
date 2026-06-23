@@ -560,59 +560,57 @@ local function ReturnFrameToCDM(frame, entry)
         return
     end
     
-    pcall(function()
-        -- CRITICAL: Clean up all drag state and custom properties
-        -- These can cause issues if CDM reuses this frame for a different cooldownID
-        frame:SetMovable(false)
-        frame:EnableMouse(false)
-        frame:RegisterForDrag()  -- Unregister drag
-        frame:SetScript("OnDragStart", nil)
-        frame:SetScript("OnDragStop", nil)
-        frame:SetScript("OnUpdate", nil)
-        
-        -- Clean up visual elements (borders, overlays, glows)
-        -- Border edges extend outside frame bounds, must hide explicitly
-        if frame._arcBorderEdges then
-            if frame._arcBorderEdges.top then frame._arcBorderEdges.top:Hide() end
-            if frame._arcBorderEdges.bottom then frame._arcBorderEdges.bottom:Hide() end
-            if frame._arcBorderEdges.left then frame._arcBorderEdges.left:Hide() end
-            if frame._arcBorderEdges.right then frame._arcBorderEdges.right:Hide() end
-        end
-        
-        -- Hide text overlay
-        if frame._arcTextOverlay then
-            frame._arcTextOverlay:Hide()
-        end
-        
-        -- Stop any glow effects
-        if ns.CDMEnhance and ns.CDMEnhance.StopAllGlows then
-            ns.CDMEnhance.StopAllGlows(frame)
-        end
-        
-        -- Clear all our custom properties
-        frame._groupDragging = nil
-        frame._sourceGroup = nil
-        frame._sourceCdID = nil
-        frame._cdmgTargetPoint = nil
-        frame._cdmgTargetRelPoint = nil
-        frame._cdmgTargetX = nil
-        frame._cdmgTargetY = nil
-        frame._cdmgTargetSize = nil
-        frame._cdmgSlotW = nil  -- Clear GROUP's slot dimensions
-        frame._cdmgSlotH = nil
-        frame._cdmgSettingPosition = nil
-        frame._cdmgSettingScale = nil
-        frame._cdmgSettingSize = nil
-        frame._cdmgSettingParent = nil
-        frame._cdmgIsFreeIcon = nil  -- CRITICAL: Clear free icon flag so hooks don't fight
-        frame._cdmgTargetContainer = nil  -- Clear target so SetParent hook doesn't fight
-        frame.frameLostAt = nil
-        
-        -- Return to original parent
-        frame:SetParent(entry and entry.originalParent or UIParent)
-        frame:ClearAllPoints()
-        frame:Hide()
-    end)
+    -- CRITICAL: Clean up all drag state and custom properties
+    -- These can cause issues if CDM reuses this frame for a different cooldownID
+    frame:SetMovable(false)
+    frame:EnableMouse(false)
+    frame:RegisterForDrag()  -- Unregister drag
+    frame:SetScript("OnDragStart", nil)
+    frame:SetScript("OnDragStop", nil)
+    frame:SetScript("OnUpdate", nil)
+
+    -- Clean up visual elements (borders, overlays, glows)
+    -- Border edges extend outside frame bounds, must hide explicitly
+    if frame._arcBorderEdges then
+        if frame._arcBorderEdges.top then frame._arcBorderEdges.top:Hide() end
+        if frame._arcBorderEdges.bottom then frame._arcBorderEdges.bottom:Hide() end
+        if frame._arcBorderEdges.left then frame._arcBorderEdges.left:Hide() end
+        if frame._arcBorderEdges.right then frame._arcBorderEdges.right:Hide() end
+    end
+
+    -- Hide text overlay
+    if frame._arcTextOverlay then
+        frame._arcTextOverlay:Hide()
+    end
+
+    -- Stop any glow effects
+    if ns.CDMEnhance and ns.CDMEnhance.StopAllGlows then
+        ns.CDMEnhance.StopAllGlows(frame)
+    end
+
+    -- Clear all our custom properties
+    frame._groupDragging = nil
+    frame._sourceGroup = nil
+    frame._sourceCdID = nil
+    frame._cdmgTargetPoint = nil
+    frame._cdmgTargetRelPoint = nil
+    frame._cdmgTargetX = nil
+    frame._cdmgTargetY = nil
+    frame._cdmgTargetSize = nil
+    frame._cdmgSlotW = nil  -- Clear GROUP's slot dimensions
+    frame._cdmgSlotH = nil
+    frame._cdmgSettingPosition = nil
+    frame._cdmgSettingScale = nil
+    frame._cdmgSettingSize = nil
+    frame._cdmgSettingParent = nil
+    frame._cdmgIsFreeIcon = nil  -- CRITICAL: Clear free icon flag so hooks don't fight
+    frame._cdmgTargetContainer = nil  -- Clear target so SetParent hook doesn't fight
+    frame.frameLostAt = nil
+
+    -- Return to original parent
+    frame:SetParent(entry and entry.originalParent or UIParent)
+    frame:ClearAllPoints()
+    frame:Hide()
     if entry then
         entry.manipulated = false
         entry.group = nil

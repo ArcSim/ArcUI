@@ -37,6 +37,15 @@ ns.CooldownState = ns.CooldownState or {}
 -- ═══════════════════════════════════════════════════════════════════
 -- SECRET-SAFE AURAINSTANCEID HELPER
 -- ═══════════════════════════════════════════════════════════════════
+-- Live-frame aura presence. HasAuraInstanceID rejects 0 because 0 is the saved-
+-- variable "no aura" default, but a LIVE CDM frame reports auraInstanceID == 0 for
+-- a self-aura (e.g. Voidfall) = the aura EXISTS. Here only nil means no aura.
+-- (A secret value is non-nil = present.) Use this for live frame.auraInstanceID
+-- presence checks; keep HasAuraInstanceID for stored / saved-variable ids.
+local function HasFrameAura(value)
+  return value ~= nil
+end
+
 local function HasAuraInstanceID(value)
   if ns.API and ns.API.HasAuraInstanceID then
     return ns.API.HasAuraInstanceID(value)
@@ -118,6 +127,9 @@ local function SetVertexColorSafe(frame, iconTex, r, g, b, a)
 end
 
 local function ResetDurationText(frame)
+  -- Force Hide owns text IgnoreParentAlpha while active (text floats above the
+  -- hidden frame). Don't let the normal reset path un-float it.
+  if frame._arcForceHideActive then return end
   local skip = frame._arcSwipeWaitForNoCharges
   if frame._arcCooldownText and frame._arcCooldownText.SetIgnoreParentAlpha then
     if not skip then frame._arcCooldownText:SetIgnoreParentAlpha(false) end
@@ -720,6 +732,32 @@ local function PreviewClampAlpha(alpha)
 end
 
 -- ═══════════════════════════════════════════════════════════════════
+-- DESATURATE WHEN AURA INACTIVE (cooldown icons that track an aura)
+-- Force the icon desaturated while the tracked aura is NOT active, superseding
+-- whatever the ready/cooldown/usability path just set. Called from EVERY
+-- saturating path (the dispatch end AND ApplyReadyState) so usability re-applies
+-- on combat entry can't re-saturate it. Routes through the single desat authority
+-- (_arcForceDesatValue=1 + SetDesat under bypass) which the icon SetDesaturated/
+-- SetDesaturation enforcement hook then pins against CDM (its staleness-clear only
+-- touches forceValue==0). Aura presence uses the EXACT SAME signal as the aura-active
+-- glow (EvaluateAuraActiveGlow): HasFrameAura(auraInstanceID) reflects the buff
+-- dropping immediately (wasSetFromAura LAGS true for a tick after the buff falls,
+-- which left the icon coloured), so the desat now triggers the moment the glow does.
+-- ═══════════════════════════════════════════════════════════════════
+local function ApplyAuraInactiveDesat(frame, iconTex)
+  local cfg = frame._arcCfg
+  if not (cfg and cfg.auraActiveState and cfg.auraActiveState.desaturateWhenInactive) then return end
+  local auraActive = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
+  if auraActive then return end
+  iconTex = iconTex or ResolveIconTexture(frame)
+  frame._arcForceDesatValue = 1
+  frame._arcBypassDesatHook = true
+  SetDesat(iconTex, 1)
+  frame._arcBypassDesatHook = false
+  if ApplyBorderDesaturation then ApplyBorderDesaturation(frame, 1) end
+end
+
+-- ═══════════════════════════════════════════════════════════════════
 -- APPLY READY STATE
 -- ═══════════════════════════════════════════════════════════════════
 local function ApplyReadyState(frame, iconTex, stateVisuals, usabilityAlphaOverride, usabilityPreserveText)
@@ -778,6 +816,8 @@ local function ApplyReadyState(frame, iconTex, stateVisuals, usabilityAlphaOverr
     frame._arcPreserveDurationText = false
     ResetDurationText(frame)
   end
+  -- Aura-inactive desat wins over the ready/usability saturation just applied.
+  ApplyAuraInactiveDesat(frame, iconTex)
 end
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -979,7 +1019,7 @@ local function HandleIgnoreAuraOverride(frame, iconTex, cfg, stateVisuals)
 
   -- Aura presence via CDM's native auraInstanceID — non-secret, always current.
   -- Only fight CDM desat when aura is actually showing on this frame.
-  local isAuraActive = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+  local isAuraActive = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
 
   -- IAO initial push: when wasSetFromAura first becomes true, CDM may not call
   -- SetCooldown again for several seconds. IAOFight waits for SetCooldown — so we
@@ -1072,7 +1112,7 @@ local function HandleAuraLogic(frame, iconTex, cfg, stateVisuals)
   frame._arcTargetDesat = nil
   frame._arcTargetTint = nil
 
-  local isAuraActive = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+  local isAuraActive = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
   local isCooldownFrame = not cfg._isAura and frame.totemData == nil
 
   local cdSpellID, cdOnCooldown, cdRecharging, cdIsCharge, cdIsOnGCD
@@ -1355,7 +1395,7 @@ EvaluateAuraActiveGlow = function(frame, cfg)
   local aaCfg = cfg.auraActiveState
   if isAuraGlowPreview or (aaCfg and (aaCfg.glow or aaCfg.glowWhenMissing)) then
     local resolvedCfg = aaCfg or {}
-    local isActive = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+    local isActive = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
     if ShouldShowAuraActiveGlow(resolvedCfg, frame, isActive) then
       ShowAuraActiveGlow(frame, resolvedCfg)
     else
@@ -1498,8 +1538,10 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
   local hasWaitFlags = cfg.cooldownSwipe and (cfg.cooldownSwipe.swipeWaitForNoCharges or cfg.cooldownSwipe.edgeWaitForNoCharges)
   local hasChargeTextFlags = (cfg.chargeText and cfg.chargeText.enabled ~= false and cfg.chargeText.hideAtZero)
                           or (cfg.cooldownText and cfg.cooldownText.enabled ~= false and cfg.cooldownText.hideWhenHasCharges)
+  -- desaturateWhenInactive: aura-not-active desat is the only configured visual? still run the dispatch.
+  local hasAuraInactiveDesat = cfg.auraActiveState and cfg.auraActiveState.desaturateWhenInactive
 
-  if not stateVisuals and not isGlowPreview and not isAuraGlowPreview and not ignoreAuraOverride and not hasSpellUsability and not hasNoGCDSwipe and not hasWaitFlags and not hasChargeTextFlags then
+  if not stateVisuals and not isGlowPreview and not isAuraGlowPreview and not ignoreAuraOverride and not hasSpellUsability and not hasNoGCDSwipe and not hasWaitFlags and not hasChargeTextFlags and not hasAuraInactiveDesat then
     local prevBranch = frame._arcDesatBranch
     local wasManagedDesat = prevBranch ~= nil and prevBranch ~= "NO_SV_EARLY"
     frame._arcForceDesatValue = nil
@@ -1618,6 +1660,12 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
     frame._arcIgnoreAuraOverride = false
     HandleCooldownLogic(frame, iconTex, cfg, stateVisuals)
   end
+
+  -- DESATURATE WHEN AURA INACTIVE: runs AFTER the dispatch branch so it supersedes
+  -- whatever desat the branch decided (covers the cooldown-state path; the
+  -- ready/usability path is covered inside ApplyReadyState). Re-evaluated on aura
+  -- gained/lost via InstallCooldownAuraHooks (which re-calls this function).
+  ApplyAuraInactiveDesat(frame, iconTex)
 end
 
 
@@ -1767,7 +1815,7 @@ function ns.CooldownState.InstallCooldownAuraHooks(frame)
 
   if frame.OnAuraInstanceInfoSet then
     hooksecurefunc(frame, "OnAuraInstanceInfoSet", function(self)
-      self._arcAuraActive = HasAuraInstanceID(self.auraInstanceID)
+      self._arcAuraActive = HasFrameAura(self.auraInstanceID)
       local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame
         and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(self)
       -- Set reverse immediately when aura becomes active
@@ -1786,7 +1834,7 @@ function ns.CooldownState.InstallCooldownAuraHooks(frame)
 
   if frame.OnAuraInstanceInfoCleared then
     hooksecurefunc(frame, "OnAuraInstanceInfoCleared", function(self)
-      self._arcAuraActive = HasAuraInstanceID(self.auraInstanceID)
+      self._arcAuraActive = HasFrameAura(self.auraInstanceID)
       -- IMMEDIATE glow kill: aura just dropped, CDM will call RefreshData() next
       -- which can re-trigger visual state resets before Apply() re-evaluates glow.
       -- Don't rely on routing through Apply → EvaluateAuraActiveGlow — kill directly.
@@ -1835,7 +1883,7 @@ function ns.CooldownState.InstallCooldownAuraHooks(frame)
     hooksecurefunc(frame, "OnCooldownViewerSpellOverrideUpdatedEvent", function(self)
       local capturedSelf = self
       C_Timer.After(0, function()
-        capturedSelf._arcAuraActive = HasAuraInstanceID(capturedSelf.auraInstanceID)
+        capturedSelf._arcAuraActive = HasFrameAura(capturedSelf.auraInstanceID)
         local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame
           and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(capturedSelf)
         if cfg and ns.CooldownState.Apply then

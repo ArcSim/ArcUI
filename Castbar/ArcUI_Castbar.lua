@@ -1583,8 +1583,8 @@ function ns.Castbar.OpenOptions()
   if ns.API and ns.API.OpenOptions then ns.API.OpenOptions() end
   local ACD = LibStub and LibStub("AceConfigDialog-3.0", true)
   if ACD then
-    -- Defer one frame so the panel is built before we navigate to Bars → Castbar.
-    C_Timer.After(0, function() ACD:SelectGroup("ArcUI", "bars", "castbar") end)
+    -- Defer one frame so the panel is built before we navigate to the Castbar tab.
+    C_Timer.After(0, function() ACD:SelectGroup("ArcUI", "castbar") end)
   end
 end
 

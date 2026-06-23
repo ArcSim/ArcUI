@@ -93,9 +93,19 @@ Secret values are tainted runtime values addons cannot inspect.
 **Display helpers:** Curve objects for secret-compatible color transitions;
 `C_StringUtil.TruncateWhenZero` suppresses secret zeros in display text.
 
-**Charge bars:** hook `SetCachedChargeValues(count, shown)` on `CooldownViewerCooldownItemMixin` —
-count is non-secret for CDM spells. `SPELL_UPDATE_COOLDOWN` + `isOnGCD` misses casts within the
-charge GCD; catch final-charge spends with `UNIT_SPELLCAST_SUCCEEDED` on "player".
+**Charge bars / charge count:** hook `SetCachedChargeValues(count, shown)` on
+`CooldownViewerCooldownItemMixin`. The `count` is SECRET when cooldowns are restricted
+(instances/M+/PvP): it is sourced from `GetSpellCharges`/`GetSpellCastCount`, both
+`SecretWhenCooldownsRestricted`, and CDM's own `RefreshSpellChargeInfo` only ever `SetText`s it,
+never compares it (when Blizzard refuses to compare a value, it is secret). It is non-secret ONLY in
+the open world, which is the trap: a `count`-comparison passes at a target dummy and breaks in M+. So
+`count` is safe to DISPLAY (SetText/SetValue are secret-safe sinks) but NEVER to compare or feed a
+ColorCurve. There is no clean way to threshold-color charges by exact count (no min-capable formatter:
+`GetSpellDisplayCount` is max-only); for charge VISUALS use state coloring (full/recharging/all-spent)
+off the charge durObj (`Cooldown:IsShown()` on shadow Cooldowns / `chargeDurObj:EvaluateRemainingPercent`),
+as `ns.CustomLabel`/`ns.CooldownState` already do. `maxCharges` is non-secret (12.0.1). For driving
+updates, `SPELL_UPDATE_COOLDOWN` + `isOnGCD` misses casts within the charge GCD; catch final-charge
+spends with `UNIT_SPELLCAST_SUCCEEDED` on "player". See the `cdm-secret-safe-coloring` skill.
 
 **Scheduling that needs real numbers:** only use NON-secret sources — `GetTime()` plus
 locally-tracked cast times, isActive/isEnabled flags.

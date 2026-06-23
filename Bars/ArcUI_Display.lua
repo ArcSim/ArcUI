@@ -5355,7 +5355,7 @@ function ns.Display.OpenOptionsForBar(barType, barNumber)
   AceConfigRegistry:NotifyChange("ArcUI")
   
   -- Select the appearance tab (now under bars)
-  AceConfigDialog:SelectGroup("ArcUI", "bars", "appearance")
+  AceConfigDialog:SelectGroup("ArcUI", "auras", "appearance")
 end
 
 -- ===================================================================

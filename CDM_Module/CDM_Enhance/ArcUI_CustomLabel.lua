@@ -46,6 +46,12 @@ local FRAME_KEYS = { "_arcCL1", "_arcCL2", "_arcCL3" }
 -- SECRET-SAFE AURAINSTANCEID HELPER
 -- Uses ns.API.HasAuraInstanceID from Core.lua (handles secret values)
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Live-frame aura presence: auraInstanceID == 0 is a valid self-aura (Voidfall),
+-- not the saved-variable "no aura" default that HasAuraInstanceID rejects. nil = none.
+local function HasFrameAura(value)
+  return value ~= nil
+end
+
 local function HasAuraInstanceID(value)
   -- Use Core's implementation if available
   if ns.API and ns.API.HasAuraInstanceID then
@@ -246,7 +252,10 @@ function CL.UpdateVisibility(frame)
 
   -- ── AURA PATH: secret-safe via HasAuraInstanceID() ──
   if isAura then
-    local isActive = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+    -- Self-aura (auraInstanceID == 0) counts as present via FrameActive (event-based),
+    -- same as AuraFrames — HasAuraInstanceID rejects 0. 0 = exists, nil = gone.
+    local isActive = (ns.FrameActive and ns.FrameActive.IsActive(frame))
+                  or HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
 
     for i = 1, 3 do
       local container = frame[FRAME_KEYS[i]]
@@ -282,8 +291,9 @@ function CL.UpdateVisibility(frame)
     end
   end
 
-  -- Pre-compute aura state once for all labels (secret-safe)
-  local hasFrameAura = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+  -- Pre-compute aura state once for all labels (secret-safe). Cooldown path: a
+  -- self-aura on this frame reports auraInstanceID == 0 = present, so use HasFrameAura.
+  local hasFrameAura = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
 
   for i = 1, 3 do
     local container = frame[FRAME_KEYS[i]]

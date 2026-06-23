@@ -1955,7 +1955,7 @@ local function GetOptionsTable()
             dynamicCooldowns = {
                 type = "toggle",
                 name = "Dynamic Cooldowns",
-                desc = "Dynamically repositions cooldown icons as they become ready or go on cooldown — hidden ones drop out and the rest compact to fill the gap. Works alongside Dynamic Auras.",
+                desc = "Repositions cooldown icons so hidden ones drop out and the rest compact to fill the gap. |cffffd100An icon only drops out when its alpha is 0|r, so open the icon and set its Alpha to 0 under Cooldown Ready State (hides it while ready) or On Cooldown State (hides it while on cooldown). Works alongside Dynamic Auras.",
                 order = 36.75,
                 width = 1.15,
                 hidden = function()

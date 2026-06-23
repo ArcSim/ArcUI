@@ -95,6 +95,7 @@ ns.DB_DEFAULTS = {
     selectedBar = 1,
     selectedResourceBar = 1,
     selectedCooldownBar = 1,
+    selectedTexture = 1,
     
     -- Array of buff/debuff bar configurations (up to 30 bars)
     bars = {
@@ -325,7 +326,129 @@ ns.DB_DEFAULTS = {
         events = {},
       },
     },
-    
+
+    -- ===============================================================
+    -- AURA TEXTURES
+    -- Freely-placeable images that flip between active and inactive
+    -- styling based on a tracked buff/debuff. Mirrors the buff/debuff
+    -- bar trigger model (tracking block is intentionally shaped the same
+    -- so it can reuse the CDM aura resolution); rendering is its own
+    -- texture-display engine (ns.Textures).
+    -- ===============================================================
+    textures = {
+      [1] = {
+        tracking = {
+          enabled = false,
+          trackType = "buff",          -- "buff" or "debuff"
+          spellID = 0,
+          buffName = "",
+          iconTextureID = 0,
+          cooldownID = 0,
+          alternateCooldownIDs = {},   -- Additional cooldownIDs for cross-spec support
+          excludedCooldownIDs = {},    -- CooldownIDs manually removed; never auto-discovered
+          slotNumber = 0,
+          auraInstanceID = 0,
+          useBaseSpell = false,
+        },
+        display = {
+          enabled = true,
+
+          -- SOURCE
+          textureSource = "library",   -- "library" (FileDataID / atlas) or "custom" (file path)
+          textureID = 0,               -- FileDataID number OR atlas string when source = "library"
+          customTexturePath = "",      -- file path when source = "custom"
+
+          -- SIZE / POSITION
+          width = 64,
+          height = 64,
+          position = {
+            point = "CENTER",
+            relPoint = "CENTER",
+            x = 0,
+            y = 0,
+          },
+          frameStrata = "MEDIUM",
+          frameLevel = 10,
+          movable = true,
+
+          -- RENDER (shared by both states)
+          blendMode = "BLEND",         -- "BLEND" (opaque) or "ADD" (glow)
+          rotateEnabled = false,
+          rotation = 0,                -- degrees (-180..180)
+          mirrorH = false,
+          mirrorV = false,
+          zoomEnabled = false,
+          zoomPct = 0,                 -- 0..50
+          cropEnabled = false,
+          cropL = 0,                   -- per-side crop percent (0..100)
+          cropR = 0,
+          cropT = 0,
+          cropB = 0,
+
+          -- ACTIVE STATE STYLE (aura present)
+          activeColor = {r=1, g=1, b=1, a=1},
+          activeAlpha = 1,
+          activeDesaturate = false,
+          activeDesaturatePct = 100,
+
+          -- INACTIVE STATE STYLE (aura absent)
+          showWhenInactive = false,    -- false = hide when inactive; true = show with inactive style
+          inactiveColor = {r=1, g=1, b=1, a=1},
+          inactiveAlpha = 0.5,
+          inactiveDesaturate = true,
+          inactiveDesaturatePct = 100,
+
+          -- DURATION FADE-OUT (active state; secret-safe via ColorCurve alpha)
+          fadeOutEnabled = false,
+          fadeStartPct = 50,           -- begin fading once remaining drops below this %
+
+          -- RESIZE
+          lockAspect = false,          -- on-screen resize keeps the width/height ratio
+
+          -- LOOPING PULSE (size) + GLOW (active state)
+          pulseEnabled = false,
+          pulseScale = 1.15,           -- target scale for the size pulse
+          pulseSpeed = 0.5,            -- seconds per pulse half-cycle
+          glowEnabled = false,
+          glowType = "pixel",          -- pixel / autocast / button / proc
+
+          -- DURATION DRAIN (active state): the texture depletes directionally
+          -- like a bar, driven secret-safely by StatusBar:SetTimerDuration.
+          progressEnabled = false,
+          progressDir = "TOP_TO_BOTTOM",  -- TOP_TO_BOTTOM / BOTTOM_TO_TOP / LEFT_TO_RIGHT / RIGHT_TO_LEFT
+          progressHideGhost = false,      -- the dim full-texture "ghost" shows by default (WeakAuras look); true hides it
+          -- DRAIN REGION: inset fractions (0..0.49) from each edge defining the
+          -- sub-rectangle that drains. All 0 = whole texture (default). When any
+          -- inset > 0, only that band depletes and the rest of the texture stays solid.
+          drainInsetL = 0,
+          drainInsetR = 0,
+          drainInsetT = 0,
+          drainInsetB = 0,
+
+          -- DURATION TEXT (countdown) -- mirrors the Aura Bars' duration-text options.
+          showDuration = false,
+          durationFont = "2002 Bold",
+          durationFontSize = 18,
+          durationColor = { r = 1, g = 1, b = 1, a = 1 },
+          durationOutline = "THICKOUTLINE",
+          durationShadow = false,
+          durationDecimals = 1,
+          durationAnchor = "CENTER",
+          durationAnchorOffsetX = 0,
+          durationAnchorOffsetY = 0,
+          durationTextStrata = "HIGH",
+          durationTextLevel = 13,
+        },
+        behavior = {
+          hideWhen = {},          -- shared "Hide When..." conditions (same evaluator as the Aura Bars)
+          hideLogic = "any",      -- "any" = hide if ANY condition met; "all" = only if ALL met
+          hideWhenAlpha = 0,      -- opacity when a hide condition is active (0 = fully hidden)
+          showOnSpec = 0,         -- spec restriction lives in the catalog row now; runtime gate stays
+          showOnSpecs = {},
+        },
+      },
+    },
+
     -- ===============================================================
     -- RESOURCE BARS (Primary AND Secondary resources with threshold color layers)
     -- v2.6.0: Added resourceCategory, secondaryType for secondary resource support
@@ -1103,11 +1226,16 @@ end
 local activeBarCache         = nil  -- [barNum, ...] or nil (dirty)
 local activeResourceBarCache = nil
 local activeCooldownBarCache = nil
+local activeTextureCache     = nil  -- [textureNum, ...] or nil (dirty)
 
 function ns.API.InvalidateActiveBarCache()
   activeBarCache         = nil
   activeResourceBarCache = nil
   activeCooldownBarCache = nil
+end
+
+function ns.API.InvalidateActiveTextureCache()
+  activeTextureCache = nil
 end
 
 function ns.API.GetActiveBars()
@@ -1156,6 +1284,94 @@ function ns.API.GetActiveCooldownBars()
   end
   activeCooldownBarCache = activeBars
   return activeCooldownBarCache
+end
+
+-- ===================================================================
+-- HELPER: Aura Textures (config / active list / create / bind)
+-- Mirrors the buff/debuff bar helpers. The tracking block is shaped the
+-- same as a bar's so the texture engine can reuse the CDM aura resolution.
+-- ===================================================================
+function ns.API.GetTextureConfig(textureNumber)
+  local db = ns.db and ns.db.char
+  if not db then return nil end
+  db.textures = db.textures or {}
+
+  textureNumber = textureNumber or db.selectedTexture or 1
+
+  if not db.textures[textureNumber] then
+    db.textures[textureNumber] = CopyTable(ns.DB_DEFAULTS.char.textures[1])
+    -- Stagger default position so newly created textures don't stack exactly.
+    local off = (textureNumber - 1) * 20
+    db.textures[textureNumber].display.position.x = off
+    db.textures[textureNumber].display.position.y = -off
+  end
+
+  return db.textures[textureNumber]
+end
+
+function ns.API.GetActiveTextures()
+  if activeTextureCache then return activeTextureCache end
+  local db = ns.API.GetDB()
+  if not db or not db.textures then activeTextureCache = {}; return activeTextureCache end
+  local active = {}
+  for i = 1, 500 do
+    if db.textures[i] and db.textures[i].tracking and db.textures[i].tracking.enabled then
+      table.insert(active, i)
+    end
+  end
+  activeTextureCache = active
+  return activeTextureCache
+end
+
+-- Enable the first free texture slot (makes it appear in the UI list).
+function ns.API.InitializeNewTexture()
+  local db = ns.API.GetDB()
+  if not db then return nil end
+  db.textures = db.textures or {}
+
+  for i = 1, 500 do
+    local cfg = db.textures[i]
+    if not cfg or not cfg.tracking or not cfg.tracking.enabled then
+      cfg = ns.API.GetTextureConfig(i)
+      cfg.tracking.enabled = true
+      cfg.tracking.buffName = "(Not configured yet)"
+      cfg.tracking.spellID = 0
+      cfg.tracking.cooldownID = 0
+      ns.API.InvalidateActiveTextureCache()
+
+      if ns.Textures and ns.Textures.ShowTexture then
+        ns.Textures.ShowTexture(i)
+      end
+
+      return i
+    end
+  end
+
+  return nil
+end
+
+-- Bind a catalog buff (from ns.API.ScanAvailableBuffs) to a texture slot.
+function ns.API.SelectBuffForTexture(buffInfo, textureNumber)
+  local db = ns.API.GetDB()
+  if not db or not buffInfo then return false end
+
+  textureNumber = textureNumber or db.selectedTexture or 1
+  local cfg = ns.API.GetTextureConfig(textureNumber)
+  if not cfg then return false end
+
+  cfg.tracking.spellID = buffInfo.spellID
+  cfg.tracking.buffName = buffInfo.buffName
+  cfg.tracking.iconTextureID = buffInfo.iconTextureID
+  cfg.tracking.cooldownID = buffInfo.cooldownID
+  cfg.tracking.slotNumber = buffInfo.slotNumber
+  cfg.tracking.enabled = true
+  ns.API.InvalidateActiveTextureCache()
+
+  if ns.Textures and ns.Textures.UpdateTexture then
+    ns.Textures.UpdateTexture(textureNumber)
+  end
+
+  return true
 end
 
 -- ===================================================================

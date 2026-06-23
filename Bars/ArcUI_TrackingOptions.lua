@@ -23,6 +23,7 @@ local selectedCatalogEntry = nil
 -- Track which bars are expanded (collapsed by default)
 local expandedBars = {}  -- expandedBars["buff_1"] = true means bar 1 is expanded
 local expandedResources = {}  -- expandedResources["resource_1"] = true means resource bar 1 is expanded
+local expandedTextures = {}  -- expandedTextures["tex_1"] = true means texture 1's setup is expanded
 
 -- ===================================================================
 -- SPEC TOGGLE HELPER
@@ -1638,7 +1639,7 @@ function ns.TrackingOptions.SelectBarForAppearance(barType, barNum)
   if barType == "resource" then
     LibStub("AceConfigDialog-3.0"):SelectGroup("ArcUI", "resources", "appearance")
   else
-    LibStub("AceConfigDialog-3.0"):SelectGroup("ArcUI", "bars", "appearance")
+    LibStub("AceConfigDialog-3.0"):SelectGroup("ArcUI", "auras", "appearance")
   end
 end
 
@@ -1682,6 +1683,280 @@ end
 -- ===================================================================
 -- BUFF/DEBUFF SETUP TABLE
 -- ===================================================================
+-- A compact "active texture" row for the shared Aura Catalog: name + Edit
+-- (jump to the Textures tab) + Delete. Textures are configured in the Textures
+-- editor, so this row stays minimal (unlike the inline bar editor).
+local function CreateActiveTextureEntry(num, orderBase)
+  local texKey = "tex_" .. num
+  local function texCfg() return ns.API.GetTextureConfig and ns.API.GetTextureConfig(num) end
+  local function refreshTex()
+    if ns.API.InvalidateActiveTextureCache then ns.API.InvalidateActiveTextureCache() end
+    if ns.Textures and ns.Textures.RefreshAll then ns.Textures.RefreshAll() end
+    LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+  end
+  local function collapsed() return not expandedTextures[texKey] end
+
+  local args = {
+    -- Collapsible header (same control the bar rows use)
+    header = {
+      type = "toggle",
+      name = function()
+        local cfg = texCfg()
+        local nm = (cfg and cfg.tracking and cfg.tracking.buffName) or "(Not configured)"
+        local icon = (cfg and cfg.tracking and cfg.tracking.iconTextureID) or 134400
+
+        -- Buff/Debuff type (textures track buff/debuff), same colors as bars
+        local trackType = (cfg and cfg.tracking and cfg.tracking.trackType) or "buff"
+        local typeLabel = (trackType == "debuff") and "|cffff6b6bDebuff|r" or "|cff00ff00Buff|r"
+
+        -- Textures are duration-driven (they drain with the aura)
+        local modeLabel = " |cffff9900[Duration]|r"
+
+        -- OK / FAIL / MISSING SETUP, mirroring the bar rows
+        local statusLabel = ""
+        local cooldownID = cfg and cfg.tracking and cfg.tracking.cooldownID
+        local spellID = cfg and cfg.tracking and cfg.tracking.spellID
+        local buffName = cfg and cfg.tracking and cfg.tracking.buffName
+        local hasAura = (spellID and spellID > 0) or (cooldownID and cooldownID > 0) or (buffName and buffName ~= "")
+        if not hasAura then
+          statusLabel = " |cffffff00[MISSING SETUP]|r"
+        elseif cooldownID and cooldownID > 0 and ns.API._FindCDMFrameForCooldownID then
+          local trackingOK = ns.API._FindCDMFrameForCooldownID(cooldownID) ~= nil
+          statusLabel = trackingOK and " |cff00ff00[OK]|r" or " |cffff0000[FAIL]|r"
+        else
+          statusLabel = " |cff00ff00[OK]|r"
+        end
+
+        -- Talent-hidden indicator
+        local talentLabel = ""
+        if cfg and cfg.behavior and cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+          if not AreTalentConditionsMet(cfg) then
+            talentLabel = " |cffff9900[Talent Hidden]|r"
+          end
+        end
+
+        return string.format("|T%d:16:16:0:0|t Texture %d: %s (%s)%s%s%s",
+          icon, num, nm, typeLabel, modeLabel, statusLabel, talentLabel)
+      end,
+      desc = "Click to expand/collapse. Set which specs and talents this texture shows for.",
+      dialogControl = "CollapsibleHeader",
+      get = function() return expandedTextures[texKey] end,
+      set = function(info, value) expandedTextures[texKey] = value end,
+      order = 0,
+      width = "full",
+    },
+
+    specsHeader = {
+      type = "description",
+      name = "|cffffd700Specs:|r |cff888888(which specs this texture shows on)|r",
+      order = 10,
+      width = "full",
+      fontSize = "medium",
+      hidden = collapsed,
+    },
+  }
+
+  -- Aura Type (buff/debuff) -- relocated here from the removed Textures > Trigger tab.
+  args.auraType = {
+    type = "select",
+    name = "Aura Type",
+    desc = "Track this aura as a Buff (on you) or a Debuff (on your target).",
+    values = { buff = "Buff", debuff = "Debuff" },
+    get = function()
+      local cfg = texCfg()
+      return (cfg and cfg.tracking and cfg.tracking.trackType) or "buff"
+    end,
+    set = function(_, v)
+      local cfg = texCfg()
+      if cfg then
+        cfg.tracking = cfg.tracking or {}
+        cfg.tracking.trackType = v
+        refreshTex()
+      end
+    end,
+    order = 5,
+    width = 1.0,
+    hidden = collapsed,
+  }
+
+  -- Per-spec toggles (mirrors the bar row)
+  for i = 1, 4 do
+    args["spec" .. i] = {
+      type = "toggle",
+      name = function()
+        local _, specName, _, specIcon = GetSpecializationInfo(i)
+        if specIcon and specName then
+          return string.format("|T%s:14:14:0:0|t %s", specIcon, specName)
+        end
+        return specName or ("Spec " .. i)
+      end,
+      desc = function()
+        local _, specName = GetSpecializationInfo(i)
+        return specName and ("Show for " .. specName) or ("Show for Spec " .. i)
+      end,
+      get = function()
+        local cfg = texCfg()
+        if not cfg or not cfg.behavior or not cfg.behavior.showOnSpecs then return true end
+        if #cfg.behavior.showOnSpecs == 0 then return true end
+        for _, spec in ipairs(cfg.behavior.showOnSpecs) do
+          if spec == i then return true end
+        end
+        return false
+      end,
+      set = function(info, value)
+        local cfg = texCfg()
+        if cfg then
+          if not cfg.behavior then cfg.behavior = {} end
+          if not cfg.behavior.showOnSpecs then cfg.behavior.showOnSpecs = {} end
+          ToggleSpecInList(cfg.behavior.showOnSpecs, i, value)
+          refreshTex()
+        end
+      end,
+      order = 10 + i * 0.1,
+      width = 0.9,
+      hidden = function()
+        if collapsed() then return true end
+        if i >= 3 and (GetNumSpecializations() or 0) < i then return true end
+        return false
+      end,
+    }
+  end
+
+  -- Talent conditions (mirrors the bar row)
+  args.talentCondHeader = {
+    type = "description",
+    name = "\n|cffffd700Talent Conditions:|r",
+    order = 20,
+    width = "full",
+    fontSize = "medium",
+    hidden = collapsed,
+  }
+  args.talentCondDesc = {
+    type = "description",
+    name = "|cff888888Only show this texture when specific talents are active. If no conditions are set, the texture shows whenever its aura is present.|r",
+    order = 20.1,
+    width = "full",
+    fontSize = "small",
+    hidden = collapsed,
+  }
+  args.talentCondSummary = {
+    type = "description",
+    name = function()
+      local cfg = texCfg()
+      if not cfg or not cfg.behavior then return "" end
+      if cfg.behavior.talentConditions and #cfg.behavior.talentConditions > 0 then
+        if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+          return ns.TalentPicker.GetConditionSummary(cfg.behavior.talentConditions, cfg.behavior.talentMatchMode)
+        end
+      end
+      return ""
+    end,
+    order = 20.2,
+    width = "full",
+    fontSize = "small",
+    hidden = function()
+      if collapsed() then return true end
+      local cfg = texCfg()
+      return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
+    end,
+  }
+  args.talentCondEdit = {
+    type = "execute",
+    name = "Edit Talent Conditions",
+    desc = "Open the talent picker to choose which talents must be active (or inactive) for this texture to show.",
+    order = 20.3,
+    width = 1.2,
+    func = function()
+      local cfg = texCfg()
+      local existingConditions = cfg and cfg.behavior and cfg.behavior.talentConditions
+      local matchMode = (cfg and cfg.behavior and cfg.behavior.talentMatchMode) or "all"
+      if ns.TalentPicker and ns.TalentPicker.OpenPicker then
+        ns.TalentPicker.OpenPicker(existingConditions, matchMode, function(conditions, newMatchMode)
+          local c = texCfg()
+          if c then
+            if not c.behavior then c.behavior = {} end
+            c.behavior.talentConditions = conditions
+            c.behavior.talentMatchMode = newMatchMode
+            refreshTex()
+          end
+        end)
+      else
+        print("|cff00ccffArc UI|r: Talent picker not available")
+      end
+    end,
+    hidden = collapsed,
+  }
+  args.talentCondClear = {
+    type = "execute",
+    name = "Clear",
+    desc = "Remove all talent conditions. The texture will show whenever its aura is present.",
+    order = 20.4,
+    width = 0.6,
+    func = function()
+      local cfg = texCfg()
+      if cfg and cfg.behavior then
+        cfg.behavior.talentConditions = nil
+        cfg.behavior.talentMatchMode = nil
+        refreshTex()
+      end
+    end,
+    hidden = function()
+      if collapsed() then return true end
+      local cfg = texCfg()
+      return not cfg or not cfg.behavior or not cfg.behavior.talentConditions or #cfg.behavior.talentConditions == 0
+    end,
+  }
+
+  -- Actions
+  args.actionSpacer = {
+    type = "description", name = "\n", order = 29.9, width = "full",
+    hidden = collapsed,
+  }
+  args.edit = {
+    type = "execute",
+    name = "Edit Texture",
+    desc = "Open this texture's full editor (appearance, position, duration, effects) in the Textures tab.",
+    func = function()
+      local db = ns.API.GetDB()
+      if db then db.selectedTexture = num end
+      if ns.Textures and ns.Textures.RefreshAll then ns.Textures.RefreshAll() end
+      local acd = LibStub("AceConfigDialog-3.0", true)
+      if acd and acd.SelectGroup then acd:SelectGroup("ArcUI", "auras", "textures") end
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+    order = 30,
+    width = 1.0,
+    hidden = collapsed,
+  }
+  args.delete = {
+    type = "execute",
+    name = "|cffff5555Delete|r",
+    desc = "Remove this texture.",
+    func = function()
+      local cfg = texCfg()
+      if cfg then cfg.tracking.enabled = false end
+      refreshTex()
+    end,
+    order = 31,
+    width = 0.7,
+    hidden = collapsed,
+  }
+
+  return {
+    type = "group",
+    name = "",
+    inline = true,
+    order = orderBase,
+    hidden = function()
+      local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+      if not db or not db.textures then return true end
+      local cfg = db.textures[num]
+      return not (cfg and cfg.tracking and cfg.tracking.enabled)
+    end,
+    args = args,
+  }
+end
+
 function ns.TrackingOptions.GetBuffDebuffSetupTable()
   local args = {
     -- ═══════════════════════════════════════════════════════════════════
@@ -1833,7 +2108,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           local availableText = ""
           if entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed then
             -- We can get stacks AND duration from any CDM source using auraInstanceID
-            availableText = "\n|cff00ff00Can create:|r Stack Bar or Duration Bar"
+            availableText = "\n|cff00ff00Can create:|r Stack Bar, Duration Bar, or Texture"
           end
           
           return string.format("|cffffd700Spell ID:|r %d    |cffffd700Cooldown ID:|r %d\n|cffffd700CDM Category:|r %s%s%s",
@@ -1943,13 +2218,53 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           return not entry or not (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed)
         end
       },
-      
+      createTextureBtn = {
+        type = "execute",
+        name = "Create Texture",
+        desc = "Create an Aura Texture for the selected aura. Configure its look in the Textures tab.",
+        func = function()
+          if not selectedCatalogEntry then return end
+          local entry = GetSelectedCatalogEntry()
+          if not entry then return end
+          if not (ns.API and ns.API.InitializeNewTexture and ns.API.SelectBuffForTexture) then return end
+          local num = ns.API.InitializeNewTexture()
+          if not num then
+            print("|cff00ccffArc UI|r: No free texture slots.")
+            return
+          end
+          ns.API.SelectBuffForTexture({
+            spellID = entry.spellID,
+            buffName = entry.name,
+            iconTextureID = entry.icon,
+            cooldownID = entry.cooldownID,
+            slotNumber = 0,
+            maxStacks = 10,
+          }, num)
+          local db = ns.API.GetDB and ns.API.GetDB()
+          if db then db.selectedTexture = num end
+          print(string.format("|cff00ccffArc UI|r: Created texture for |cffffd700%s|r - configure it in Buffs/Debuffs > Textures.", entry.name or "aura"))
+          if LibStub then
+            local acd = LibStub("AceConfigDialog-3.0", true)
+            if acd and acd.SelectGroup then acd:SelectGroup("ArcUI", "auras", "textures") end
+          end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 8.8,
+        width = 1.2,
+        hidden = function() return not selectedCatalogEntry end,
+        disabled = function()
+          if not selectedCatalogEntry then return true end
+          local entry = GetSelectedCatalogEntry()
+          return not entry or not entry.cooldownID
+        end
+      },
+
       -- ═══════════════════════════════════════════════════════════════════
       -- ACTIVE BARS SECTION
       -- ═══════════════════════════════════════════════════════════════════
       activeBarsHeader = {
         type = "header",
-        name = "Active Buff/Debuff Bars",
+        name = "Active Buff/Debuff Displays",
         order = 20
       },
       filterCurrentSpec = {
@@ -2007,28 +2322,40 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
       bar29 = CreateActiveBarEntry(29, 58, "bar", "Bar"),
       bar30 = CreateActiveBarEntry(30, 59, "bar", "Bar"),
       
-      noActiveBars = {
+      noActiveDisplays = {
         type = "description",
-        name = "|cff888888No active bars. Select an aura above to create one!|r",
+        name = "|cff888888No active displays yet. Select an aura above and create a Bar or a Texture.|r",
         fontSize = "medium",
-        order = 60,
+        order = 101,
         hidden = function()
           local db = ns.API and ns.API.GetDB and ns.API.GetDB()
-          if db and db.bars then
-            for i, cfg in pairs(db.bars) do
-              if ShouldShowBarWithType(cfg, "bar") then return true end
+          if db then
+            if db.bars then
+              for i, cfg in pairs(db.bars) do
+                if ShouldShowBarWithType(cfg, "bar") then return true end
+              end
+            end
+            if db.textures then
+              for i, cfg in pairs(db.textures) do
+                if cfg and cfg.tracking and cfg.tracking.enabled then return true end
+              end
             end
           end
           return false
         end
-      }
+      },
   }
   
   -- Add pre-created catalog icon entries (slots 1-50)
   for i = 1, MAX_CATALOG_ICONS do
     args["catalogIcon" .. i] = CreateCatalogIconEntry(i)
   end
-  
+
+  -- Active texture rows (slots 1-30) for the shared catalog.
+  for i = 1, 30 do
+    args["texture" .. i] = CreateActiveTextureEntry(i, 70 + i)
+  end
+
   return {
     type = "group",
     name = "Bars",

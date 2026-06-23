@@ -925,6 +925,7 @@ local DEFAULT_ICON_SETTINGS = {
   alpha = 1.0,
   keepBright = false,  -- Prevent all dimming/desaturation (icon stays full brightness always)
   keepBrightAllowDesat = false,  -- When keepBright is on, still allow desaturation (grayscale on cooldown)
+  forceHideIcon = false,  -- Hide the icon ART (texture) only — keeps stack/duration text + swipe/border. Cooldowns AND auras. Opt-in.
   customIconID = nil,  -- Custom icon override: spell ID or texture file ID (nil = use default CDM icon)
   shadowSize = 1.0,    -- Shadow size multiplier (1.0 = proportional to icon size)
   
@@ -1021,8 +1022,9 @@ local DEFAULT_ICON_SETTINGS = {
     glowParticles = 4,           -- AutoCast particles
     glowCombatOnly = false,      -- Only show glow in combat
     glowFrameStrata = nil,       -- nil = inherit parent strata, or "LOW"/"MEDIUM"/"HIGH"/"DIALOG"
+    desaturateWhenInactive = false,  -- COOLDOWN icons only: desaturate the icon while its tracked aura is NOT active (supersedes all other desat). Opt-in.
   },
-  
+
   -- Debuff Border (debuff type color indicator - magic=blue, curse=purple, etc.)
   debuffBorder = {
     enabled = false,  -- Show debuff type border (default hidden)
@@ -1089,8 +1091,23 @@ local DEFAULT_ICON_SETTINGS = {
     -- Free position (relative to icon center)
     freeX = 0,
     freeY = 0,
+    -- Threshold-colored stack count (secret-safe; colors the NUMBER only).
+    -- Each enabled band shows the same overlapped number via
+    -- GetAuraApplicationDisplayCount(min-only); the highest reached threshold's
+    -- color wins. See ArcUI_StackColor.lua. Fixed 6 slots = merge-safe (mirrors
+    -- durationColorCustom). Below the lowest enabled threshold the number is
+    -- hidden, so the lowest band's threshold also acts as the "show from" count.
+    thresholdColorEnabled = false,  -- OFF by default (opt-in)
+    thresholdBands = {
+      { enabled = true,  threshold = 1, color = {r = 1,   g = 1,   b = 1,   a = 1} },  -- white  1+
+      { enabled = true,  threshold = 3, color = {r = 0.3, g = 1,   b = 0.3, a = 1} },  -- green  3+
+      { enabled = true,  threshold = 6, color = {r = 1,   g = 0.3, b = 0.3, a = 1} },  -- red    6+
+      { enabled = false, threshold = 9, color = {r = 1,   g = 0.6, b = 0,   a = 1} },  -- orange 9+
+      { enabled = false, threshold = 12, color = {r = 0.6, g = 0.4, b = 1,   a = 1} }, -- purple 12+
+      { enabled = false, threshold = 15, color = {r = 0.3, g = 0.7, b = 1,   a = 1} }, -- blue   15+
+    },
   },
-  
+
   -- Cooldown Text (timer)
   cooldownText = {
     enabled = true,
@@ -2410,6 +2427,55 @@ end
 ns.CDMEnhance.ApplyBorderDesaturation = ApplyBorderDesaturation
 ns.CDMEnhance.ApplyBorderDesaturationFromDuration = ApplyBorderDesaturationFromDuration
 
+-- ═══════════════════════════════════════════════════════════════════
+-- FORCE HIDE: float the duration + stack text above a hidden icon frame.
+-- When the icon is force-hidden the FRAME renders at alpha 0 (kills art, swipe,
+-- flash, animation, border, shadow in one shot). These text widgets are told to
+-- ignore the parent alpha chain so they stay readable. Empty text renders nothing,
+-- so floating them unconditionally is safe (only shows when there's content).
+-- NOT applied while the whole group is hidden (visibility conditions) — there the
+-- text should disappear with the group. We deliberately do NOT float frame.Cooldown
+-- itself (only its countdown FontStrings) so the swipe stays hidden.
+-- ═══════════════════════════════════════════════════════════════════
+local function ApplyForceHideText(frame, hide)
+  if not frame then return end
+  local groupHidden = frame._arcGroupHidden
+  if not groupHidden then
+    local parent = frame:GetParent()
+    groupHidden = parent and parent._arcGroupHidden or false
+  end
+  local on = (hide == true) and not groupHidden
+  -- Toggle IgnoreParentAlpha ONLY — do NOT force SetAlpha. The widget's own alpha
+  -- (1 when its text feature is enabled, 0 when suppressed/disabled, e.g. a native
+  -- stack count hidden because threshold bands or single-stack replaced it) then
+  -- drives visibility, so we never re-show something that was deliberately hidden.
+  local function ipa(obj)
+    if obj and obj.SetIgnoreParentAlpha then
+      obj:SetIgnoreParentAlpha(on)
+    end
+  end
+  -- Duration countdown (native Cooldown FontStrings only — never the widget itself)
+  if frame.Cooldown then
+    local cd = frame.Cooldown
+    local fs = cd.GetCountdownFontString and cd:GetCountdownFontString()
+    ipa(fs)
+    for _, region in ipairs({cd:GetRegions()}) do
+      if region:IsObjectType("FontString") then ipa(region) end
+    end
+  end
+  ipa(frame._arcCooldownText)
+  -- Stack / charge text (native container + all ArcUI variants)
+  ipa(frame.ChargeCount or frame.Applications)
+  ipa(frame._arcChargeText)
+  ipa(frame._arcSingleStackContainer)
+  ipa(frame._arcStackBandContainer)
+  -- Edit / drag overlay ("DRAG" button) — keep it usable while the icon is
+  -- held at preview opacity in the options panel. (UpdateOverlayState still
+  -- governs whether it's shown at all, so this is a no-op outside edit mode.)
+  ipa(frame._arcOverlay)
+end
+ns.CDMEnhance.ApplyForceHideText = ApplyForceHideText
+
 -- ===================================================================
 -- APPLY ICON STYLING
 -- ===================================================================
@@ -2463,7 +2529,16 @@ ApplyIconStyle = function(frame, cdID)
       frame.IconMask = mask
     end
   end
-  
+
+  -- FORCE HIDE (Show toggle off): hide the WHOLE icon frame (art, swipe, flash,
+  -- animation, border, shadow) by forcing frame alpha to 0, and float only the
+  -- duration + stack text. Set the flag EARLY so the frame-alpha hook enforces 0
+  -- for any SetAlpha during the rest of ApplyIconStyle; the hide + text float
+  -- happen after the text overlays are built (post SetupCooldownText below).
+  local wasForceHidden = frame._arcForceHideActive == true
+  frame._arcForceHideActive = (cfg.forceHideIcon == true)
+  frame._arcWasForceHidden = wasForceHidden
+
   -- NOTE: CDMGroups controls all sizing - CDMEnhance does NOT call SetScale or SetSize
   local data = enhancedFrames[cdID]
   local vType = data and data.viewerType or "cooldown"
@@ -4288,7 +4363,25 @@ ApplyIconStyle = function(frame, cdID)
   -- COOLDOWN TEXT STYLING
   -- ═══════════════════════════════════════════════════════════════════
   SetupCooldownText(frame, cdID, cfg)
-  
+
+  -- ═══════════════════════════════════════════════════════════════════
+  -- FORCE HIDE: apply now that all text overlays exist. Hiding drops the frame
+  -- to alpha 0 (the alpha hook keeps it there over the state writers) and floats
+  -- the duration + stack text. Showing restores the text and lets the state
+  -- system re-apply the real alpha.
+  -- ═══════════════════════════════════════════════════════════════════
+  if frame._arcForceHideActive then
+    frame:SetAlpha(0)  -- alpha hook forces/holds 0 while _arcForceHideActive
+    ApplyForceHideText(frame, true)
+  elseif frame._arcWasForceHidden then
+    -- Just turned the icon back on: un-float the text and restore visibility.
+    ApplyForceHideText(frame, false)
+    frame._arcBypassFrameAlphaHook = true
+    frame:SetAlpha(frame._lastAppliedAlpha or 1)
+    frame._arcBypassFrameAlphaHook = false
+  end
+  frame._arcWasForceHidden = nil
+
   -- ═══════════════════════════════════════════════════════════════════
   -- PREVIEW TEXT (for editing when no active aura/cooldown)
   -- ═══════════════════════════════════════════════════════════════════
@@ -4491,8 +4584,12 @@ function SetupChargeText(frame, cdID, cfg)
   -- showSingleStack ON:  suppress native Applications, use our mirror (also shows "1")
   if frame.Applications then
     local appFrame = frame.Applications
-    if chargeCfg and chargeCfg.showSingleStack then
-      -- Suppress native Applications so only our mirror shows
+    -- Threshold-colored stack bands take over the stack display the same way the
+    -- single-stack mirror does: suppress native Applications, render our own.
+    local bandsOn = chargeCfg and chargeCfg.enabled ~= false and chargeCfg.thresholdColorEnabled
+                  and ns.StackColor and ns.StackColor.HasEnabledBands(chargeCfg)
+    if (chargeCfg and chargeCfg.showSingleStack) or bandsOn then
+      -- Suppress native Applications so only our mirror/bands show
       appFrame:Hide()
       appFrame:SetAlpha(0)
       if not appFrame._arcSingleStackSuppressHooked then
@@ -4503,7 +4600,7 @@ function SetupChargeText(frame, cdID, cfg)
           if not pf then return end
           local cdID2 = pf.cooldownID
           local cfg2 = cdID2 and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(cdID2)
-          if cfg2 and cfg2.chargeText and cfg2.chargeText.showSingleStack then
+          if cfg2 and cfg2.chargeText and (cfg2.chargeText.showSingleStack or (cfg2.chargeText.enabled ~= false and cfg2.chargeText.thresholdColorEnabled)) then
             self:Hide()
             self:SetAlpha(0)
           end
@@ -4542,9 +4639,24 @@ function SetupChargeText(frame, cdID, cfg)
         if not f._arcSingleStackText then return end
         local auraID = f.auraInstanceID
         local HasAuraInstanceID2 = ns.API and ns.API.HasAuraInstanceID
-        if not (HasAuraInstanceID2 and HasAuraInstanceID2(auraID)) then
+        local present = HasAuraInstanceID2 and HasAuraInstanceID2(auraID)
+        -- Re-read live cfg so a mode flip is honored on the next aura event.
+        -- (Cached merge -> cheap; this only fires on aura set/refresh events.)
+        local liveCfg = ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(f.cooldownID)
+        local cc = liveCfg and liveCfg.chargeText
+        local bandsActive = cc and cc.enabled ~= false and cc.thresholdColorEnabled
+                          and ns.StackColor and ns.StackColor.HasEnabledBands(cc)
+        if bandsActive then
+          -- Colored bands own the display; keep the single mirror empty.
           f._arcSingleStackShowing = false
           f._arcSingleStackText:SetText("")
+          ns.StackColor.UpdateBands(f)
+          return
+        end
+        if not present then
+          f._arcSingleStackShowing = false
+          f._arcSingleStackText:SetText("")
+          if ns.StackColor then ns.StackColor.UpdateBands(f) end
           return
         end
         local unit = f.auraDataUnit or "player"
@@ -4555,6 +4667,7 @@ function SetupChargeText(frame, cdID, cfg)
           f._arcSingleStackText:SetText("1")
         end
         f._arcSingleStackShowing = true
+        if ns.StackColor then ns.StackColor.UpdateBands(f) end
       end
       if not frame._arcSingleStackAuraHooked then
         frame._arcSingleStackAuraHooked = true
@@ -4562,7 +4675,7 @@ function SetupChargeText(frame, cdID, cfg)
         local function ShouldUpdateStack(self)
           local cdID2 = self.cooldownID
           local cfg2 = cdID2 and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(cdID2)
-          return cfg2 and cfg2.chargeText and cfg2.chargeText.showSingleStack
+          return cfg2 and cfg2.chargeText and (cfg2.chargeText.showSingleStack or (cfg2.chargeText.enabled ~= false and cfg2.chargeText.thresholdColorEnabled))
         end
 
         -- OnAuraInstanceInfoSet: canonical CDM hook, fires on aura set (~4x/session)
@@ -4600,6 +4713,7 @@ function SetupChargeText(frame, cdID, cfg)
               self._arcSingleStackShowing = false
               self._arcSingleStackText:SetText("")
             end
+            if ns.StackColor then ns.StackColor.UpdateBands(self) end
           end)
         end
 
@@ -4610,6 +4724,7 @@ function SetupChargeText(frame, cdID, cfg)
               self._arcSingleStackShowing = false
               self._arcSingleStackText:SetText("")
             end
+            if ns.StackColor then ns.StackColor.UpdateBands(self) end
           end)
         end
 
@@ -4630,11 +4745,20 @@ function SetupChargeText(frame, cdID, cfg)
           end)
         end
       end
+      -- Render colored bands when enabled; otherwise the single mirror.
+      if bandsOn then
+        ns.StackColor.ApplyBands(frame, chargeCfg)
+        fs:SetText("")
+        fs:Hide()
+      else
+        if ns.StackColor then ns.StackColor.ClearBands(frame) end
+        fs:Show()
+      end
       UpdateSingleStackText(frame)
-      fs:Show()
     else
-      -- showSingleStack OFF: hide mirror if it existed, restore Applications alpha,
+      -- showSingleStack OFF and bands OFF: hide mirror/bands, restore Applications alpha,
       -- then reposition the native Applications text using chargeText anchor settings
+      if ns.StackColor then ns.StackColor.ClearBands(frame) end
       if frame._arcSingleStackContainer then
         frame._arcSingleStackContainer:Hide()
         frame._arcSingleStackText:SetText("")
@@ -6821,8 +6945,27 @@ EnhanceFrame = function(frame, cdID, viewerType, viewerName)
       frame._arcFrameAlphaHooked = true
       
       hooksecurefunc(frame, "SetAlpha", function(self, alpha)
+        -- FORCE HIDE: overrides EVERY alpha writer (including our own bypassed
+        -- state writes) so the whole icon frame stays hidden. Runs BEFORE the
+        -- bypass check on purpose. Text floats separately via IgnoreParentAlpha.
+        -- While the options panel is open, hold the icon at PREVIEW opacity (not
+        -- 0) so it can be seen, selected and dragged (its edit overlay too).
+        if self._arcForceHideActive then
+          if self._arcBypassForceHideAlpha then return end
+          local target = 0
+          if ns.CDMEnhance.IsOptionsPanelOpen and ns.CDMEnhance.IsOptionsPanelOpen() then
+            target = 0.35
+          end
+          if alpha ~= target then
+            self._arcBypassForceHideAlpha = true
+            self:SetAlpha(target)
+            self._arcBypassForceHideAlpha = false
+          end
+          return
+        end
+
         if self._arcBypassFrameAlphaHook then return end
-        
+
         -- HIDDEN BY BAR: Core.lua is hiding this icon for a tracking bar
         if IsFrameHiddenByBar(self) then return end
         

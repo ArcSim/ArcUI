@@ -75,7 +75,7 @@ local RebuildUnifiedIconCache
 -- Define which fields belong to each section for per-icon indicator
 -- ===================================================================
 local SECTION_FIELDS = {
-  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "shadowSize", "keepBright", "keepBrightAllowDesat", "customIconID", "debuffBorder.enabled", "pandemicBorder.enabled" },
+  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "shadowSize", "keepBright", "keepBrightAllowDesat", "forceHideIcon", "customIconID", "debuffBorder.enabled", "pandemicBorder.enabled" },
   position = { "position" },
   -- Ready State / Aura Active - all actual stored fields
   activeState = { 
@@ -124,12 +124,12 @@ local SECTION_FIELDS = {
     "auraActiveState.glowFrameStrata",
     "auraActiveState.glowFrameLevel",
   },
-  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
+  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "auraActiveState.desaturateWhenInactive", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
   rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
   procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled", "procGlow.xOffset", "procGlow.yOffset", "procGlow.strata", "procGlow.frameLevel" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
   cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride" },
-  chargeText = { "chargeText.enabled", "chargeText.showSingleStack", "chargeText.hideAtZero", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY" },
+  chargeText = { "chargeText.enabled", "chargeText.showSingleStack", "chargeText.hideAtZero", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY", "chargeText.thresholdColorEnabled", "chargeText.thresholdBands" },
   cooldownText = { "cooldownText.enabled", "cooldownText.hideWhenHasCharges", "cooldownText.durationColor", "cooldownText.durationColorPreset", "cooldownText.durationColorCustom", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.decimalThreshold", "cooldownText.abbrevThreshold", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
@@ -2518,6 +2518,33 @@ local function GetAuraFilterValues()
   return values
 end
 
+-- Default stack-color bands (mirrors DEFAULT_ICON_SETTINGS.chargeText.thresholdBands).
+-- The band setters call EnsureStackBands to materialize the full fixed-slot array
+-- on first edit (merge-safe: fixed slots align by index across DEFAULT/global/perIcon,
+-- same pattern as cooldownText.durationColorCustom).
+local STACK_BAND_DEFAULTS = {
+  { enabled = true,  threshold = 1,  color = {r = 1,   g = 1,   b = 1,   a = 1} },
+  { enabled = true,  threshold = 3,  color = {r = 0.3, g = 1,   b = 0.3, a = 1} },
+  { enabled = true,  threshold = 6,  color = {r = 1,   g = 0.3, b = 0.3, a = 1} },
+  { enabled = false, threshold = 9,  color = {r = 1,   g = 0.6, b = 0,   a = 1} },
+  { enabled = false, threshold = 12, color = {r = 0.6, g = 0.4, b = 1,   a = 1} },
+  { enabled = false, threshold = 15, color = {r = 0.3, g = 0.7, b = 1,   a = 1} },
+}
+
+local function EnsureStackBands(c)
+  if not c.chargeText then c.chargeText = {} end
+  if not c.chargeText.thresholdBands then
+    local def = {}
+    for i = 1, #STACK_BAND_DEFAULTS do
+      local b = STACK_BAND_DEFAULTS[i]
+      def[i] = { enabled = b.enabled, threshold = b.threshold,
+                 color = { r = b.color.r, g = b.color.g, b = b.color.b, a = b.color.a } }
+    end
+    c.chargeText.thresholdBands = def
+  end
+  return c.chargeText.thresholdBands
+end
+
 function ns.GetCDMAuraIconsOptionsTable()
   local args = {
     desc = {
@@ -3118,13 +3145,6 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 106, width = 0.65, hidden = HideAuraIconAppearance,
       disabled = IsMasqueActive,
     },
-    alpha = {
-      type = "range", name = "Opacity", min = 0, max = 1.0, step = 0.05,
-      desc = "Icon visibility (0 = hidden, 1 = fully visible)",
-      get = function() local c = GetAuraCfg(); return c and c.alpha or 1.0 end,
-      set = function(_, v) ApplyAuraSetting(function(c) c.alpha = v end) end,
-      order = 107, width = 0.65, hidden = HideAuraIconAppearance,
-    },
     shadowSize = {
       type = "range", name = "Shadow Size",
       desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
@@ -3167,6 +3187,20 @@ function ns.GetCDMAuraIconsOptionsTable()
         local c = GetAuraCfg()
         return not (c and c.keepBright)
       end,
+    },
+    showIcon = {
+      type = "toggle", name = "Show Icon",
+      desc = "Show the icon. Turn OFF to hide the whole icon (artwork, cooldown swipe and flash) and keep only the stack and duration text visible.",
+      get = function()
+        return GetAuraBoolSetting(function(c) return not c.forceHideIcon end, function() local c = GetAuraCfg(); return not (c and c.forceHideIcon) end)
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if v then c.forceHideIcon = nil else c.forceHideIcon = true end end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("aura")
+        end
+      end,
+      order = 100.05, width = 0.7, hidden = HideAuraIconAppearance,
     },
     customIconID = {
       type = "input",
@@ -5364,10 +5398,161 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 143, width = 0.55, hidden = function() return HideAuraChargeText() or (GetAuraCfg() and GetAuraCfg().chargeText and GetAuraCfg().chargeText.mode == "free") end,
     },
     chargeFreeHint = {
-      type = "description", 
+      type = "description",
       name = "|cff00ff00Text Drag Mode enabled.|r |cff888888Drag the charge text in-game to position it.|r",
-      order = 144, width = "full", 
+      order = 144, width = "full",
       hidden = function() return HideAuraChargeText() or not (GetAuraCfg() and GetAuraCfg().chargeText and GetAuraCfg().chargeText.mode == "free") end,
+    },
+
+    -- ── Threshold-colored stack count (secret-safe, colors the number only) ──
+    stackColorHeader = {
+      type = "description", name = "\n|cffffd700Stack Threshold Colors|r", order = 144.5, width = "full",
+      hidden = HideAuraChargeText,
+    },
+    stackColorEnable = {
+      type = "toggle", name = "Color by Stack Count",
+      desc = "Color the stack number by how many stacks are present. Each enabled band colors the number once the stack count reaches its Min Stacks; the highest band reached wins. Below the lowest enabled band the number is hidden.\n\nWorks in instances / Mythic+ where the stack count is a secret value (it recolors the number text only, never the icon image).",
+      get = function() return GetAuraBoolSetting(function(c) return c and c.chargeText and c.chargeText.thresholdColorEnabled == true end, function() local c = GetAuraCfg(); return c and c.chargeText and c.chargeText.thresholdColorEnabled == true end) end,
+      set = function(_, v) ApplyAuraSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.thresholdColorEnabled = v end) end,
+      order = 144.6, width = 1.4, hidden = HideAuraChargeText,
+    },
+    stackColorHint = {
+      type = "description",
+      name = "|cff888888Uses the font, size, outline, shadow and position from the settings above. Toggle each band, set its Min Stacks, and pick a color.|r",
+      order = 144.7, width = "full",
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    -- Band 1
+    scb1Enable = {
+      type = "toggle", name = "Band 1", desc = "Enable color band 1.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[1] and e[1].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].enabled = v end) end,
+      order = 145.11, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb1Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[1] and e[1].threshold or 1 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].threshold = v end) end,
+      order = 145.12, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
+    },
+    scb1Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end return 1, 1, 1, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.13, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
+    },
+    -- Band 2
+    scb2Enable = {
+      type = "toggle", name = "Band 2", desc = "Enable color band 2.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[2] and e[2].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].enabled = v end) end,
+      order = 145.21, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb2Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[2] and e[2].threshold or 3 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].threshold = v end) end,
+      order = 145.22, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
+    },
+    scb2Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[2] and e[2].color; if col then return col.r or 0.3, col.g or 1, col.b or 0.3, col.a or 1 end return 0.3, 1, 0.3, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.23, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
+    },
+    -- Band 3
+    scb3Enable = {
+      type = "toggle", name = "Band 3", desc = "Enable color band 3.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[3] and e[3].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].enabled = v end) end,
+      order = 145.31, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb3Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[3] and e[3].threshold or 6 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].threshold = v end) end,
+      order = 145.32, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
+    },
+    scb3Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 0.3, col.b or 0.3, col.a or 1 end return 1, 0.3, 0.3, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.33, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
+    },
+    -- Band 4
+    scb4Enable = {
+      type = "toggle", name = "Band 4", desc = "Enable color band 4.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[4] and e[4].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].enabled = v end) end,
+      order = 145.41, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb4Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[4] and e[4].threshold or 9 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].threshold = v end) end,
+      order = 145.42, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
+    },
+    scb4Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[4] and e[4].color; if col then return col.r or 1, col.g or 0.6, col.b or 0, col.a or 1 end return 1, 0.6, 0, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.43, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
+    },
+    -- Band 5
+    scb5Enable = {
+      type = "toggle", name = "Band 5", desc = "Enable color band 5.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[5] and e[5].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].enabled = v end) end,
+      order = 145.51, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb5Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[5] and e[5].threshold or 12 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].threshold = v end) end,
+      order = 145.52, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
+    },
+    scb5Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[5] and e[5].color; if col then return col.r or 0.6, col.g or 0.4, col.b or 1, col.a or 1 end return 0.6, 0.4, 1, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.53, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
+    },
+    -- Band 6
+    scb6Enable = {
+      type = "toggle", name = "Band 6", desc = "Enable color band 6.",
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[6] and e[6].enabled or false end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].enabled = v end) end,
+      order = 145.61, width = 0.6,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    scb6Threshold = {
+      type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[6] and e[6].threshold or 15 end,
+      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].threshold = v end) end,
+      order = 145.62, width = 1.0,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
+    },
+    scb6Color = {
+      type = "color", name = "Color", hasAlpha = true,
+      get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[6] and e[6].color; if col then return col.r or 0.3, col.g or 0.7, col.b or 1, col.a or 1 end return 0.3, 0.7, 1, 1 end,
+      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.63, width = 0.7,
+      hidden = function() if HideAuraChargeText() then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
     },
     resetChargeText = {
       type = "execute",
@@ -6448,13 +6633,6 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 106, width = 0.65, hidden = HideCooldownIconAppearance,
       disabled = IsMasqueActive,
     },
-    alpha = {
-      type = "range", name = "Opacity", min = 0, max = 1.0, step = 0.05,
-      desc = "Icon visibility (0 = hidden, 1 = fully visible)",
-      get = function() local c = GetCooldownCfg(); return c and c.alpha or 1.0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) c.alpha = v end) end,
-      order = 107, width = 0.65, hidden = HideCooldownIconAppearance,
-    },
     shadowSize = {
       type = "range", name = "Shadow Size",
       desc = "Adjust the size of the CDM shadow overlay. 1.0 = proportional to icon size.",
@@ -6497,6 +6675,20 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         return not (c and c.keepBright)
       end,
+    },
+    showIcon = {
+      type = "toggle", name = "Show Icon",
+      desc = "Show the icon. Turn OFF to hide the whole icon (artwork, cooldown swipe and flash) and keep only the charge and duration text visible.",
+      get = function()
+        return GetCooldownBoolSetting(function(c) return not c.forceHideIcon end, function() local c = GetCooldownCfg(); return not (c and c.forceHideIcon) end)
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if v then c.forceHideIcon = nil else c.forceHideIcon = true end end)
+        if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
+          ns.CDMEnhance.RefreshIconType("cooldown")
+        end
+      end,
+      order = 100.05, width = 0.7, hidden = HideCooldownIconAppearance,
     },
     customIconID = {
       type = "input",
@@ -7887,6 +8079,26 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       order = 107.9705, width = 1.3,
       hidden = HideCooldownAuraActiveState,
+    },
+    auraActiveStateDesatInactive = {
+      type = "toggle", name = "Desaturate When Aura Inactive",
+      desc = "Desaturate (grayscale) this cooldown icon whenever its tracked buff/aura is NOT active on you. Supersedes other desaturation so it always wins. A clear at-a-glance signal that the buff has dropped.",
+      get = function()
+        return GetAuraActiveStateBoolSetting(
+          function(c) return c and c.auraActiveState and c.auraActiveState.desaturateWhenInactive end,
+          function()
+            local c = GetAuraActiveStateCfg()
+            return c and c.auraActiveState and c.auraActiveState.desaturateWhenInactive or false
+          end
+        )
+      end,
+      set = function(_, v)
+        ApplyCooldownAuraActiveGlowSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.desaturateWhenInactive = v
+        end)
+      end,
+      order = 107.9706, width = 1.5, hidden = HideCooldownAuraActiveState,
     },
     auraActiveStateGlowPreview = {
       type = "toggle",
