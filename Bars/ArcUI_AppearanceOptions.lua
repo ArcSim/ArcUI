@@ -10101,6 +10101,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = "full",
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or (IsResourceBar() and not IsMaelstromIconsBar()) end
       },
+      -- ---- Enable ----
       showDuration = {
         type = "toggle",
         name = "Show Duration",
@@ -10116,8 +10117,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.1,
-        width = 1.1,
+        order = 76.10,
+        width = 1.0,
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or (IsResourceBar() and not IsMaelstromIconsBar()) or collapsedSections.durationText end
       },
       showZeroWhenReady = {
@@ -10135,8 +10136,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.15,
-        width = 1.4,
+        order = 76.11,
+        width = 1.6,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10146,34 +10147,15 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showDuration)
         end
       },
-      durationColor = {
-        type = "color",
-        name = "Color",
-        hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.durationColor then
-            local c = cfg.display.durationColor
-            return c.r, c.g, c.b, c.a or 1
-          end
-          return 1, 1, 1, 1
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.durationColor = {r=r, g=g, b=b, a=a}
-            UpdateBar()
-          end
-        end,
-        order = 76.2,
-        width = 0.45,
+      durTextEnableBreak = { type = "description", name = "", width = "full", order = 76.12,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showDuration)
-        end
-      },
+        end },
+
+      -- ---- Text style: glyph (font / size / outline) then look (color / shadow / decimals) ----
       durationFont = {
         type = "select",
         dialogControl = "LSM30_Font",
@@ -10190,8 +10172,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.25,
-        width = 0.8,
+        order = 76.20,
+        width = 1.3,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10214,8 +10196,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.3,
-        width = 0.25,
+        order = 76.21,
+        width = 0.5,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10238,8 +10220,43 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.31,
-        width = 0.6,
+        order = 76.22,
+        width = 0.8,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end
+      },
+      durTextStyleBreak1 = { type = "description", name = "", width = "full", order = 76.23,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end },
+      durationColor = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display.durationColor then
+            local c = cfg.display.durationColor
+            return c.r, c.g, c.b, c.a or 1
+          end
+          return 1, 1, 1, 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.durationColor = {r=r, g=g, b=b, a=a}
+            UpdateBar()
+          end
+        end,
+        order = 76.24,
+        width = 0.7,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10261,8 +10278,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.32,
-        width = 0.6,
+        order = 76.25,
+        width = 0.7,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10291,8 +10308,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.35,
-        width = 0.8,
+        order = 76.26,
+        width = 1.0,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if IsResourceBar() and not IsMaelstromIconsBar() then return true end
@@ -10301,6 +10318,15 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showDuration)
         end
       },
+      durTextStyleBreak2 = { type = "description", name = "", width = "full", order = 76.27,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end },
+
+      -- ---- Position & layering ----
       durationAnchor = {
         type = "select",
         name = "Anchor",
@@ -10349,8 +10375,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.4,
-        width = 1.4,
+        order = 76.30,
+        width = 1.5,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if (IsResourceBar() and not IsMaelstromIconsBar()) or IsChargeBar() then return true end  -- Hide for resource/charge bars only
@@ -10373,8 +10399,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.5,
-        width = 0.35,
+        order = 76.31,
+        width = 0.5,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if (IsResourceBar() and not IsMaelstromIconsBar()) or IsChargeBar() then return true end  -- Hide for resource/charge bars only
@@ -10397,8 +10423,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.6,
-        width = 0.35,
+        order = 76.32,
+        width = 0.5,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           if (IsResourceBar() and not IsMaelstromIconsBar()) or IsChargeBar() then return true end  -- Hide for resource/charge bars only
@@ -10406,7 +10432,252 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showDuration)
         end
       },
-      
+
+      durTextPosBreak = { type = "description", name = "", width = "full", order = 76.36,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end },
+
+      -- ============================================================
+      -- CONDITIONAL COLOR -- recolor the countdown TEXT by seconds remaining,
+      -- driven by the game (no per-frame updates), independent of the bar fill.
+      -- One band per row so the Below / value / Color columns line up.
+      -- ============================================================
+      durationCondColorHeader = {
+        type = "header", name = "Conditional Color", order = 76.40,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end,
+      },
+      durationTextColorEnabled = {
+        type = "toggle",
+        name = "Color by Remaining Time",
+        desc = "Recolor the duration text as it runs down, using the seconds thresholds below. Above the highest threshold the Color above shows. Driven by the game with no per-frame updates.",
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.durationTextColorEnabled end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then cfg.display.durationTextColorEnabled = value; UpdateBar() end
+        end,
+        order = 76.41, width = 2.0,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration)
+        end,
+      },
+      durationCondColorHint = {
+        type = "description",
+        name = "Recolor the countdown when fewer than this many seconds remain. The lowest value reached wins.",
+        fontSize = "medium",
+        order = 76.42,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+      },
+
+      durationTextThreshold2Enable = {
+        type = "toggle", name = "Below", desc = "Enable this threshold band.",
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.durationTextThreshold2Enabled end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold2Enabled = value; UpdateBar() end end,
+        order = 76.43, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+      },
+      durationTextThreshold2Value = {
+        type = "input", dialogControl = "ArcUI_EditBox", name = "",
+        desc = "Recolor when fewer than this many seconds remain.",
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold2Value then return tostring(cfg.display.durationTextThreshold2Value) end return "75" end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold2Value = tonumber(value) or 75; UpdateBar() end end,
+        order = 76.431, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold2Enabled) end,
+      },
+      durationTextThreshold2Color = {
+        type = "color", name = "Color", hasAlpha = true,
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold2Color then local c = cfg.display.durationTextThreshold2Color; return c.r, c.g, c.b, c.a or 1 end return 0.8, 0.8, 0, 1 end,
+        set = function(info, r, g, b, a) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold2Color = {r=r, g=g, b=b, a=a}; UpdateBar() end end,
+        order = 76.432, width = 0.8,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold2Enabled) end,
+      },
+      durationTextBand2Break = { type = "description", name = "", width = "full", order = 76.433,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end },
+
+      durationTextThreshold3Enable = {
+        type = "toggle", name = "Below", desc = "Enable this threshold band.",
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.durationTextThreshold3Enabled end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold3Enabled = value; UpdateBar() end end,
+        order = 76.44, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+      },
+      durationTextThreshold3Value = {
+        type = "input", dialogControl = "ArcUI_EditBox", name = "",
+        desc = "Recolor when fewer than this many seconds remain.",
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold3Value then return tostring(cfg.display.durationTextThreshold3Value) end return "50" end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold3Value = tonumber(value) or 50; UpdateBar() end end,
+        order = 76.441, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold3Enabled) end,
+      },
+      durationTextThreshold3Color = {
+        type = "color", name = "Color", hasAlpha = true,
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold3Color then local c = cfg.display.durationTextThreshold3Color; return c.r, c.g, c.b, c.a or 1 end return 1, 0.5, 0, 1 end,
+        set = function(info, r, g, b, a) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold3Color = {r=r, g=g, b=b, a=a}; UpdateBar() end end,
+        order = 76.442, width = 0.8,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold3Enabled) end,
+      },
+      durationTextBand3Break = { type = "description", name = "", width = "full", order = 76.443,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end },
+
+      durationTextThreshold4Enable = {
+        type = "toggle", name = "Below", desc = "Enable this threshold band.",
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.durationTextThreshold4Enabled end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold4Enabled = value; UpdateBar() end end,
+        order = 76.45, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+      },
+      durationTextThreshold4Value = {
+        type = "input", dialogControl = "ArcUI_EditBox", name = "",
+        desc = "Recolor when fewer than this many seconds remain.",
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold4Value then return tostring(cfg.display.durationTextThreshold4Value) end return "25" end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold4Value = tonumber(value) or 25; UpdateBar() end end,
+        order = 76.451, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold4Enabled) end,
+      },
+      durationTextThreshold4Color = {
+        type = "color", name = "Color", hasAlpha = true,
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold4Color then local c = cfg.display.durationTextThreshold4Color; return c.r, c.g, c.b, c.a or 1 end return 1, 0.3, 0, 1 end,
+        set = function(info, r, g, b, a) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold4Color = {r=r, g=g, b=b, a=a}; UpdateBar() end end,
+        order = 76.452, width = 0.8,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold4Enabled) end,
+      },
+      durationTextBand4Break = { type = "description", name = "", width = "full", order = 76.453,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end },
+
+      durationTextThreshold5Enable = {
+        type = "toggle", name = "Below", desc = "Enable this threshold band (critical).",
+        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.durationTextThreshold5Enabled end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold5Enabled = value; UpdateBar() end end,
+        order = 76.46, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+      },
+      durationTextThreshold5Value = {
+        type = "input", dialogControl = "ArcUI_EditBox", name = "",
+        desc = "Recolor when fewer than this many seconds remain (critical).",
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold5Value then return tostring(cfg.display.durationTextThreshold5Value) end return "10" end,
+        set = function(info, value) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold5Value = tonumber(value) or 10; UpdateBar() end end,
+        order = 76.461, width = 0.5,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold5Enabled) end,
+      },
+      durationTextThreshold5Color = {
+        type = "color", name = "Color", hasAlpha = true,
+        get = function() local cfg = GetSelectedConfig(); if cfg and cfg.display.durationTextThreshold5Color then local c = cfg.display.durationTextThreshold5Color; return c.r, c.g, c.b, c.a or 1 end return 1, 0, 0, 1 end,
+        set = function(info, r, g, b, a) local cfg = GetSelectedConfig(); if cfg then cfg.display.durationTextThreshold5Color = {r=r, g=g, b=b, a=a}; UpdateBar() end end,
+        order = 76.462, width = 0.8,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          if IsResourceBar() and not IsMaelstromIconsBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.showDuration and cfg.display.durationTextColorEnabled)
+        end,
+        disabled = function() local cfg = GetSelectedConfig(); return not (cfg and cfg.display.durationTextThreshold5Enabled) end,
+      },
+
+      -- ============================================================
+      -- CHARGE TIMER TEXT (charge bars only) -- the recharge countdown's own
+      -- position; Free allows dragging, Dynamic centers on the recharging slot.
+      -- ============================================================
+      chargeTimerHeader = {
+        type = "header", name = "Charge Timer Text", order = 76.50,
+        hidden = function()
+          if IsIconMode() or collapsedSections.durationText then return true end
+          local cfg = GetSelectedConfig()
+          return not IsChargeBar() or not (cfg and cfg.display.showDuration)
+        end,
+      },
       -- Charge bar specific: Timer text anchor
       timerTextAnchor = {
         type = "select",
@@ -10543,8 +10814,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             RefreshBar()
           end
         end,
-        order = 76.72,
-        width = 0.9,
+        order = 76.34,
+        width = 1.0,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -10573,8 +10844,8 @@ function ns.AppearanceOptions.GetOptionsTable()
             end
           end
         end,
-        order = 76.73,
-        width = 0.35,
+        order = 76.35,
+        width = 0.5,
         hidden = function()
           if IsIconMode() or collapsedSections.durationText then return true end
           local cfg = GetSelectedConfig()
@@ -11120,7 +11391,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function()
           if IsIconMode() or collapsedSections.nameText then return true end
           local cfg = GetSelectedConfig()
-          local showForBarType = IsChargeBar() or IsTimerBar() or IsCooldownDurationBar()
+          local showForBarType = IsDurationBar() or IsChargeBar() or IsTimerBar() or IsCooldownDurationBar()
           return not showForBarType or not (cfg and cfg.display.showName)
         end
       },
@@ -11147,7 +11418,7 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function()
           if IsIconMode() or collapsedSections.nameText then return true end
           local cfg = GetSelectedConfig()
-          local showForBarType = IsChargeBar() or IsTimerBar() or IsCooldownDurationBar()
+          local showForBarType = IsDurationBar() or IsChargeBar() or IsTimerBar() or IsCooldownDurationBar()
           return not showForBarType or not (cfg and cfg.display.showName)
         end
       },

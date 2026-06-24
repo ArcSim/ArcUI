@@ -2261,7 +2261,7 @@ local function CreateTimerEntry(timerID, orderBase)
             ns.AppearanceOptions.SetSelectedBar("timer", timerID)
           end
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
-          LibStub("AceConfigDialog-3.0"):SelectGroup("ArcUI", "bars", "appearance")
+          LibStub("AceConfigDialog-3.0"):SelectGroup("ArcUI", "cooldowns", "appearance")
         end,
         order = 12.5,
         width = 0.85,

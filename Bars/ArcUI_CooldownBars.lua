@@ -1253,6 +1253,30 @@ ns.CooldownBars.chargeBars = {}    -- Charge bars
 ns.CooldownBars.resourceBars = {}  -- Resource bars
 ns.CooldownBars.timerBars = {}     -- Timer bars
 
+-- Cooldown bar frames are click-through during normal play and only become
+-- mouse-interactive (draggable) while the options panel is open. Called on
+-- panel open/close; respects each bar's movable flag (locked bars stay
+-- click-through). The per-frame creation/apply paths also seed EnableMouse
+-- from ns._arcUIOptionsOpen so new bars start correct.
+function ns.CooldownBars.RefreshMouseInteractivity()
+  local open = (ns._arcUIOptionsOpen == true)
+  local function apply(tbl)
+    if type(tbl) ~= "table" then return end
+    for _, barData in pairs(tbl) do
+      local f = barData and barData.frame
+      if f and f.EnableMouse then
+        -- Always interactive while the panel is open (so right-click opens its
+        -- options, even for locked bars); fully click-through when closed.
+        f:EnableMouse(open)
+      end
+    end
+  end
+  apply(ns.CooldownBars.bars)
+  apply(ns.CooldownBars.chargeBars)
+  apply(ns.CooldownBars.resourceBars)
+  apply(ns.CooldownBars.timerBars)
+end
+
 -- Default per-slot colors (shared constant)
 local SLOT_DEFAULT_COLORS = {
   [1] = {r = 0.8, g = 0.2, b = 0.2, a = 1},  -- Red
@@ -1655,7 +1679,7 @@ local function CreateCooldownBar(index)
   })
   frame:SetBackdropColor(0, 0, 0, 0.8)
   frame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
-  frame:EnableMouse(true)
+  frame:EnableMouse(ns._arcUIOptionsOpen == true)  -- click-through unless options panel open
   frame:SetMovable(true)
   frame:RegisterForDrag("LeftButton")
   
@@ -1878,7 +1902,7 @@ local function CreateChargeBar(index)
   })
   frame:SetBackdropColor(0, 0, 0, 0.7)
   frame:SetBackdropBorderColor(0.8, 0.6, 0.2, 1)  -- Gold border
-  frame:EnableMouse(true)
+  frame:EnableMouse(ns._arcUIOptionsOpen == true)  -- click-through unless options panel open
   frame:SetMovable(true)
   frame:RegisterForDrag("LeftButton")
   
@@ -2403,7 +2427,7 @@ local function CreateResourceBar(index)
   })
   frame:SetBackdropColor(0.05, 0.05, 0.05, 0.9)
   frame:SetBackdropBorderColor(0.6, 0.2, 0.6, 1)
-  frame:EnableMouse(true)
+  frame:EnableMouse(ns._arcUIOptionsOpen == true)  -- click-through unless options panel open
   frame:SetMovable(true)
   frame:RegisterForDrag("LeftButton")
   frame:SetScript("OnDragStart", frame.StartMoving)
@@ -5148,9 +5172,10 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
     )
   end
   
-  -- Movable
-  frame:EnableMouse(true)
+  -- Mouse on while the options panel is open (drag if movable, right-click for
+  -- options); fully click-through when closed.
   frame:SetMovable(display.barMovable ~= false)
+  frame:EnableMouse(ns._arcUIOptionsOpen == true)
   if display.barMovable ~= false then
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self)
@@ -6607,7 +6632,7 @@ function ns.CooldownBars.OpenOptionsForBar(barType, spellID)
   AceConfigRegistry:NotifyChange("ArcUI")
   
   -- Select the appearance tab (now under bars)
-  AceConfigDialog:SelectGroup("ArcUI", "bars", "appearance")
+  AceConfigDialog:SelectGroup("ArcUI", "cooldowns", "appearance")
   
   if ns.devMode then
     print(string.format("|cff00FFFF[ArcUI Debug]|r CooldownBars.OpenOptionsForBar: %s %d", barType, spellID))
@@ -7085,7 +7110,7 @@ local function CreateTimerBar(index)
   })
   frame:SetBackdropColor(0, 0, 0, 0.8)
   frame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
-  frame:EnableMouse(true)
+  frame:EnableMouse(ns._arcUIOptionsOpen == true)  -- click-through unless options panel open
   frame:SetMovable(true)
   frame:RegisterForDrag("LeftButton")
   

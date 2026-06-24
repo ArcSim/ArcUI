@@ -29,6 +29,40 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.7.5",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Aura Textures", desc = "A new Buffs/Debuffs display type. Place any image on screen that turns on when a buff or debuff is active and off when it's gone. Pick from a built-in art gallery or your own file, drag and resize it in place, and optionally make it drain like a bar as the aura runs down, pulse, fade as it expires, or show a built-in countdown, with per-spec/talent and Hide When conditions." },
+          { title = "Duration Text Threshold Colors", desc = "Aura bars and Aura Textures can recolor their remaining-time countdown through seconds-based thresholds, so the number changes color as the aura nears expiry." },
+          { title = "Stack Threshold Colors", desc = "Color a tracked buff's stack number by how many stacks are up, with up to six adjustable count-and-color bands, working even in Mythic+ and instances." },
+          { title = "Show Icon Toggle", desc = "A new per-icon switch hides the icon art, swipe and flash while keeping just the stack and duration text, for clean text-only trackers." },
+          { title = "Desaturate When Aura Inactive", desc = "A new per-cooldown-icon option grays out the icon whenever its tracked buff drops, for an at-a-glance signal that the buff is down." },
+          { title = "Kick Assist Smart Open", desc = "An opt-in mode that, after a ready check, briefly watches party chat and only opens the marker picker if someone else calls out your marker, so you only re-pick when there's an actual clash." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Reorganized Options Menu", desc = "Settings are regrouped for clarity, with a Buffs/Debuffs section gathering the aura Catalog, Textures and Appearance, and a dedicated Cooldowns section gathering Cooldown Bars, Custom Bars and Cooldown Reminder." },
+          { title = "Bars Stay Out of the Way", desc = "Cooldown, charge, resource, custom and timer bars are now click-through during normal play and only become draggable while the options panel is open, so they no longer intercept clicks in combat." },
+          { title = "Bar Name Text Fine-Tuning", desc = "Buff and debuff bars now expose X and Y offset on their name text, so you can nudge it after choosing a left, center or right position." },
+          { title = "Cooldown Display Stability", desc = "Further back-end hardening of the cooldown icon display to reduce the chance of it breaking partway through Mythic+ or other instanced content." },
+          { title = "Kick Marker Stays on Your Focus", desc = "Your interrupt marker is always placed on your focus and stays there, so re-pressing your kick key never moves it onto your current target." },
+          { title = "Account-Wide Kick Assist Toggle", desc = "Turning Kick Assist on or off now applies to all your characters, with your existing setting carried over automatically." },
+          { title = "Clearer Marker Macro Wording", desc = "Macro templates and the editor use a clearer marker placeholder and a renamed Add / Sync Marker Line button; older macros keep working." },
+          { title = "Clearer Dynamic Cooldowns Help", desc = "The Dynamic Cooldowns option now explains that an icon only collapses out of the row when its alpha is set to 0, and points you to the exact setting." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Bar Text Alignment", desc = "Left- and right-aligned bar name and duration text now pin their first character to the chosen edge instead of centering on it, so long names read correctly and no longer drift." },
+          { title = "Resource Text Color in Instances", desc = "Fixed resource bar value text that could break its threshold coloring inside dungeons, raids and PvP." },
+          { title = "Self-Buff Icons Display Correctly", desc = "Cooldown icons, custom labels and glows that track a personal self-buff (like Voidfall) now correctly recognize the buff as active instead of treating it as missing." },
+        },
+      },
+    },
+  },
+  {
     version = "3.7.4",
     sections = {
       {
@@ -130,24 +164,20 @@ local function GetBaseVersion()
   return (GetCurrentVersion():gsub("%.%a+$", ""))
 end
 
--- Build the full coloured, scrollable text body from the versions table.
-local function BuildBodyText()
+-- Build the coloured body text for ONE version (its sections + items only). The
+-- version number lives on the collapsible header row, not in the body.
+local function BuildVersionBody(ver)
   local lines = {}
-  for _, ver in ipairs(CL.versions) do
-    lines[#lines + 1] = string.format("|cffffd100Version %s|r", ver.version)
-    lines[#lines + 1] = " "
-    for _, section in ipairs(ver.sections or {}) do
-      lines[#lines + 1] = string.format("|c%s%s|r", section.color or C_TITLE, section.header or "")
-      for _, item in ipairs(section.items or {}) do
-        if item.desc and item.desc ~= "" then
-          lines[#lines + 1] = string.format("  |c%s>|r |c%s%s|r  |c%s%s|r",
-            section.color or C_TITLE, C_TITLE, item.title or "", C_DESC, item.desc)
-        else
-          lines[#lines + 1] = string.format("  |c%s>|r |c%s%s|r",
-            section.color or C_TITLE, C_TITLE, item.title or "")
-        end
+  for _, section in ipairs(ver.sections or {}) do
+    lines[#lines + 1] = string.format("|c%s%s|r", section.color or C_TITLE, section.header or "")
+    for _, item in ipairs(section.items or {}) do
+      if item.desc and item.desc ~= "" then
+        lines[#lines + 1] = string.format("  |c%s>|r |c%s%s|r  |c%s%s|r",
+          section.color or C_TITLE, C_TITLE, item.title or "", C_DESC, item.desc)
+      else
+        lines[#lines + 1] = string.format("  |c%s>|r |c%s%s|r",
+          section.color or C_TITLE, C_TITLE, item.title or "")
       end
-      lines[#lines + 1] = " "
     end
     lines[#lines + 1] = " "
   end
@@ -219,15 +249,69 @@ local function BuildFrame()
   local content = CreateFrame("Frame", nil, scroll)
   content:SetSize(470, 10)
   scroll:SetScrollChild(content)
-
-  local body = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  body:SetPoint("TOPLEFT", 0, 0)
-  body:SetWidth(470)
-  body:SetJustifyH("LEFT")
-  body:SetJustifyV("TOP")
-  body:SetSpacing(4)
-  f._body = body
   f._content = content
+  f._scroll = scroll
+
+  -- One collapsible block per version: a clickable header row plus the version's
+  -- body text. The newest version is expanded by default; older versions start
+  -- collapsed and expand when the player clicks their header.
+  f._blocks = {}
+  for i, verData in ipairs(CL.versions) do
+    local block = { ver = verData, expanded = (i == 1) }
+
+    local hdr = CreateFrame("Button", nil, content)
+    hdr:SetHeight(22)
+    local hbg = hdr:CreateTexture(nil, "BACKGROUND")
+    hbg:SetAllPoints()
+    hbg:SetColorTexture(1, 1, 1, 0.05)
+    hdr._bg = hbg
+    local htext = hdr:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    htext:SetPoint("LEFT", 4, 0)
+    htext:SetJustifyH("LEFT")
+    hdr._text = htext
+    hdr:SetScript("OnEnter", function(self) self._bg:SetColorTexture(0, 0.8, 1, 0.13) end)
+    hdr:SetScript("OnLeave", function(self) self._bg:SetColorTexture(1, 1, 1, 0.05) end)
+    hdr:SetScript("OnClick", function()
+      block.expanded = not block.expanded
+      if f._Relayout then f._Relayout() end
+    end)
+    block.header = hdr
+
+    local b = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    b:SetWidth(452)
+    b:SetJustifyH("LEFT")
+    b:SetJustifyV("TOP")
+    b:SetSpacing(4)
+    b:SetText(BuildVersionBody(verData))
+    block.body = b
+
+    f._blocks[i] = block
+  end
+
+  -- Stack the blocks top-to-bottom, showing each body only while its version is
+  -- expanded, then size the scroll child to the total height.
+  f._Relayout = function()
+    local y = 0
+    for i, block in ipairs(f._blocks) do
+      local arrow = block.expanded and "|cff00ccff-|r" or "|cff888888+|r"
+      local tag = (i == 1) and "   |cff4ade80Latest|r" or ""
+      block.header._text:SetText(string.format("%s  |cffffd100Version %s|r%s", arrow, block.ver.version, tag))
+      block.header:ClearAllPoints()
+      block.header:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+      block.header:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -y)
+      y = y + 24
+      if block.expanded then
+        block.body:ClearAllPoints()
+        block.body:SetPoint("TOPLEFT", content, "TOPLEFT", 10, -y)
+        block.body:Show()
+        y = y + (block.body:GetStringHeight() or 0) + 10
+      else
+        block.body:Hide()
+      end
+    end
+    content:SetSize(470, math.max(y, 10))
+    if f._scroll then f._scroll:SetVerticalScroll(0) end
+  end
 
   -- Footer divider
   local fdiv = f:CreateTexture(nil, "ARTWORK")
@@ -273,10 +357,10 @@ function CL.Show()
   if f._versionText then
     f._versionText:SetText(string.format("|cff888888v%s|r", GetCurrentVersion()))
   end
-  f._body:SetText(BuildBodyText())
-  -- Size the scroll child to the text so it scrolls correctly.
-  local h = (f._body:GetStringHeight() or 100) + 8
-  f._content:SetSize(470, h)
+  -- Open with the newest version expanded and older ones collapsed every time,
+  -- so players always land on the latest notes.
+  for i, block in ipairs(f._blocks) do block.expanded = (i == 1) end
+  f._Relayout()
   -- Reflect the current setting on the checkbox.
   local g = ns.API and ns.API.GetGlobalDB and ns.API.GetGlobalDB()
   local disabled = g and g.changelog and g.changelog.disabled

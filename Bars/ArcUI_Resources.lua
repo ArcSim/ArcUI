@@ -1556,9 +1556,14 @@ local function ApplyResourceTextColor(barNumber, cfg, textFrame, displayValue, m
   end
 
   local textCurve = GetTextColorCurve(barNumber, dispCfg)
-  if textCurve then
-    local color = UnitPowerPercent("player", powerType, false, textCurve)
-    textFrame.text:SetVertexColor(color.r, color.g, color.b, 1)
+  local colorResult = textCurve and UnitPowerPercent("player", powerType, false, textCurve)
+  if colorResult then
+    -- Secret-safe: the curve result is a SECRET colour inside instances/M+, so read
+    -- it via :GetRGBA() (NOT .r/.g/.b field access, which isn't safe on a secret
+    -- colour) and feed SetTextColor, a secret-safe sink. SetTextColor -- not
+    -- SetVertexColor -- keeps this consistent with the other paths on this same
+    -- FontString so the colour channels can't compound.
+    textFrame.text:SetTextColor(colorResult:GetRGBA())
   else
     local tc = dispCfg.textColor or {r=1, g=1, b=1, a=1}
     textFrame.text:SetTextColor(tc.r or 1, tc.g or 1, tc.b or 1, tc.a or 1)

@@ -78,6 +78,12 @@ end
 -- auraInstanceID may become secret in future WoW versions
 -- Uses ns.API.HasAuraInstanceID from Core.lua (handles secret values)
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Live-frame aura presence: auraInstanceID == 0 is a valid self-aura (Voidfall),
+-- not the saved-variable "no aura" default that HasAuraInstanceID rejects. nil = none.
+local function HasFrameAura(value)
+    return value ~= nil
+end
+
 local function HasAuraInstanceID(value)
     -- Use Core's implementation if available
     if ns.API and ns.API.HasAuraInstanceID then
@@ -591,16 +597,20 @@ local function ShouldHideFromDynamicGrid(group, frame, viewerType)
     
     -- Second check: Regular aura with auraInstanceID (secret-safe)
     if HasAuraInstanceID(frame.auraInstanceID) then
-        -- Has auraInstanceID - check if still active
+        -- Has a real auraInstanceID - check if still active
         local CS = ArcUI and ArcUI.CooldownState
         if CS and CS.IsAuraActive then
             local isActive = CS.IsAuraActive(frame.auraInstanceID)
             return not isActive  -- Hide from grid if inactive
         end
         return false  -- Can't verify, assume active
+    elseif HasFrameAura(frame.auraInstanceID) then
+        -- Self-aura: auraInstanceID == 0 means the aura EXISTS but has no queryable
+        -- instance id (e.g. Voidfall). Keep it in the grid; don't query with 0.
+        return false
     end
-    
-    -- No auraInstanceID and not a totem = aura not active
+
+    -- No aura instance (nil) and not a totem = aura not active
     -- Hide from grid (treat as gap)
     return true
 end

@@ -26,6 +26,14 @@ if not AceConfigDialog._arcUIHooked then
     hooksecurefunc(AceConfigDialog, "Close", function(self, appName)
         if appName == "ArcUI" then
             ns._arcUIOptionsOpen = false
+            -- Re-evaluate aura textures (hide previews, disable movers)
+            if ns.Textures and ns.Textures.OnOptionsClosed then
+                ns.Textures.OnOptionsClosed()
+            end
+            -- Make cooldown bars click-through again
+            if ns.CooldownBars and ns.CooldownBars.RefreshMouseInteractivity then
+                ns.CooldownBars.RefreshMouseInteractivity()
+            end
             -- Fire registered panel callbacks (ArcAurasCooldown, SpellUsability, etc.)
             if ns.CDMShared and ns.CDMShared.FirePanelCallbacks then
                 ns.CDMShared.FirePanelCallbacks(false)
@@ -196,7 +204,17 @@ ns.API.OpenOptions = function()
   if ns.Resources and ns.Resources.RefreshAllBars then
     ns.Resources.RefreshAllBars()
   end
-  
+
+  -- Refresh aura textures so they preview (and become draggable) while open
+  if ns.Textures and ns.Textures.RefreshAll then
+    ns.Textures.RefreshAll()
+  end
+
+  -- Cooldown bars become draggable while open; click-through when closed
+  if ns.CooldownBars and ns.CooldownBars.RefreshMouseInteractivity then
+    ns.CooldownBars.RefreshMouseInteractivity()
+  end
+
   -- Show "Hidden by Bar" overlays on CDM icons that are being hidden
   C_Timer.After(0.1, function()
     if ns.API.ShowHiddenByBarOverlays then
@@ -263,6 +281,13 @@ ns.API.OpenOptions = function()
           
           -- Clear options open flag (backup - Close hook also does this)
           ns._arcUIOptionsOpen = false
+          -- Backup: re-evaluate textures + cooldown bar click-through
+          if ns.Textures and ns.Textures.OnOptionsClosed then
+              ns.Textures.OnOptionsClosed()
+          end
+          if ns.CooldownBars and ns.CooldownBars.RefreshMouseInteractivity then
+              ns.CooldownBars.RefreshMouseInteractivity()
+          end
           -- Fire registered panel callbacks (backup path)
           if ns.CDMShared and ns.CDMShared.FirePanelCallbacks then
               ns.CDMShared.FirePanelCallbacks(false)
@@ -522,49 +547,35 @@ local function GetOptionsTable()
         },
       },
       
-      bars = {
+      -- ═══════════════════════════════════════════════════════════════
+      -- AURAS: buff/debuff tracking. One catalog (Bars) where you pick an
+      -- aura and create a bar or a texture, plus the shared Appearance.
+      -- ═══════════════════════════════════════════════════════════════
+      auras = {
         type = "group",
-        name = "Bars",
+        name = "Buffs/Debuffs",
         order = 2,
         childGroups = "tab",
         args = {
-          auraBars = ns.TrackingOptions and ns.TrackingOptions.GetBuffDebuffSetupTable() or {
-            type = "group",
-            name = "Aura Bars",
-            order = 1,
-            args = { loading = { type = "description", name = "Loading...", order = 1 } }
-          },
-          
-          cooldownBars = (function()
-            local tbl = ns.CooldownBarOptions and ns.CooldownBarOptions.GetOptionsTable() or {
+          auraBars = (function()
+            local tbl = ns.TrackingOptions and ns.TrackingOptions.GetBuffDebuffSetupTable() or {
               type = "group",
-              name = "Cooldown Bars",
+              name = "Catalog",
               args = { loading = { type = "description", name = "Loading...", order = 1 } }
             }
-            tbl.name = "Cooldown Bars"
-            tbl.order = 2
-            return tbl
-          end)(),
-          
-          timerBars = (function()
-            local tbl = ns.TimerBarOptions and ns.TimerBarOptions.GetOptionsTable() or {
-              type = "group",
-              name = "Custom Bars",
-              args = { loading = { type = "description", name = "Loading...", order = 1 } }
-            }
-            tbl.name = "Custom Bars"
-            tbl.order = 2.5
+            tbl.name = "Catalog"
+            tbl.order = 1
             return tbl
           end)(),
 
-          castbar = (function()
-            local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
+          textures = (function()
+            local tbl = ns.GetTexturesOptionsTable and ns.GetTexturesOptionsTable() or {
               type = "group",
-              name = "Castbar",
+              name = "Textures",
               args = { loading = { type = "description", name = "Loading...", order = 1 } }
             }
-            tbl.name = "Castbar"
-            tbl.order = 2.8
+            tbl.name = "Textures"
+            tbl.order = 2
             return tbl
           end)(),
 
@@ -580,11 +591,66 @@ local function GetOptionsTable()
           end)(),
         },
       },
-      
+
+      -- ═══════════════════════════════════════════════════════════════
+      -- COOLDOWNS: spell cooldown / charge / custom-timer bars + castbar.
+      -- ═══════════════════════════════════════════════════════════════
+      cooldowns = {
+        type = "group",
+        name = "Cooldowns",
+        order = 3,
+        childGroups = "tab",
+        args = {
+          cooldownBars = (function()
+            local tbl = ns.CooldownBarOptions and ns.CooldownBarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Cooldown Bars",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name = "Cooldown Bars"
+            tbl.order = 1
+            return tbl
+          end)(),
+
+          timerBars = (function()
+            local tbl = ns.TimerBarOptions and ns.TimerBarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Custom Bars",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name = "Custom Bars"
+            tbl.order = 2
+            return tbl
+          end)(),
+
+          cooldownReminder = (function()
+            local tbl = ns.GetCooldownReminderOptionsTable and ns.GetCooldownReminderOptionsTable() or {
+              type = "group",
+              name = "Cooldown Reminder",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name = "Cooldown Reminder"
+            tbl.order = 3
+            return tbl
+          end)(),
+
+          appearance = (function()
+            local tbl = ns.AppearanceOptions and ns.AppearanceOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Appearance",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name = "Appearance"
+            tbl.order = 4
+            return tbl
+          end)(),
+        },
+      },
+
       resources = {
         type = "group",
         name = "Resources",
-        order = 3,
+        order = 4,
         childGroups = "tab",
         args = {
           setup = (function()
@@ -618,7 +684,7 @@ local function GetOptionsTable()
       importExport = {
         type = "group",
         name = "Import/Export",
-        order = 4,
+        order = 7,
         childGroups = "tab",
         args = {
           cdmExport = (function()
@@ -696,18 +762,18 @@ local function GetOptionsTable()
           args = { loading = { type = "description", name = "Loading...", order = 1 } }
         }
         tbl.name  = "Migration"
-        tbl.order = 5
+        tbl.order = 8
         return tbl
       end)(),
 
-      cooldownReminder = (function()
-        local tbl = ns.GetCooldownReminderOptionsTable and ns.GetCooldownReminderOptionsTable() or {
+      castbar = (function()
+        local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
           type = "group",
-          name = "Cooldown Reminder",
+          name = "Castbar",
           args = { loading = { type = "description", name = "Loading...", order = 1 } }
         }
-        tbl.name  = "Cooldown Reminder"
-        tbl.order = 3.5
+        tbl.name  = "Castbar"
+        tbl.order = 5
         return tbl
       end)(),
 
@@ -718,14 +784,14 @@ local function GetOptionsTable()
           args = { loading = { type = "description", name = "Loading...", order = 1 } }
         }
         tbl.name  = "Kick Assist"
-        tbl.order = 3.6
+        tbl.order = 6
         return tbl
       end)(),
 
       settings = {
         type = "group",
         name = "Settings",
-        order = 6,
+        order = 9,
         args = {
           menuHeader = {
             type = "header",
@@ -1251,6 +1317,9 @@ initFrame:SetScript("OnEvent", function(self, event)
       end
       if ns.SetMyKick and ns.SetMyKick.Init then
         ns.SetMyKick.Init()
+      end
+      if ns.Textures and ns.Textures.Init then
+        ns.Textures.Init()
       end
 
       print("|cff00ccffArc UI|r v" .. ns.AddonInfo.Version .. " loaded. Type /arcui for options, /cdm for CDM settings, /arcui recenter to move panel back to screen.")

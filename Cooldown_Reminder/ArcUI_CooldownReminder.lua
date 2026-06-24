@@ -3289,7 +3289,7 @@ SlashCmdList["ARCUICR"] = function(msg)
         ns.API.OpenOptions()
         C_Timer.After(0.1, function()
             local ACD = LibStub and LibStub("AceConfigDialog-3.0", true)
-            if ACD then ACD:SelectGroup("ArcUI", "cooldownReminder") end
+            if ACD then ACD:SelectGroup("ArcUI", "cooldowns", "cooldownReminder") end
         end)
     elseif cmd == "test" then
         CR.TestPulse(tonumber(rest))

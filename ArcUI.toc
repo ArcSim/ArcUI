@@ -2,7 +2,7 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.7.4
+## Version: 3.7.5
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
@@ -41,6 +41,8 @@ Bars\ArcUI_DurationText.lua
 Bars\ArcUI_Display.lua
 Bars\ArcUI_Resources.lua
 Bars\ArcUI_Catalog.lua
+Bars\ArcUI_TextureLibrary.lua
+Bars\ArcUI_Textures.lua
 ArcUI_Minimap.lua
 Bars\ArcUI_CooldownBars.lua
 Bars\ArcUI_CustomTracking.lua
@@ -67,6 +69,7 @@ SetMyKick\ArcUI_SetMyKick.lua
 Bars\ArcUI_TrackingOptions.lua
 Presets\ArcUI_Presets.lua
 Bars\ArcUI_AppearanceOptions.lua
+Bars\ArcUI_Textures_Options.lua
 Bars\ArcUI_CooldownBarOptions.lua
 Bars\ArcUI_TimerBarOptions.lua
 Bars\ArcUI_CustomOptions.lua
@@ -93,6 +96,7 @@ CDM_Module\CDM_Enhance\ArcUI_CDMSpellUsability.lua
 CDM_Module\CDM_Enhance\ArcUI_AssistedCombatHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_ButtonPressHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_CDMTextColor.lua
+CDM_Module\CDM_Enhance\ArcUI_StackColor.lua
 CDM_Module\CDM_Enhance\ArcUI_DurationOverride.lua
 
 # CDM Groups Registry (frame tracking - must load before CDMGroups)

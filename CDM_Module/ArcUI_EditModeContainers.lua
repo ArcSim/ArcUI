@@ -728,36 +728,12 @@ local function OnEditModeEnter()
     -- Update cached state immediately (performance optimization)
     SetBlizzEditModeActive(true)
     
-    -- Resize Blizzard CDM viewers to 200x50 for easier selection (out of combat only)
-    -- Skip viewers whose groups are managed by CDMContainerSync (it owns their size)
-    if not InCombatLockdown() then
-        local viewers = {
-            "EssentialCooldownViewer",
-            "UtilityCooldownViewer",
-            "BuffIconCooldownViewer",
-        }
-        for _, viewerName in ipairs(viewers) do
-            -- Check if CDMContainerSync owns this viewer
-            local syncOwned = false
-            if ns.CDMContainerSync and ns.CDMContainerSync.GetGroupForViewer then
-                local syncGroup = ns.CDMContainerSync.GetGroupForViewer(viewerName)
-                if syncGroup and ns.CDMContainerSync.IsEnabled(syncGroup) then
-                    syncOwned = true
-                end
-            end
-            
-            if not syncOwned then
-                local viewer = _G[viewerName]
-                if viewer then
-                    local w, h = viewer:GetSize()
-                    if w and h and (w < 200 or h < 50) then
-                        cdmViewerOriginalSizes[viewerName] = {width = w, height = h}
-                        viewer:SetSize(200, 50)
-                    end
-                end
-            end
-        end
-    end
+    -- [TAINT TEST 2026-06-22] DISABLED: do NOT SetSize the real Blizzard CDM viewers on Edit Mode enter.
+    -- This SetSize is the taint seed (taint.log stack bottoms out at SetSize()). When sArena force-opens
+    -- Edit Mode in an instance, the next RefreshLayout on these tainted viewers bricks CDM. The resize was
+    -- only a convenience to make the tiny viewers easier to click in Edit Mode. Removed to test whether this
+    -- is the brick seed. To revert: restore the original resize block.
+    -- (original: resized Essential/Utility/BuffIcon viewers to 200x50 out of combat, saving originals)
     
     -- Blizzard Edit Mode enter - show wrappers for groups not handled by container sync
     -- Base CDM groups are skipped only if container sync is moving them via Blizzard Edit Mode
@@ -779,17 +755,9 @@ local function OnEditModeExit()
     -- Update cached state immediately (performance optimization)
     SetBlizzEditModeActive(false)
     
-    -- Restore Blizzard CDM viewers to original sizes (out of combat only)
-    -- Only restores viewers that were saved during enter (synced viewers were skipped)
-    if not InCombatLockdown() then
-        for viewerName, originalSize in pairs(cdmViewerOriginalSizes) do
-            local viewer = _G[viewerName]
-            if viewer and originalSize then
-                viewer:SetSize(originalSize.width, originalSize.height)
-            end
-        end
-        wipe(cdmViewerOriginalSizes)
-    end
+    -- [TAINT TEST 2026-06-22] DISABLED: paired with the disabled enter-resize above. We no longer touch
+    -- the real CDM viewers' size at all, so there is nothing to restore. Keep the wipe to clear any stale.
+    wipe(cdmViewerOriginalSizes)
     
     -- Blizzard Edit Mode exit - sync group→wrapper (group is source of truth)
     -- NEVER sync wrapper→group on exit — wrapper may have been repositioned by

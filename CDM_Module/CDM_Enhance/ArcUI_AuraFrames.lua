@@ -367,7 +367,14 @@ function AF.UpdateAuraFrame(frame)
   local now           = GetTime()
   local lastCall      = frame._arcLastOptimizedCall or 0
   local lastAuraActive= frame._arcLastAuraActive
+  -- "Aura present" must include a self-aura: CD Manager reports auraInstanceID == 0
+  -- (NOT nil) for self-auras like Voidfall, and HasAuraInstanceID rejects 0 the same
+  -- as nil. FrameActive.IsActive rides the OnAuraInstanceInfoSet event (so it counts
+  -- the 0-id self-aura) AND smooths CDM's rebind churn (the frame dips to nil for a
+  -- tick during each rebind) — it's the same signal DynamicLayout uses, which is why
+  -- placement stays correct while the old value-only check hid the icon.
   local currentAuraActive = HasAuraInstanceID(frame.auraInstanceID)
+                         or (ns.FrameActive and ns.FrameActive.IsActive(frame)) or false
   local cdID          = frame.cooldownID
 
   local hasDelay = frame._arcDelayAlphaUntil and now < frame._arcDelayAlphaUntil
@@ -430,7 +437,10 @@ function AF.UpdateAuraFrame(frame)
     if not hasAuraActiveGlow and not frame._arcAuraActiveGlowActive then return end
   end
 
+  -- self-aura (auraInstanceID == 0) counts as present via FrameActive — see the note
+  -- on currentAuraActive above. 0 = exists, nil = gone.
   local hasAuraOrTotem = HasAuraInstanceID(frame.auraInstanceID) or (frame.totemData ~= nil)
+                      or (ns.FrameActive and ns.FrameActive.IsActive(frame)) or false
   -- _arcAuraStateHooked: frame is a real aura type, buff just not currently active
   local isAura         = cfg._isAura or hasAuraOrTotem or (frame._arcAuraStateHooked == true)
   local isReady        = false
