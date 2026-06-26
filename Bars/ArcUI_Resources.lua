@@ -6270,12 +6270,10 @@ function ns.Resources.ApplyAppearance(barNumber)
       local barWidth, barHeight
       if display.matchGroupWidth then
         local matchDimension
-        -- Fragmented bars: always use _slotAreaW so segments divide evenly.
-        -- containerW includes padding which makes barWidth*ppu not divisible by numSegments.
-        -- Non-fragmented bars: respect matchSlotsOnly setting as before.
+        -- Always use _slotAreaW so the bar matches the icon slot area, not the container border.
         local isFragmented = (display.thresholdMode == "fragmented")
         local isFragVertical = isFragmented and (display.fragmentedLayoutDirection == "vertical")
-        if (isFragmented or display.matchSlotsOnly) and group._slotAreaW then
+        if group._slotAreaW then
           if isFragVertical then
             -- Vertical fragmented: long dimension is always H regardless of anchor side.
             -- needsSwap puts matchDimension into frame height via SetSize(barHeight, barWidth).
@@ -6318,7 +6316,7 @@ function ns.Resources.ApplyAppearance(barNumber)
       local alignInsetY      = GetActualIconInsetY(group)
       local alignInsetBottom = GetActualIconInsetBottom(group)
       
-      local matchSlots = display.matchGroupWidth and display.matchSlotsOnly and barWidth
+      local matchSlots = display.matchGroupWidth and barWidth
       mainFrame:ClearAllPoints()
       if anchorPoint == "TOP" then
         if matchSlots then
@@ -7563,12 +7561,11 @@ function ns.Resources.OnGroupContainerSizeChanged(groupName, newWidth, newHeight
           -- Use container effective scale for pixel snapping.
           local container = group and group.container
           local effScale = container and container:GetEffectiveScale() or mainFrame:GetEffectiveScale() or 1
-          -- Fragmented bars always use _slotAreaW for even segment division.
-          -- Non-fragmented respect matchSlotsOnly.
+          -- Always use _slotAreaW so the bar matches the icon slot area, not the container border.
           local isFragmented = (cfg.display.thresholdMode == "fragmented")
           local isFragVertical = isFragmented and (cfg.display.fragmentedLayoutDirection == "vertical")
           local matchDimension
-          if (isFragmented or cfg.display.matchSlotsOnly) and group and group._slotAreaW then
+          if group and group._slotAreaW then
             if isFragVertical then
               matchDimension = group._slotAreaHRaw or group._slotAreaH
             else
@@ -7600,7 +7597,7 @@ function ns.Resources.OnGroupContainerSizeChanged(groupName, newWidth, newHeight
           local alignInsetY      = GetActualIconInsetY(group)
           local alignInsetBottom = GetActualIconInsetBottom(group)
           
-          local matchSlots = cfg.display.matchSlotsOnly and barWidth
+          local matchSlots = barWidth
           mainFrame:ClearAllPoints()
           if anchorPoint == "TOP" then
             if matchSlots then
@@ -7682,7 +7679,7 @@ local function OnContainerSizeChanged(container, width, height)
           local isFragmented = (cfg.display.thresholdMode == "fragmented")
           local isFragVertical = isFragmented and (cfg.display.fragmentedLayoutDirection == "vertical")
           local matchDimension
-          if (isFragmented or cfg.display.matchSlotsOnly) and group and group._slotAreaW then
+          if group and group._slotAreaW then
             if isFragVertical then
               matchDimension = group._slotAreaHRaw or group._slotAreaH
             else
@@ -7714,7 +7711,7 @@ local function OnContainerSizeChanged(container, width, height)
           local alignInsetY      = GetActualIconInsetY(group)
           local alignInsetBottom = GetActualIconInsetBottom(group)
           
-          local matchSlots = cfg.display.matchSlotsOnly and barWidth
+          local matchSlots = barWidth
           mainFrame:ClearAllPoints()
           if anchorPoint == "TOP" then
             if matchSlots then

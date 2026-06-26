@@ -52,11 +52,21 @@ Utilities\ArcUI_DataRepair.lua
 # Castbar
 Castbar\ArcUI_Castbar.lua
 
+# Advanced Debuffs
+Bars\ArcUI_AdvancedDebuffs.lua
+
 # Main Options (creates AceDB)
 ArcUI_Options.lua
 
 # Changelog ("What's New" window)
 ArcUI_Changelog.lua
+
+# Custom GUI Framework
+GUI\ArcUI_GUI_Theme.lua
+GUI\ArcUI_GUI_Core.lua
+GUI\ArcUI_GUI_Widgets.lua
+GUI\ArcUI_GUI_Sidebar.lua
+GUI\ArcUI_GUI_MainFrame.lua
 
 # Cooldown Reminder
 Cooldown_Reminder\ArcUI_CooldownReminder.lua
@@ -74,6 +84,7 @@ Bars\ArcUI_CooldownBarOptions.lua
 Bars\ArcUI_TimerBarOptions.lua
 Bars\ArcUI_CustomOptions.lua
 Castbar\ArcUI_Castbar_Options.lua
+Bars\ArcUI_AdvancedDebuffsOptions.lua
 
 # Import/Export
 Import_Export\ArcUI_Bars_ImportExport.lua

@@ -11,6 +11,9 @@ local CR = ns.CooldownReminder
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local AceConfigDialog   = LibStub("AceConfigDialog-3.0")
 
+-- Appearance tab section collapsed state (defaults open)
+local crCollapsed = {}
+
 local function GetDB()     return CR.GetDB and CR.GetDB() end
 local function GetEngine() return CR.Engine end
 local function NotifyChange() AceConfigRegistry:NotifyChange("ArcUI") end
@@ -1361,32 +1364,49 @@ function ns.GetCooldownReminderOptionsTable()
                 name  = "Appearance & Audio",
                 order = 2,
                 args  = {
-                    zoneHeader = { type="header", name="Enabled In", order=1 },
+                    zoneHeader = {
+                        type="toggle", name="|cffffd100Enabled In|r",
+                        dialogControl="CollapsibleHeader",
+                        order=1, width="full",
+                        get=function() return not crCollapsed.zone end,
+                        set=function(_,v) crCollapsed.zone = not v end,
+                    },
                     enabledInWorld = {
                         type="toggle", name="World", order=2,
+                        hidden=function() return crCollapsed.zone end,
                         get=function() local d=GetDB(); return d and d.enabledInWorld~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.enabledInWorld=v; GetEngine():_EvaluateZoneEnabled() end end,
                     },
                     enabledInDungeons = {
                         type="toggle", name="Dungeons", order=3,
+                        hidden=function() return crCollapsed.zone end,
                         get=function() local d=GetDB(); return d and d.enabledInDungeons~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.enabledInDungeons=v; GetEngine():_EvaluateZoneEnabled() end end,
                     },
                     enabledInRaids = {
                         type="toggle", name="Raids", order=4,
+                        hidden=function() return crCollapsed.zone end,
                         get=function() local d=GetDB(); return d and d.enabledInRaids~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.enabledInRaids=v; GetEngine():_EvaluateZoneEnabled() end end,
                     },
                     enabledInArena = {
                         type="toggle", name="Arena", order=5,
+                        hidden=function() return crCollapsed.zone end,
                         get=function() local d=GetDB(); return d and d.enabledInArena~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.enabledInArena=v; GetEngine():_EvaluateZoneEnabled() end end,
                     },
-                    appearHeader = { type="header", name="Appearance", order=10 },
+                    appearHeader = {
+                        type="toggle", name="|cffffd100Appearance|r",
+                        dialogControl="CollapsibleHeader",
+                        order=10, width="full",
+                        get=function() return not crCollapsed.appear end,
+                        set=function(_,v) crCollapsed.appear = not v end,
+                    },
                     iconEnabled = {
                         type="toggle", name="Show pulse icon",
                         desc="Master switch for the pulse icon. When off, no spell shows an icon (sound/TTS only). When on, each spell's own Show Icon toggle controls whether the icon shows for that specific reminder.",
                         order=10.5, width="full",
+                        hidden=function() return crCollapsed.appear end,
                         get=function() local d=GetDB(); return d and d.iconEnabled~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.iconEnabled=v end end,
                     },
@@ -1394,6 +1414,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="toggle", name="Cancel pulse on cast",
                         desc="When the user casts a spell, immediately kill any visible or queued pulse for that same spell. The reminder's job is done once the spell is actually cast.",
                         order=10.6, width="full",
+                        hidden=function() return crCollapsed.appear end,
                         get=function() local d=GetDB(); return d and d.cancelOnCast~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.cancelOnCast=v end end,
                     },
@@ -1405,6 +1426,7 @@ function ns.GetCooldownReminderOptionsTable()
                            .. "|cffffd200Stack|r — icons display side-by-side like a dynamic group. Newest appears next to the existing one and they share the display; each fades out on its own timer.\n\n"
                            .. "Sounds/TTS always play immediately regardless of this setting.",
                         order=11, width=1.6,
+                        hidden=function() return crCollapsed.appear end,
                         values={ replace="Replace", queue="Queue", stack="Stack (side-by-side)" },
                         sorting={"replace","queue","stack"},
                         get=function() local d=GetDB(); return (d and d.queueMode) or "queue" end,
@@ -1428,8 +1450,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="select", name="Stack Direction",
                         desc="Which side new icons appear on (Stack mode only)",
                         order=11.1, width=0.8,
-                        values={ left="Left", right="Right" },
-                        sorting={"right","left"},
+                        hidden=function() return crCollapsed.appear end,
                         disabled=function() local d=GetDB(); return (d and d.queueMode) ~= "stack" end,
                         get=function() local d=GetDB(); return (d and d.stackDirection) or "right" end,
                         set=function(_,v)
@@ -1442,6 +1463,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Stack Spacing",
                         desc="Pixel gap between stacked icons (Stack mode only). Negative values overlap icons.",
                         order=11.2, width=1.2, min=-32, max=96, step=1,
+                        hidden=function() return crCollapsed.appear end,
                         disabled=function() local d=GetDB(); return (d and d.queueMode) ~= "stack" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.stackSpacing)) or 4 end,
                         set=function(_,v)
@@ -1455,6 +1477,7 @@ function ns.GetCooldownReminderOptionsTable()
                         desc="Seconds a Replace-mode pulse is protected from being replaced by a newer alert. "
                            .. "0 = replace instantly. Higher values ensure brief pulses don't get cut off before the user can see them. (Replace mode only)",
                         order=11.3, width=1.5, min=0, max=2.0, step=0.05,
+                        hidden=function() return crCollapsed.appear end,
                         disabled=function() local d=GetDB(); return (d and d.queueMode) ~= "replace" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.replaceGuard)) or 0.4 end,
                         set=function(_,v)
@@ -1466,6 +1489,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Queue Max Length",
                         desc="Maximum number of alerts that can stack up in the queue. When full, the oldest queued alert is dropped. (Queue mode only)",
                         order=11.4, width=1.2, min=1, max=10, step=1,
+                        hidden=function() return crCollapsed.appear end,
                         disabled=function() local d=GetDB(); return (d and d.queueMode) ~= "queue" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.queueMaxLen)) or 3 end,
                         set=function(_,v)
@@ -1478,6 +1502,7 @@ function ns.GetCooldownReminderOptionsTable()
                         desc="Seconds of pause between the fade-out of one queued pulse and the appearance of the next. "
                            .. "0 = back-to-back (the next pulse starts the instant the previous finishes fading). (Queue mode only)",
                         order=11.5, width=1.5, min=0, max=2.0, step=0.05,
+                        hidden=function() return crCollapsed.appear end,
                         disabled=function() local d=GetDB(); return (d and d.queueMode) ~= "queue" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.queueInterDelay)) or 0 end,
                         set=function(_,v)
@@ -1489,6 +1514,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="toggle", name="Lock position",
                         desc="Lock the pulse icon position",
                         order=12,
+                        hidden=function() return crCollapsed.appear end,
                         get=function() local d=GetDB(); return d and d.locked~=false end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1501,6 +1527,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="execute", name="Show Anchor",
                         desc="Unlock and show the draggable anchor to reposition the pulse icon",
                         order=13,
+                        hidden=function() return crCollapsed.appear end,
                         func=function()
                             local d=GetDB(); if not d then return end
                             d.locked=false
@@ -1509,9 +1536,16 @@ function ns.GetCooldownReminderOptionsTable()
                             NotifyChange()
                         end,
                     },
-                    posHeader = { type="header", name="Position", order=14 },
+                    posHeader = {
+                        type="toggle", name="|cffffd100Position|r",
+                        dialogControl="CollapsibleHeader",
+                        order=14, width="full",
+                        get=function() return not crCollapsed.pos end,
+                        set=function(_,v) crCollapsed.pos = not v end,
+                    },
                     posX = {
                         type="input", name="X", order=15, width=0.5,
+                        hidden=function() return crCollapsed.pos end,
                         get=function() local d=GetDB(); return d and tostring(d.x or 0) or "0" end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1521,6 +1555,7 @@ function ns.GetCooldownReminderOptionsTable()
                     },
                     posY = {
                         type="input", name="Y", order=16, width=0.5,
+                        hidden=function() return crCollapsed.pos end,
                         get=function() local d=GetDB(); return d and tostring(d.y or 120) or "120" end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1531,6 +1566,7 @@ function ns.GetCooldownReminderOptionsTable()
                     posPreview = {
                         type="execute", name="Preview Alert", order=16.5, width=1.0,
                         desc="Fire a single test pulse at the current position/size",
+                        hidden=function() return crCollapsed.pos end,
                         func=function()
                             if CR.TestPulse then CR.TestPulse() end
                         end,
@@ -1538,6 +1574,7 @@ function ns.GetCooldownReminderOptionsTable()
                     posPreviewMulti = {
                         type="execute", name="Preview Multiple", order=16.6, width=1.2,
                         desc="Fire 3 staggered test pulses so you can see Queue / Stack behavior in action",
+                        hidden=function() return crCollapsed.pos end,
                         func=function()
                             if CR.TestPulseMultiple then CR.TestPulseMultiple(3, 0.25) end
                         end,
@@ -1546,6 +1583,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Pulse Duration",
                         desc="How long the pulse stays on screen (seconds). For animated styles, the entire animation sequence is scaled to this duration.",
                         order=17, width=1.5, min=0.1, max=5.0, step=0.05,
+                        hidden=function() return crCollapsed.pos end,
                         get=function() local d=GetDB(); return d and d.pulseDuration or 1.0 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1556,6 +1594,7 @@ function ns.GetCooldownReminderOptionsTable()
                     iconSize = {
                         type="range", name="Icon Size",
                         order=18, width=1.5, min=32, max=256, step=1,
+                        hidden=function() return crCollapsed.pos end,
                         get=function() local d=GetDB(); return d and d.size or 64 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1566,6 +1605,7 @@ function ns.GetCooldownReminderOptionsTable()
                     iconOpacity = {
                         type="range", name="Icon Opacity",
                         order=19, width=1.5, min=0.1, max=1.0, step=0.05, isPercent=true,
+                        hidden=function() return crCollapsed.pos end,
                         get=function() local d=GetDB(); return d and d.iconOpacity or 1.0 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1575,6 +1615,7 @@ function ns.GetCooldownReminderOptionsTable()
                     },
                     resetAppearance = {
                         type="execute", name="Reset to Defaults", order=20,
+                        hidden=function() return crCollapsed.pos end,
                         func=function()
                             local d=GetDB(); if not d then return end
                             d.size=64; d.iconOpacity=1; d.point="CENTER"; d.relPoint="CENTER"
@@ -1601,16 +1642,22 @@ function ns.GetCooldownReminderOptionsTable()
                     -- only visible when the matching style is the active
                     -- default.
                     animationHeader = {
-                        type="header", name="Animation Tuning", order=25,
+                        type="toggle", name="|cffffd100Animation Tuning|r",
+                        dialogControl="CollapsibleHeader",
+                        order=25, width="full",
+                        get=function() return not crCollapsed.anim end,
+                        set=function(_,v) crCollapsed.anim = not v end,
                     },
                     animationDesc = {
                         type="description", order=25.04, fontSize="small",
+                        hidden=function() return crCollapsed.anim end,
                         name="Pick the animation style and fine-tune its entrance phase. Pulse Duration above sets the total on-screen time; the entrance is subtracted from it and the remainder is the trailing fade.",
                     },
                     animStyle = {
                         type="select", name="Default Animation",
                         desc="Animation style used when a trigger doesn't override it. Per-trigger settings (in each spell's Triggers list) take priority.",
                         order=25.05, width=1.5,
+                        hidden=function() return crCollapsed.anim end,
                         values={
                             ["fade"]    = "Fade",
                             ["no_fade"] = "No Fade (snap off)",
@@ -1626,7 +1673,7 @@ function ns.GetCooldownReminderOptionsTable()
                     animFadeHeader = {
                         type="description", order=25.10, fontSize="medium",
                         name="|cffffd200Fade|r",
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "fade" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "fade" end,
                     },
                     animFadeSmoothing = {
                         type="select", name="Fade Curve",
@@ -1644,7 +1691,7 @@ function ns.GetCooldownReminderOptionsTable()
                             ["IN_OUT"] = "Ease In/Out",
                         },
                         sorting={"NONE","OUT","IN","IN_OUT"},
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "fade" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "fade" end,
                         get=function() local d=GetDB(); return (d and d.animFadeSmoothing) or "OUT" end,
                         set=function(_,v) local d=GetDB(); if d then d.animFadeSmoothing=v end end,
                     },
@@ -1653,13 +1700,13 @@ function ns.GetCooldownReminderOptionsTable()
                     animFlashHeader = {
                         type="description", order=25.20, fontSize="medium",
                         name="|cffffd200Flash|r",
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "flash" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "flash" end,
                     },
                     animFlashSpeed = {
                         type="range", name="Flash Step Speed",
                         desc="How fast each individual flash bounce plays (seconds per step). 4 steps total. Lower = more rapid blinking.",
                         order=25.21, width=1.5, min=0.03, max=0.30, step=0.01,
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "flash" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "flash" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.animFlashSpeed)) or 0.10 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1671,13 +1718,13 @@ function ns.GetCooldownReminderOptionsTable()
                     animZoomHeader = {
                         type="description", order=25.30, fontSize="medium",
                         name="|cffffd200Zoom|r",
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
                     },
                     animZoomStart = {
                         type="range", name="Zoom Start Scale",
                         desc="Size the icon starts at, relative to its final size. Smaller values = bigger pop-in effect. 1.0 = no pop-in.",
                         order=25.31, width=1.5, min=0.30, max=1.00, step=0.05,
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.animZoomStart)) or 0.70 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1688,7 +1735,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Zoom Peak Scale",
                         desc="Size of the overshoot at the top of the pop-in (the icon briefly grows past its final size before settling). 1.0 = no overshoot.",
                         order=25.32, width=1.5, min=1.00, max=1.50, step=0.05,
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.animZoomPeak)) or 1.15 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1699,7 +1746,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Zoom Pop Speed",
                         desc="Seconds for the pop-in (start scale → peak scale). Lower = snappier entrance.",
                         order=25.33, width=1.5, min=0.04, max=0.40, step=0.01,
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.animZoomPopTime)) or 0.12 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1710,7 +1757,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Zoom Settle Speed",
                         desc="Seconds for the settle (peak scale → final size). Higher = softer landing.",
                         order=25.34, width=1.5, min=0.02, max=0.30, step=0.01,
-                        hidden=function() local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
+                        hidden=function() if crCollapsed.anim then return true end; local d=GetDB(); return (d and d.animStyle) ~= "zoom" end,
                         get=function() local d=GetDB(); return (d and tonumber(d.animZoomSettleTime)) or 0.08 end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1721,6 +1768,7 @@ function ns.GetCooldownReminderOptionsTable()
                     animResetTuning = {
                         type="execute", name="Reset Animation Tuning", order=25.90,
                         hidden=function()
+                            if crCollapsed.anim then return true end
                             local d=GetDB()
                             local s = d and d.animStyle
                             return s == "no_fade"
@@ -1736,15 +1784,23 @@ function ns.GetCooldownReminderOptionsTable()
                             NotifyChange()
                         end,
                     },
-                    audioHeader = { type="header", name="Audio", order=30 },
+                    audioHeader = {
+                        type="toggle", name="|cffffd100Audio|r",
+                        dialogControl="CollapsibleHeader",
+                        order=30, width="full",
+                        get=function() return not crCollapsed.audio end,
+                        set=function(_,v) crCollapsed.audio = not v end,
+                    },
                     soundEnabled = {
                         type="toggle", name="Enable sound", order=31,
+                        hidden=function() return crCollapsed.audio end,
                         desc="Master switch for sound/TTS. When off, no spell plays audio. When on, each spell's own Play Sound toggle controls whether that specific reminder plays audio.",
                         get=function() local d=GetDB(); return d and d.soundEnabled~=false end,
                         set=function(_,v) local d=GetDB(); if d then d.soundEnabled=v end end,
                     },
                     soundChannel = {
                         type="select", name="Sound Channel", order=32,
+                        hidden=function() return crCollapsed.audio end,
                         values={Master="Master",SFX="SFX",Music="Music",Ambience="Ambience",Dialog="Dialog"},
                         sorting={"Master","SFX","Music","Ambience","Dialog"},
                         get=function() local d=GetDB(); return d and d.soundChannel or "Master" end,
@@ -1754,6 +1810,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="select", name="Default Alert Sound",
                         desc="Sound when no per-spell override is set",
                         order=33, width=1.5,
+                        hidden=function() return crCollapsed.audio end,
                         values=function() local t={}; for _,s in ipairs(GetSoundList()) do t[s]=s end; return t end,
                         sorting=GetSoundList,
                         get=function() local d=GetDB(); return d and d.soundName or "Default" end,
@@ -1761,6 +1818,7 @@ function ns.GetCooldownReminderOptionsTable()
                     },
                     previewSound = {
                         type="execute", name="Preview", order=34, width=0.4,
+                        hidden=function() return crCollapsed.audio end,
                         func=function()
                             local d=GetDB(); if not d then return end
                             local snd=d.soundName or "Default"
@@ -1778,6 +1836,7 @@ function ns.GetCooldownReminderOptionsTable()
                         desc   = "When ON, a new alert sound stops the previous one. Useful for short cooldowns where back-to-back triggers cause overlapping/delayed audio. Also applies to TTS.",
                         order  = 35,
                         width  = 1.5,
+                        hidden = function() return crCollapsed.audio end,
                         get    = function() local d=GetDB(); return d and d.cutoffPreviousSound or false end,
                         set    = function(_, v) local d=GetDB(); if d then d.cutoffPreviousSound=v end end,
                     },
@@ -1791,13 +1850,21 @@ function ns.GetCooldownReminderOptionsTable()
                         max    = 0.5,
                         step   = 0.05,
                         bigStep = 0.05,
+                        hidden   = function() return crCollapsed.audio end,
                         disabled = function() local d=GetDB(); return not (d and d.cutoffPreviousSound) end,
                         get    = function() local d=GetDB(); return d and d.cutoffFadeTime or 0.1 end,
                         set    = function(_, v) local d=GetDB(); if d then d.cutoffFadeTime=tonumber(v) or 0.1 end end,
                     },
-                    ttsHeader = { type="header", name="Text-to-Speech", order=40 },
+                    ttsHeader = {
+                        type="toggle", name="|cffffd100Text-to-Speech|r",
+                        dialogControl="CollapsibleHeader",
+                        order=40, width="full",
+                        get=function() return not crCollapsed.tts end,
+                        set=function(_,v) crCollapsed.tts = not v end,
+                    },
                     ttsInfo = {
                         type="description",
+                        hidden=function() return crCollapsed.tts end,
                         name="|cff00ccffSet TTS text in the spell's row above. When set, TTS takes priority over the sound for that spell.|r",
                         order=41, width="full", fontSize="medium",
                     },
@@ -1806,6 +1873,7 @@ function ns.GetCooldownReminderOptionsTable()
                         desc="Default uses your WoW TTS voice (Esc > Options > Accessibility > Text to Speech). "
                            .. "Male/Female overrides it by picking a matching voice from the system list.",
                         order=42, width=1.4,
+                        hidden=function() return crCollapsed.tts end,
                         values={
                             ["default"] = "Default (WoW setting)",
                             ["male"]    = "Male",
@@ -1819,6 +1887,7 @@ function ns.GetCooldownReminderOptionsTable()
                         type="toggle", name="Override speech rate",
                         desc="Use a custom speech rate for ArcUI TTS instead of the WoW default.",
                         order=43, width=1.0,
+                        hidden=function() return crCollapsed.tts end,
                         get=function() local d=GetDB(); return d and d.ttsRateOverride ~= nil end,
                         set=function(_,v)
                             local d=GetDB(); if not d then return end
@@ -1838,12 +1907,14 @@ function ns.GetCooldownReminderOptionsTable()
                         type="range", name="Speech Rate",
                         desc="-10 = slowest, 0 = normal, 10 = fastest",
                         order=44, width=1.6, min=-10, max=10, step=1,
+                        hidden=function() return crCollapsed.tts end,
                         disabled=function() local d=GetDB(); return not (d and d.ttsRateOverride ~= nil) end,
                         get=function() local d=GetDB(); return (d and tonumber(d.ttsRateOverride)) or 0 end,
                         set=function(_,v) local d=GetDB(); if d and d.ttsRateOverride ~= nil then d.ttsRateOverride=math.floor(v+0.5) end end,
                     },
                     ttsPreview = {
                         type="execute", name="Preview Voice", order=46, width=1.0,
+                        hidden=function() return crCollapsed.tts end,
                         func=function()
                             local d = GetDB(); if not d then return end
                             local voiceID = (CR.ResolveTTSVoiceID and CR.ResolveTTSVoiceID(d.ttsVoiceOverride)) or 0

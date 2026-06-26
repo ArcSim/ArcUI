@@ -781,7 +781,7 @@ ns.DB_DEFAULTS = {
       anchorOffsetX = 0,
       anchorOffsetY = -2,
       matchGroupWidth = false,
-      matchSlotsOnly = false,
+      matchSlotsOnly = true,
       matchWidthAdjust = 0,
       -- Reverse fill direction: channels fill instead of drain; casts drain instead of fill
       reverseFill = false,
@@ -833,6 +833,73 @@ ns.DB_DEFAULTS = {
       hiddenSpells = {},     -- {[spellID] = true, ...} - Hidden from catalog
     },
     
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- ADVANCED DEBUFFS (standalone draggable icon frame)
+    -- Shows harmful auras on the player with dispel-type border coloring.
+    -- ═══════════════════════════════════════════════════════════════════════════
+    advancedDebuffs = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 2,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColorMode = "dispel",
+      borderColor = { r=0.8, g=0.8, b=0.8, a=1 },
+      borderWidth = 2,
+      borderGlow = false,
+      glowWidth = 2,
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-200, relativeFrame="UIParent" },
+      filters = {
+        PLAYER = false,
+        RAID = false,
+        CROWD_CONTROL = false,
+        RAID_IN_COMBAT = false,
+        RAID_PLAYER_DISPELLABLE = false,
+        IMPORTANT = false,
+      },
+      blacklistEnabled = true,
+      blacklist = {
+        -- Bloodlust / Heroism family — pre-populated to match NorskenUI defaults
+        [57723]  = true,   -- Exhaustion (Bloodlust)
+        [57724]  = true,   -- Sated (Heroism)
+        [80354]  = true,   -- Temporal Displacement (Time Warp – Mage)
+        [160455] = true,   -- Fatigued (Drums of Fury / Battle)
+        [390435] = true,   -- Exhaustion (variant / Warlords-era token)
+        [95809]  = true,   -- Exhaustion (variant)
+        [264689] = true,   -- Fatigued (variant)
+        [308312] = true,   -- Time Trial (Mythic+ BL mechanic)
+      },
+      watchlist = {},
+    },
+
+    advancedExternals = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 1,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColor = { r=0.2, g=0.8, b=0.2, a=1 },
+      borderWidth = 2,
+      borderGlow = false,
+      glowWidth = 2,
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-260, relativeFrame="UIParent" },
+      showBigDefensives = false,
+      blacklistEnabled = true,
+      blacklist = {},
+    },
+
     configVersion = 1
   }
 }
