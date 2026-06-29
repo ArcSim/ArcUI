@@ -46,6 +46,7 @@ local holdTimer          = nil   -- C_Timer handle
 local holdActive         = false
 local castWasInterrupted = false -- set when INTERRUPTED fires before STOP
 local interruptId        = nil   -- player's interrupt spell ID
+local castStart          = 0    -- GetTime() snapshot used only by PreviewOnUpdate
 -- Secret boolean from UnitCastingInfo; passed only to WoW safe-sink APIs, never compared
 local state_notInterruptible = nil
 -- Cached Color objects (rebuilt when bar color settings change)
@@ -721,7 +722,7 @@ local function ShowCast(channel)
     CancelHoldTimer()
     castWasInterrupted = false
 
-    local name, text, texture, notInt, spellID, isEmpowered
+    local name, text, notInt, spellID, isEmpowered
     local duration
     local direction = Enum.StatusBarTimerDirection.ElapsedTime
 
@@ -996,17 +997,20 @@ function FC.Enable()
     eventFrame:RegisterEvent("RAID_TARGET_UPDATE")
     -- Global registration so events fire reliably for the "focus" unit token.
     -- The handler filters with `if unit ~= "focus" then return end`.
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_FAILED")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_DELAYED")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_UPDATE")
-    eventFrame:RegisterEvent("UNIT_TARGET")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
-    eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
+    -- RegisterUnitEvent("focus") guarantees unit="focus" in the handler for NPC focus targets.
+    -- Global RegisterEvent fires with the mob's internal token (nameplate5, boss1, etc.),
+    -- which our unit~="focus" guard would drop, causing missed STOP/START events.
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START",             "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP",              "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED",            "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED",       "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START",     "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP",      "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_DELAYED",           "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_UPDATE",    "focus")
+    eventFrame:RegisterUnitEvent("UNIT_TARGET",                      "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTIBLE",     "focus")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "focus")
     -- Check if the focus is already mid-cast when the feature is first enabled
     local n = UnitCastingInfo("focus")
     if n then ShowCast(false); return end
