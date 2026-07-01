@@ -21,6 +21,7 @@ local collapsed = {
   raidMarker   = true,
   text         = true,
   position     = true,
+  reset        = true,
 }
 
 local ANCHOR_POINTS = {
@@ -43,6 +44,22 @@ local function Refresh()
     ns.FocusCastbar.ApplyAppearance()
   end
   if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
+end
+
+-- Reset every Focus Castbar setting to its DB default. The feature's on/off
+-- state is preserved so the preview stays visible and the user isn't surprised
+-- by the bar vanishing mid-edit.
+local function ResetAllToDefaults()
+  local c = GetDB(); if not c then return end
+  local d = ns.DB_DEFAULTS and ns.DB_DEFAULTS.char and ns.DB_DEFAULTS.char.focusCastbar
+  if not d then return end
+  local wasEnabled = c.enabled
+  wipe(c)
+  for k, v in pairs(d) do
+    if type(v) == "table" then c[k] = CopyTable(v) else c[k] = v end
+  end
+  c.enabled = wasEnabled
+  Refresh()
 end
 
 local function Header(label, key, order)
@@ -489,7 +506,7 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   }
   a.fcFocusTargetColor = {
     type = "color", name = "Focus Target Color", order = 60.403, width = 1.2, hasAlpha = true,
-    desc = "Color of the enemy-name text (who the focus is targeting) shown below the bar.",
+    desc = "Color of the focus-target text (who your focus is currently targeting) shown below the bar.",
     hidden = H("content", function() local c = GetDB(); return not (c and c.showFocusTarget) end),
     get = function()
       local c = GetDB(); local col = c and c.focusTargetColor or {r=0.6,g=0.8,b=1,a=1}
@@ -724,6 +741,22 @@ function ns.FocusCastbarOptions.GetOptionsTable()
       local c = GetDB(); if not c then return end
       c.barPosition = {point="CENTER",relPoint="CENTER",x=0,y=-120}; Refresh()
     end,
+  }
+
+  -- ── Reset ──────────────────────────────────────────────────────
+  a.resetHeader = Header("Reset", "reset", 100)
+
+  a.fcResetDesc = {
+    type = "description", order = 100.05, hidden = H("reset"),
+    name = "|cff888888Reset every Focus Castbar setting (appearance, colors, glows, kick, hold, text, position and anchoring) back to its default. The feature stays enabled.|r",
+  }
+  a.fcResetAll = {
+    type = "execute", name = "|cffff5555Reset All to Default|r", order = 100.1, width = 1.5,
+    desc = "Restore all Focus Castbar settings to their defaults.",
+    confirm = true,
+    confirmText = "Reset ALL Focus Castbar settings to their defaults?",
+    hidden = H("reset"),
+    func = ResetAllToDefaults,
   }
 
   return opts

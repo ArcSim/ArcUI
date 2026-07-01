@@ -445,9 +445,13 @@ function FC.ApplyPosition()
         end
     end
 
+    -- Restore EXACTLY what SavePosition captured (GetPoint's point/relPoint may
+    -- differ from barAnchorPoint after a drag). Forcing barAnchorPoint here made
+    -- a dragged bar jump back toward center whenever appearance re-applied.
     local pos = cfg.barPosition or {point="CENTER", relPoint="CENTER", x=0, y=-120}
-    local ap  = cfg.barAnchorPoint or pos.point or "CENTER"
-    mainFrame:SetPoint(ap, UIParent, ap, pos.x or 0, pos.y or -120)
+    local p   = pos.point    or cfg.barAnchorPoint or "CENTER"
+    local rp  = pos.relPoint or p
+    mainFrame:SetPoint(p, UIParent, rp, pos.x or 0, pos.y or -120)
 end
 
 -- ===================================================================
@@ -1113,11 +1117,13 @@ local function PreviewSetCastVisuals(cfg)
     local textF = mainFrame._textFrame
     if textF then
         textF.nameText:SetText(cfg.showSpellName    and "Focus Castbar" or "")
-        textF.casterText:SetText(cfg.showCasterName and "Focus Target"  or "")
+        -- Placeholder text matches the option group names ("Caster Name" /
+        -- "Focus Target") so each color option maps 1:1 to the line it controls.
+        textF.casterText:SetText(cfg.showCasterName and "Caster Name"   or "")
         textF.timerText:SetText("")
         if textF.focusTargetText then
             if cfg.showFocusTarget then
-                textF.focusTargetText:SetText("Enemy Name")
+                textF.focusTargetText:SetText("Focus Target")
                 textF.focusTargetText:Show()
             else
                 textF.focusTargetText:Hide()
