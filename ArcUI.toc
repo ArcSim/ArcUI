@@ -51,6 +51,10 @@ Utilities\ArcUI_DataRepair.lua
 
 # Castbar
 Castbar\ArcUI_Castbar.lua
+Castbar\ArcUI_FocusCastbar.lua
+
+# Advanced Debuffs
+Bars\ArcUI_AdvancedDebuffs.lua
 
 # Main Options (creates AceDB)
 ArcUI_Options.lua
@@ -74,6 +78,8 @@ Bars\ArcUI_CooldownBarOptions.lua
 Bars\ArcUI_TimerBarOptions.lua
 Bars\ArcUI_CustomOptions.lua
 Castbar\ArcUI_Castbar_Options.lua
+Castbar\ArcUI_FocusCastbar_Options.lua
+Bars\ArcUI_AdvancedDebuffsOptions.lua
 
 # Import/Export
 Import_Export\ArcUI_Bars_ImportExport.lua

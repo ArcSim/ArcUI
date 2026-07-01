@@ -10,6 +10,7 @@ ns.CastbarOptions = ns.CastbarOptions or {}
 local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
+
 -- Collapsible-section state (true = collapsed). Same mechanism the aura panel uses.
 local collapsedSections = {
   autoShare      = true,
@@ -1764,6 +1765,7 @@ function ns.CastbarOptions.GetOptionsTable()
       end,
     }
   end
+
 
   return opts
 end

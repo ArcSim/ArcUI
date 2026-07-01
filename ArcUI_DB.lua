@@ -781,7 +781,7 @@ ns.DB_DEFAULTS = {
       anchorOffsetX = 0,
       anchorOffsetY = -2,
       matchGroupWidth = false,
-      matchSlotsOnly = false,
+      matchSlotsOnly = true,
       matchWidthAdjust = 0,
       -- Reverse fill direction: channels fill instead of drain; casts drain instead of fill
       reverseFill = false,
@@ -833,6 +833,141 @@ ns.DB_DEFAULTS = {
       hiddenSpells = {},     -- {[spellID] = true, ...} - Hidden from catalog
     },
     
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- ADVANCED DEBUFFS (standalone draggable icon frame)
+    -- Shows harmful auras on the player with dispel-type border coloring.
+    -- ═══════════════════════════════════════════════════════════════════════════
+    advancedDebuffs = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 2,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColorMode = "dispel",
+      borderColor = { r=0.8, g=0.8, b=0.8, a=1 },
+      borderWidth = 2,
+      borderGlow = false,
+      glowWidth = 2,
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-200, relativeFrame="UIParent" },
+      filters = {
+        PLAYER = false,
+        RAID = false,
+        CROWD_CONTROL = false,
+        RAID_IN_COMBAT = false,
+        RAID_PLAYER_DISPELLABLE = false,
+        IMPORTANT = false,
+      },
+      blacklistEnabled = true,
+      blacklist = {
+        -- Bloodlust / Heroism family — pre-populated to match NorskenUI defaults
+        [57723]  = true,   -- Exhaustion (Bloodlust)
+        [57724]  = true,   -- Sated (Heroism)
+        [80354]  = true,   -- Temporal Displacement (Time Warp – Mage)
+        [160455] = true,   -- Fatigued (Drums of Fury / Battle)
+        [390435] = true,   -- Exhaustion (variant / Warlords-era token)
+        [95809]  = true,   -- Exhaustion (variant)
+        [264689] = true,   -- Fatigued (variant)
+        [308312] = true,   -- Time Trial (Mythic+ BL mechanic)
+      },
+      watchlist = {},
+    },
+
+    advancedExternals = {
+      enabled = false,
+      iconSize = 40,
+      iconSpacing = 4,
+      iconsPerRow = 8,
+      maxRows = 1,
+      showSwipe = true,
+      reverseSwipe = true,
+      showTooltips = true,
+      growHorizontal = "RIGHT",
+      growVertical = "DOWN",
+      borderColor = { r=0.2, g=0.8, b=0.2, a=1 },
+      borderWidth = 2,
+      borderGlow = false,
+      glowWidth = 2,
+      strata = "MEDIUM",
+      position = { point="CENTER", relativePoint="CENTER", x=0, y=-260, relativeFrame="UIParent" },
+      showBigDefensives = false,
+      blacklistEnabled = true,
+      blacklist = {},
+    },
+
+    focusCastbar = {
+      enabled             = false,
+      width               = 220,
+      height              = 18,
+      barPosition         = { point="CENTER", relPoint="CENTER", x=0, y=-120 },
+      barAnchorPoint      = "CENTER",
+      anchorToFrame       = false,
+      anchorFrameName     = "",
+      anchorPoint         = "CENTER",
+      anchorRelativePoint = "CENTER",
+      anchorOffsetX       = 0,
+      anchorOffsetY       = 0,
+      barFrameStrata      = "MEDIUM",
+      barColor            = { r=1, g=0.65, b=0, a=1 },
+      showBackground      = true,
+      backgroundColor     = { r=0.1, g=0.1, b=0.1, a=0.9 },
+      showBorder          = true,
+      borderColor         = { r=0, g=0, b=0, a=1 },
+      drawnBorderThickness = 2,
+      showGlow            = false,
+      glowType            = "pixel",
+      glowColor           = { r=1, g=0.65, b=0, a=1 },
+      glowWidth           = 2,
+      glowLines           = 8,
+      glowFrequency       = 0.25,
+      showSpellName       = true,
+      spellNameMaxWidth   = 0,
+      showTimer           = true,
+      showCasterName      = true,
+      casterNameColor     = { r=1, g=0.82, b=0, a=1 },
+      casterNameOffsetX   = 0,
+      casterNameOffsetY   = 0,
+      casterNameAnchor    = "RIGHT",
+      showFocusTarget     = false,
+      focusTargetColor    = { r=0.6, g=0.8, b=1, a=1 },
+      focusTargetOffsetX  = 0,
+      focusTargetOffsetY  = 0,
+      focusTargetAnchor   = "RIGHT",
+      showRaidMarker      = true,
+      raidMarkerSize      = 32,
+      raidMarkerAnchor    = "LEFT",
+      raidMarkerOffsetX   = -36,
+      raidMarkerOffsetY   = 0,
+      font                = "Friz Quadrata TT",
+      fontSize            = 11,
+      textOutline         = "THICKOUTLINE",
+      textColor           = { r=1, g=1, b=1, a=1 },
+      texture             = "Blizzard",
+      uninterruptibleEnabled = false,
+      uninterruptibleColor   = { r=0.5, g=0.5, b=0.5, a=1 },
+      raidMarkerDefault    = 8,      -- index shown in preview (moon=8); 0 = off
+      hideNotInterruptible = false,
+      importantGlowEnabled   = false,
+      importantGlowType      = "pixel",
+      importantGlowColor     = { r=1, g=0.2, b=0.2, a=1 },
+      importantGlowLines     = 8,
+      importantGlowFrequency = 0.25,
+      importantGlowThickness = 2,
+      kickEnabled       = false,
+      kickNotReadyColor = { r=0.55, g=0.55, b=0.55, a=1 },
+      kickTickColor     = { r=1, g=1, b=1, a=1 },
+      holdEnabled          = false,
+      holdDuration         = 0.8,
+      holdSuccessColor     = { r=0.2, g=1.0, b=0.2, a=1 },
+      holdFailColor        = { r=1.0, g=0.5, b=0.0, a=1 },
+      holdInterruptedColor = { r=0.2, g=0.4, b=1.0, a=1 },
+    },
+
     configVersion = 1
   }
 }

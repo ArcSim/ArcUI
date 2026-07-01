@@ -13,6 +13,8 @@ local AceDB = LibStub("AceDB-3.0")
 
 -- Profile browser collapsed state (defaults closed)
 local profileBrowserCollapsed = true
+-- Settings tab section collapsed state (defaults open)
+local settingsCollapsed = {}
 
 -- ===================================================================
 -- RELIABLE PANEL OPEN/CLOSE DETECTION
@@ -766,16 +768,34 @@ local function GetOptionsTable()
         return tbl
       end)(),
 
-      castbar = (function()
-        local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
-          type = "group",
-          name = "Castbar",
-          args = { loading = { type = "description", name = "Loading...", order = 1 } }
-        }
-        tbl.name  = "Castbar"
-        tbl.order = 5
-        return tbl
-      end)(),
+      castbar = {
+        type        = "group",
+        name        = "Castbar",
+        order       = 5,
+        childGroups = "tab",
+        args        = {
+          playerCastbar = (function()
+            local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Player Castbar",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name  = "Player Castbar"
+            tbl.order = 1
+            return tbl
+          end)(),
+          focusCastbar = (function()
+            local tbl = ns.FocusCastbarOptions and ns.FocusCastbarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Focus Castbar",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name  = "Focus Castbar"
+            tbl.order = 2
+            return tbl
+          end)(),
+        },
+      },
 
       setMyKick = (function()
         local tbl = ns.GetSetMyKickOptionsTable and ns.GetSetMyKickOptionsTable() or {
@@ -788,15 +808,30 @@ local function GetOptionsTable()
         return tbl
       end)(),
 
+      advancedDebuffs = (function()
+        local tbl = ns.AdvancedDebuffs and ns.AdvancedDebuffs.GetOptionsTable and ns.AdvancedDebuffs.GetOptionsTable() or {
+          type = "group",
+          name = "Advanced Debuffs",
+          args = { loading = { type = "description", name = "Loading...", order = 1 } }
+        }
+        tbl.name  = "Advanced Debuffs"
+        tbl.order = 3.8
+        return tbl
+      end)(),
+
       settings = {
         type = "group",
         name = "Settings",
         order = 9,
         args = {
           menuHeader = {
-            type = "header",
-            name = "Background",
-            order = 1
+            type = "toggle",
+            name = "|cffffd100Background|r",
+            dialogControl = "CollapsibleHeader",
+            order = 1,
+            width = "full",
+            get = function() return not settingsCollapsed.background end,
+            set = function(_, v) settingsCollapsed.background = not v end,
           },
           menuBackgroundAlpha = {
             type = "range",
@@ -808,6 +843,7 @@ local function GetOptionsTable()
             step = 0.05,
             isPercent = true,
             width = 1.5,
+            hidden = function() return settingsCollapsed.background end,
             get = function()
               local globalDB = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
               return globalDB and globalDB.menuBackgroundAlpha or 1.0
@@ -823,11 +859,15 @@ local function GetOptionsTable()
               end
             end,
           },
-          
+
           minimapHeader = {
-            type = "header",
-            name = "Minimap",
-            order = 10
+            type = "toggle",
+            name = "|cffffd100Minimap|r",
+            dialogControl = "CollapsibleHeader",
+            order = 10,
+            width = "full",
+            get = function() return not settingsCollapsed.minimap end,
+            set = function(_, v) settingsCollapsed.minimap = not v end,
           },
           minimapButton = {
             type = "toggle",
@@ -835,6 +875,7 @@ local function GetOptionsTable()
             desc = "Toggle the minimap button visibility",
             order = 11,
             width = 1.5,
+            hidden = function() return settingsCollapsed.minimap end,
             get = function()
               local globalDB = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
               return globalDB and not globalDB.minimap.hide
@@ -851,11 +892,15 @@ local function GetOptionsTable()
               end
             end,
           },
-          
+
           changelogHeader = {
-            type = "header",
-            name = "Changelog",
-            order = 20
+            type = "toggle",
+            name = "|cffffd100Changelog|r",
+            dialogControl = "CollapsibleHeader",
+            order = 20,
+            width = "full",
+            get = function() return not settingsCollapsed.changelog end,
+            set = function(_, v) settingsCollapsed.changelog = not v end,
           },
           changelogShow = {
             type = "toggle",
@@ -863,6 +908,7 @@ local function GetOptionsTable()
             desc = "Automatically pop up the 'What's New' window once after each ArcUI update.",
             order = 21,
             width = 1.8,
+            hidden = function() return settingsCollapsed.changelog end,
             get = function()
               local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
               return not (g and g.changelog and g.changelog.disabled)
@@ -881,15 +927,20 @@ local function GetOptionsTable()
             desc = "Open the 'What's New' window now.",
             order = 22,
             width = 1.2,
+            hidden = function() return settingsCollapsed.changelog end,
             func = function()
               if ns.Changelog and ns.Changelog.Show then ns.Changelog.Show() end
             end,
           },
 
           aboutHeader = {
-            type = "header",
-            name = "About",
-            order = 90
+            type = "toggle",
+            name = "|cffffd100About|r",
+            dialogControl = "CollapsibleHeader",
+            order = 90,
+            width = "full",
+            get = function() return not settingsCollapsed.about end,
+            set = function(_, v) settingsCollapsed.about = not v end,
           },
           version = {
             type = "input",
@@ -897,6 +948,7 @@ local function GetOptionsTable()
             order = 91,
             width = 1.0,
             dialogControl = "SFX-Info",
+            hidden = function() return settingsCollapsed.about end,
             get = function() return ns.AddonInfo.Version end,
             set = function() end,
           },
@@ -906,6 +958,7 @@ local function GetOptionsTable()
             order = 92,
             width = 1.0,
             dialogControl = "SFX-Info",
+            hidden = function() return settingsCollapsed.about end,
             get = function() return ns.AddonInfo.Author end,
             set = function() end,
           },
@@ -1314,6 +1367,12 @@ initFrame:SetScript("OnEvent", function(self, event)
       end
       if ns.Castbar and ns.Castbar.Init then
         ns.Castbar.Init()
+      end
+      if ns.FocusCastbar and ns.FocusCastbar.Init then
+        ns.FocusCastbar.Init()
+      end
+      if ns.AdvancedDebuffs and ns.AdvancedDebuffs.Init then
+        ns.AdvancedDebuffs.Init()
       end
       if ns.SetMyKick and ns.SetMyKick.Init then
         ns.SetMyKick.Init()

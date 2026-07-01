@@ -7,6 +7,8 @@
 local ADDON, ns = ...
 ns.CustomOptions = ns.CustomOptions or {}
 
+local customListCollapsed = {}
+
 local AceGUI = LibStub("AceGUI-3.0")
 
 -- ===================================================================
@@ -100,17 +102,22 @@ function ns.CustomOptions.GetAurasDynamicArgs()
     spacer1 = { type = "description", name = "\n", order = 3 },
     
     existingHeader = {
-      type = "header",
-      name = "Existing Custom Auras",
+      type = "toggle",
+      name = "|cffffd100Existing Custom Auras|r",
+      dialogControl = "CollapsibleHeader",
       order = 10,
+      width = "full",
+      get = function() return not customListCollapsed.auras end,
+      set = function(_, v) customListCollapsed.auras = not v end,
     },
   }
-  
+
   -- Add dynamic aura list
   local auraArgs = ns.CustomOptions.BuildAuraListArgs()
   local order = 11
   for key, arg in pairs(auraArgs) do
     arg.order = order + (arg.order or 0) / 100
+    arg.hidden = function() return customListCollapsed.auras end
     baseArgs[key] = arg
   end
   
@@ -271,17 +278,22 @@ function ns.CustomOptions.GetCooldownsDynamicArgs()
     spacer1 = { type = "description", name = "\n", order = 3 },
     
     existingHeader = {
-      type = "header",
-      name = "Existing Custom Cooldowns",
+      type = "toggle",
+      name = "|cffffd100Existing Custom Cooldowns|r",
+      dialogControl = "CollapsibleHeader",
       order = 10,
+      width = "full",
+      get = function() return not customListCollapsed.cooldowns end,
+      set = function(_, v) customListCollapsed.cooldowns = not v end,
     },
   }
-  
+
   -- Add dynamic cooldown list
   local cdArgs = ns.CustomOptions.BuildCooldownListArgs()
   local order = 11
   for key, arg in pairs(cdArgs) do
     arg.order = order + (arg.order or 0) / 100
+    arg.hidden = function() return customListCollapsed.cooldowns end
     baseArgs[key] = arg
   end
   
