@@ -207,6 +207,7 @@ ns.DB_DEFAULTS = {
           borderStyle = "Drawn",
           drawnBorderThickness = 2,
           borderColor = {r=0, g=0, b=0, a=1},
+          barPaddingL = 0, barPaddingR = 0, barPaddingT = 0, barPaddingB = 0,
           showTickMarks = true,
           tickMode = "all",
           tickThickness = 1,
@@ -495,6 +496,7 @@ ns.DB_DEFAULTS = {
           showBorder = true,
           drawnBorderThickness = 2,
           borderColor = {r=0, g=0, b=0, a=1},
+          barPaddingL = 0, barPaddingR = 0, barPaddingT = 0, barPaddingB = 0,
           showTickMarks = false,
           tickMode = "all",
           tickThickness = 2,
@@ -625,7 +627,8 @@ ns.DB_DEFAULTS = {
           borderStyle = "Drawn",
           drawnBorderThickness = 2,
           borderColor = {r=0, g=0, b=0, a=1},
-          
+          barPaddingL = 0, barPaddingR = 0, barPaddingT = 0, barPaddingB = 0,
+
           -- Tick marks
           showTickMarks = true,
           tickMode = "all",
@@ -728,6 +731,7 @@ ns.DB_DEFAULTS = {
       showBorder = true,
       borderColor = {r=0, g=0, b=0, a=1},
       drawnBorderThickness = 2,
+      barPaddingL = 0, barPaddingR = 0, barPaddingT = 0, barPaddingB = 0,
       showIcon = true,
       iconSize = 20,
       showText = true,

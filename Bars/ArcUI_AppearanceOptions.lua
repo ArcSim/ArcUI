@@ -7562,6 +7562,108 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showBackground)
         end
       },
+      barPaddingHeader = {
+        type = "description",
+        name = "|cffffd100Fill Inset|r  (insets the fill texture from each edge; the background stays full-size)",
+        order = 41.24,
+        fontSize = "medium",
+        hidden = function()
+          if IsIconMode() or collapsedSections.background then return true end
+          return IsChargeBar()
+        end
+      },
+      barPaddingL = {
+        type = "range",
+        name = "Inset Left",
+        desc = "Inset between the background's left edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingL or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingL = value
+            RefreshBar()
+          end
+        end,
+        order = 41.25,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.background then return true end
+          return IsChargeBar()
+        end
+      },
+      barPaddingR = {
+        type = "range",
+        name = "Inset Right",
+        desc = "Inset between the background's right edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingR or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingR = value
+            RefreshBar()
+          end
+        end,
+        order = 41.26,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.background then return true end
+          return IsChargeBar()
+        end
+      },
+      barPaddingT = {
+        type = "range",
+        name = "Inset Top",
+        desc = "Inset between the background's top edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingT or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingT = value
+            RefreshBar()
+          end
+        end,
+        order = 41.27,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.background then return true end
+          return IsChargeBar()
+        end
+      },
+      barPaddingB = {
+        type = "range",
+        name = "Inset Bottom",
+        desc = "Inset between the background's bottom edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingB or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingB = value
+            RefreshBar()
+          end
+        end,
+        order = 41.28,
+        width = 0.9,
+        hidden = function()
+          if IsIconMode() or collapsedSections.background then return true end
+          return IsChargeBar()
+        end
+      },
       -- Frame Width (only for charge bars when showBackground is enabled)
       frameWidth = {
         type = "range",
@@ -7851,32 +7953,6 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showBorder)
         end
       },
-      barPadding = {
-        type = "range",
-        name = "Bar Inset",
-        desc = "Padding between the border and the bar fill texture. 0 = fill touches border edge.",
-        min = 0, max = 10, step = 1,
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.barPadding or 0
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.barPadding = value
-            RefreshBar()
-          end
-        end,
-        order = 51.4,
-        width = 0.9,
-        hidden = function()
-          if IsIconMode() or collapsedSections.border then return true end
-          if IsChargeBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showBorder)
-        end
-      },
-      
       -- BAR BORDER (deprecated - showBorder now handles all bar types via 4-texture system)
       showBarBorder = {
         type = "toggle",
