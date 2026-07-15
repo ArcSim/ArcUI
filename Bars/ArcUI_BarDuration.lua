@@ -109,10 +109,11 @@ local function GetDurFormatter(decimals)
 end
 
 -- ── state ─────────────────────────────────────────────────────────────────
-local containers = {}   -- [unit] -> AuraContainer
-local attached   = {}   -- [barFrame] -> { idKey, cooldownID, spellIDs, subs = {...}, decimals, ... }
-local pending    = {}   -- [barFrame] -> { fs, cooldownID, trackedSpellID, unit, opts }
-local seq        = 0
+local containers    = {}   -- [unit] -> AuraContainer
+local attached      = {}   -- [barFrame] -> { idKey, cooldownID, spellIDs, subs = {...}, decimals, ... }
+local pending       = {}   -- [barFrame] -> { fs, cooldownID, trackedSpellID, unit, opts }
+local styleDeferred = {}   -- [barFrame] -> packed ApplyStyle args (buttons forbidden -> re-run on regen)
+local seq           = 0
 
 -- One AuraContainer per unit. Created out of combat only (in-combat creation is a Lua error);
 -- guarded, so no pcall. Container creation is 12.1-only (IS_121 early-returned above).
@@ -180,6 +181,17 @@ local function WireSub(button, barFrame, fs, opts, sub)
     at:Show()
   end
   if button.EnableMouse then button:EnableMouse(false) end
+
+  -- Anchor the BUTTON itself over the bar HERE, inside initializeFrame -- the
+  -- one window PTR5 guarantees the button is not forbidden. Post-init, ANY
+  -- API call on it Lua-errors whenever auras are secret (the in-combat
+  -- "forbidden object" ClearAllPoints error), so the old post-AddAuraSlot
+  -- anchor block cannot exist. Anchors persist through the engine's own
+  -- hide/show, and re-attaches always create fresh subs, so once is enough.
+  button:ClearAllPoints()
+  button:SetAllPoints(barFrame.bar or barFrame)
+  button:SetFrameStrata(barFrame:GetFrameStrata())
+  button:SetFrameLevel((((barFrame.bar and barFrame.bar:GetFrameLevel()) or barFrame:GetFrameLevel()) or 1) + 1)
 end
 
 -- Create one spell-ID-filtered slot on `c` (unit `filter`) that drives barFrame.bar / fs, anchored
@@ -194,14 +206,10 @@ local function CreateSub(c, filter, spellIDs, barFrame, fs, opts)
     initializeFrame  = function(button) WireSub(button, barFrame, fs, opts, sub) end,
   })
   if c.UpdateAllAuras then c:UpdateAllAuras() end   -- parse ALREADY-active auras now, not next UNIT_AURA
-  if slot then
-    slot:ClearAllPoints()
-    slot:SetAllPoints(barFrame.bar or barFrame)
-    slot:SetFrameStrata(barFrame:GetFrameStrata())
-    slot:SetFrameLevel((((barFrame.bar and barFrame.bar:GetFrameLevel()) or barFrame:GetFrameLevel()) or 1) + 1)
-    if slot.EnableMouse then slot:EnableMouse(false) end
-    sub.slot = slot
-  end
+  -- NO button touches past this point: anchoring/strata/mouse all happen in
+  -- WireSub (the initializeFrame window). The returned slot IS forbidden right
+  -- now if auras are secret -- storing the reference is fine, calling is not.
+  sub.slot = slot
   diag.slotNew = diag.slotNew + 1
   return sub
 end
@@ -261,13 +269,18 @@ end
 
 function BD.Detach(barFrame)
   pending[barFrame] = nil
+  styleDeferred[barFrame] = nil
   local a = attached[barFrame]
   if not a then return end
   attached[barFrame] = nil
   for _, sub in ipairs(a.subs or {}) do
-    if sub.slot then sub.slot:Hide(); sub.slot:ClearAllPoints() end
+    -- NEVER touch the slot button here: post-init it is FORBIDDEN whenever
+    -- auras are secret (PTR5). Parking the include set on a never-matching id
+    -- makes the ENGINE release and hide the button itself (engine-side Hide is
+    -- always legal, anchors are kept). Container methods stay callable.
     if sub.container and sub.key and sub.container.SetAuraSlotCandidateFilters then
       sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
+      if sub.container.UpdateAllAuras then sub.container:UpdateAllAuras() end
     end
   end
 end
@@ -283,6 +296,20 @@ end
 function BD.ApplyStyle(barFrame, durationFrame, showDuration, decimals, durationColor, baseColor, fillDirection, durFormatter, textColorEnabled)
   local a = barFrame and attached[barFrame]
   if not a then return end
+  -- PTR5: the engine button AND everything we templated into it (ArcBar/
+  -- ArcTimer/holder are its CHILDREN) are FORBIDDEN while auras are secret.
+  -- NO object probe works: IsForbidden() on the button returned FALSE in-game
+  -- while holder:SetFrameStrata threw (the PTR5 state is not the classic
+  -- forbidden flag), and data-secrecy probes over/under-gate (AurasSecret is
+  -- IS_121-always; forced-CVar desks read secret data while buttons stay
+  -- touchable out of combat). The gate is ENVIRONMENTAL: aura secrecy tracks
+  -- combat/encounter (thread-confirmed), so defer there; the regen flush
+  -- re-applies. Desk styling with forced CVars keeps working out of combat.
+  if InCombatLockdown() or (IsEncounterInProgress and IsEncounterInProgress()) then
+    styleDeferred[barFrame] = { durationFrame, showDuration, decimals, durationColor, baseColor, fillDirection, durFormatter, textColorEnabled }
+    return
+  end
+  styleDeferred[barFrame] = nil
   local dtext = durationFrame and durationFrame.text
   local formatterChanged = (a.decimals ~= decimals) or (a.textColorEnabled ~= textColorEnabled) or textColorEnabled
   local directionChanged = fillDirection and a.direction ~= fillDirection
@@ -347,6 +374,15 @@ ev:SetScript("OnEvent", function(_, event)
     pending = {}
     for bf, req in pairs(q) do
       BD.Attach(bf, req.fs, req.cooldownID, req.trackedSpellID, req.unit, req.opts)
+    end
+  end
+  -- Style pushes that arrived while the buttons were forbidden (secret auras):
+  -- re-run now; ApplyStyle re-defers itself if secrecy somehow still holds.
+  if next(styleDeferred) then
+    local q = styleDeferred
+    styleDeferred = {}
+    for bf, s in pairs(q) do
+      BD.ApplyStyle(bf, s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8])
     end
   end
 end)

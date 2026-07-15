@@ -29,6 +29,28 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.7.8",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Focus Castbar: Hide Non-Important Casts", desc = "Show the focus castbar only for casts Blizzard marks as important (the dangerous ones), so it stays out of the way during trash. Off by default." },
+          { title = "Global Font & Texture", desc = "Set your font and bar texture once and apply them everywhere at once (all bars, both castbars, and cooldown text) instead of changing each one by hand." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Match Icon Edges Now Works on Aura Bars", desc = "Lines your aura bars up neatly with your icon group, the same way it already does for the other bar types. If you already had it on, the bar will snap into place." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Stacks and Timers Show Again", desc = "Fixed aura stack numbers and duration timers that had stopped showing for some players." },
+          { title = "Midnight (12.1) Fixes", desc = "On the upcoming Midnight patch, duration bars and aura textures now keep working properly in combat." },
+        },
+      },
+    },
+  },
+  {
     version = "3.7.7",
     sections = {
       {

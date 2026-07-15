@@ -4637,24 +4637,48 @@ local function UpdateBarForGroup(barNumber, cfg, barFrame, groupName)
 
   barFrame:ClearAllPoints()
   local matchSlots = cfg.matchGroupWidth and cfg.matchSlotsOnly and barWidth
+  -- "Match Icon Edges" (cfg.matchIconEdges): same option Resources/CooldownBars already
+  -- honor. Anchors flush to the GROUP'S ACTUAL ICON BOUNDING BOX (via the shared
+  -- BarGroupAlign insets) instead of the centered/container-edge fallback below.
+  -- Gated behind matchSlots + the toggle so default behavior (toggle off) is
+  -- byte-for-byte unchanged for every existing bar.
+  local iconEdges = matchSlots and cfg.matchIconEdges and ns.BarGroupAlign
   if anchorPoint == "TOP" then
-    if matchSlots then
+    if iconEdges then
+      local insetX = ns.BarGroupAlign.GetIconInsetX(grp)
+      local insetY = ns.BarGroupAlign.GetIconInsetY(grp)
+      barFrame:SetPoint("BOTTOMLEFT", container, "TOPLEFT", insetX + offsetX, -insetY + offsetY)
+    elseif matchSlots then
       local halfWidth = PixelSnap(barWidth / 2, effScale)
       barFrame:SetPoint("BOTTOMLEFT", container, "TOP", -halfWidth + offsetX, offsetY)
     else
       barFrame:SetPoint("BOTTOMLEFT", container, "TOPLEFT", offsetX, offsetY)
     end
   elseif anchorPoint == "BOTTOM" then
-    if matchSlots then
+    if iconEdges then
+      local insetX = ns.BarGroupAlign.GetIconInsetX(grp)
+      local insetBottom = ns.BarGroupAlign.GetIconInsetBottom(grp)
+      barFrame:SetPoint("TOPLEFT", container, "BOTTOMLEFT", insetX + offsetX, insetBottom + offsetY)
+    elseif matchSlots then
       local halfWidth = PixelSnap(barWidth / 2, effScale)
       barFrame:SetPoint("TOPLEFT", container, "BOTTOM", -halfWidth + offsetX, offsetY)
     else
       barFrame:SetPoint("TOPLEFT", container, "BOTTOMLEFT", offsetX, offsetY)
     end
   elseif anchorPoint == "LEFT" then
-    barFrame:SetPoint("RIGHT", container, "LEFT", offsetX, offsetY)
+    if iconEdges then
+      local insetY = ns.BarGroupAlign.GetIconInsetY(grp)
+      barFrame:SetPoint("TOPRIGHT", container, "TOPLEFT", offsetX, -(insetY + offsetY))
+    else
+      barFrame:SetPoint("RIGHT", container, "LEFT", offsetX, offsetY)
+    end
   elseif anchorPoint == "RIGHT" then
-    barFrame:SetPoint("LEFT", container, "RIGHT", offsetX, offsetY)
+    if iconEdges then
+      local insetY = ns.BarGroupAlign.GetIconInsetY(grp)
+      barFrame:SetPoint("TOPLEFT", container, "TOPRIGHT", offsetX, -(insetY + offsetY))
+    else
+      barFrame:SetPoint("LEFT", container, "RIGHT", offsetX, offsetY)
+    end
   end
 end
 

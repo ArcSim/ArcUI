@@ -191,6 +191,16 @@ function ns.FocusCastbarOptions.GetOptionsTable()
     set = function(_, v) local c = GetDB(); if c then c.hideNotInterruptible = v; Refresh() end end,
   }
 
+  -- Hide non-important. Secret-safe: IsSpellImportant is a secret boolean fed
+  -- through EvaluateColorValueFromBoolean -> SetAlpha, never tested in Lua.
+  a.fcHideNotImportant = {
+    type = "toggle", name = "Hide Non-Important Casts", order = 20.35,
+    desc = "Only show casts that Blizzard marks as important (typically dangerous or lethal-if-not-interrupted abilities).",
+    width = 2.0, hidden = H("colors"),
+    get = function() local c = GetDB(); return c and c.hideNotImportant end,
+    set = function(_, v) local c = GetDB(); if c then c.hideNotImportant = v; Refresh() end end,
+  }
+
   -- Kick Indicator
   a.fcKickSep = {
     type = "description", name = "|cff888888— Kick Indicator —|r",

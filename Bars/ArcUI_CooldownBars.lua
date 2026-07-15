@@ -63,8 +63,12 @@ ns.CooldownBars.maxLogLines = 100
 local function SafeToString(val)
   if val == nil then return "nil" end
   if issecretvalue and issecretvalue(val) then return "** SECRET **" end
-  local ok, str = pcall(tostring, val)
-  return ok and str or "** ERROR **"
+  local t = type(val)
+  if t == "string" then return val end
+  if t == "number" or t == "boolean" then return tostring(val) end
+  -- Other types can carry a __tostring metamethod, which is the only thing that makes
+  -- tostring throw. This is a debug logger, so report the type rather than pcall-guard it.
+  return "<" .. t .. ">"
 end
 
 local function Log(msg)

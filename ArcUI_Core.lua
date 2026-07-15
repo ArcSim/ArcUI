@@ -1918,12 +1918,17 @@ end
 -- scan/sticky/UNIT_AURA before any signal materializes -- so on 12.1 conservatively treat auras as
 -- ALWAYS secret: every instance-id aura read is skipped -> zero crashes. Value-derived aura features
 -- are off on 12.1 (they cannot work under secrecy anyway) until the sanctioned AuraContainer rework
--- lands. Inert on 12.0.x. IS_121 must NOT be trusted to the interface number alone -- PTR clients
--- frequently still report the PREVIOUS toc version early in a cycle, which silently disables this
--- whole block (the exact failure we hit). Enum.ForbiddenAspect is a 12.1-only global (confirmed
--- absent from the 12.0.7 UI source) -> use it as a version-proof marker OR'd with the toc number.
+-- lands. Inert on 12.0.x.
+-- HISTORY: this was previously OR'd with (Enum.ForbiddenAspect ~= nil) as a "version-proof" 12.1
+-- marker, on the belief that the enum was 12.1-only. It was NOT -- Blizzard seeded it on live 12.0.7
+-- (present on 12.0.7.68453, absent from the earlier 68275 UI-source dump that was checked), so it
+-- flagged live as 12.1 and blanked every stack/duration display. Interface version is the honest gate.
+-- 12.1 (Midnight) = interface 120100. Detect strictly by interface version.
+-- Do NOT also test Enum.ForbiddenAspect: that enum was seeded on LIVE 12.0.7 as
+-- 12.1 groundwork, so testing for it flagged live clients as 12.1 -> AurasSecret
+-- returned true for every unit -> every stack/duration secret-gate blanked out on
+-- live (icons showed, stacks/counts did not). Interface version is the reliable gate.
 local IS_121 = (tonumber((select(4, GetBuildInfo()))) or 0) >= 120100
-            or (Enum and Enum.ForbiddenAspect ~= nil)
 -- On-demand diagnostic (/arcsec) + one-shot on first call: prints the raw secrecy signals so
 -- detection can be checked against ground truth instead of guessed.
 local function DumpAuraSecrecy()
@@ -1936,20 +1941,17 @@ local function DumpAuraSecrecy()
     cv("addonEncounterRestrictionsForced"), cv("addonPvPMatchRestrictionsForced"),
     tostring(aurasSecretSticky.player), tostring(ScanUnitHasSecretAura("player"))))
 end
-local _asDumped = false
 local function AurasSecret(unit)
   unit = unit or "player"
-  -- One-shot secrecy dump is a 12.1 development diagnostic only. On live it must stay
-  -- silent (AurasSecret runs for essentially every aura/stack/duration bar). /arcsec
-  -- still triggers it on demand for anyone debugging.
-  if IS_121 and not _asDumped then _asDumped = true; DumpAuraSecrecy() end
-  if IS_121 then return true end
-  if aurasSecretSticky[unit] then return true end
-  local now = GetTime()
-  if _scanSecretStamp[unit] and (now - _scanSecretStamp[unit]) < 0.1 then return _scanSecretCache[unit] end
-  local s = ForcedRestriction() or ScanUnitHasSecretAura(unit)
-  _scanSecretCache[unit], _scanSecretStamp[unit] = s, now
-  return s
+  -- The ONLY environment where the C_UnitAuras aura APIs actually THROW is 12.1 (they
+  -- blanket-throw "cannot be accessed when secret while tainted"). On live 12.0.x those same
+  -- calls return secret-SAFE values, and every AurasSecret gate feeds the result only to a safe
+  -- sink (SetText / SetTimerDuration / SetAlpha), never a compare -- so on live they must run and
+  -- DISPLAY (a secret stack/duration is still showable). Gating on live-secrecy (the old
+  -- sticky/scan/forced paths) wrongly blanked displayable stacks/durations in M+ -- the "lost
+  -- functionality on live" regression. So the gate is 12.1-only. The sticky/scan/forced signals
+  -- are kept (populated by NoteUnitAuraSecrecy / used by the /arcsec dump) for diagnostics only.
+  return IS_121
 end
 local function NoteUnitAuraSecrecy(unit, updateInfo)
   -- Set-true-only: a non-secret partial update (e.g. an MSW stack tick) must not clear a unit that

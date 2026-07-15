@@ -2137,10 +2137,13 @@ local function CreateUnifiedCatalogIconEntry(index)
       
       -- Check if this is a charge spell
       if entry.spellID then
-        local chargeInfo = nil
-        pcall(function() chargeInfo = C_Spell.GetSpellCharges(entry.spellID) end)
+        local chargeInfo = C_Spell.GetSpellCharges(entry.spellID)
         if chargeInfo then
-          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (chargeInfo.currentCharges or "?") .. "/" .. (chargeInfo.maxCharges or "?")
+          -- currentCharges is secret-when-restricted (M+/instances); maxCharges is not.
+          -- Guard the current count so concatenating it can never choke on a secret -- no pcall.
+          local cur = chargeInfo.currentCharges
+          if issecretvalue and issecretvalue(cur) then cur = nil end
+          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (cur or "?") .. "/" .. (chargeInfo.maxCharges or "?")
         end
       end
       
@@ -2269,10 +2272,13 @@ local function CreateAuraCatalogIconEntry(index)
       
       -- Check if this is a charge spell
       if entry.spellID then
-        local chargeInfo = nil
-        pcall(function() chargeInfo = C_Spell.GetSpellCharges(entry.spellID) end)
+        local chargeInfo = C_Spell.GetSpellCharges(entry.spellID)
         if chargeInfo then
-          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (chargeInfo.currentCharges or "?") .. "/" .. (chargeInfo.maxCharges or "?")
+          -- currentCharges is secret-when-restricted (M+/instances); maxCharges is not.
+          -- Guard the current count so concatenating it can never choke on a secret -- no pcall.
+          local cur = chargeInfo.currentCharges
+          if issecretvalue and issecretvalue(cur) then cur = nil end
+          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (cur or "?") .. "/" .. (chargeInfo.maxCharges or "?")
         end
       end
       
@@ -2392,10 +2398,13 @@ local function CreateCooldownCatalogIconEntry(index)
       
       -- Check if this is a charge spell
       if entry.spellID then
-        local chargeInfo = nil
-        pcall(function() chargeInfo = C_Spell.GetSpellCharges(entry.spellID) end)
+        local chargeInfo = C_Spell.GetSpellCharges(entry.spellID)
         if chargeInfo then
-          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (chargeInfo.currentCharges or "?") .. "/" .. (chargeInfo.maxCharges or "?")
+          -- currentCharges is secret-when-restricted (M+/instances); maxCharges is not.
+          -- Guard the current count so concatenating it can never choke on a secret -- no pcall.
+          local cur = chargeInfo.currentCharges
+          if issecretvalue and issecretvalue(cur) then cur = nil end
+          desc = desc .. "\n|cffff9900Charge Spell|r: " .. (cur or "?") .. "/" .. (chargeInfo.maxCharges or "?")
         end
       end
       

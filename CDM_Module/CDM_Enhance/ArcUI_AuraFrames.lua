@@ -167,10 +167,10 @@ local function EvaluateThresholdGlows()
               local function evalDurObj(durObj)
                 if threshSec then
                   local curve = AF.GetGlowThresholdCurveSeconds(threshSec)
-                  if curve then
-                    local ok, val = pcall(durObj.EvaluateRemainingDuration, durObj, curve)
-                    return ok and val or nil
-                  end
+                  -- Direct call (no pcall): EvaluateRemainingDuration returns a NON-secret
+                  -- result and does not throw on a valid durObj -- same contract the
+                  -- EvaluateRemainingPercent branch below already relies on.
+                  if curve then return durObj:EvaluateRemainingDuration(curve) end
                 else
                   local curve = AF.GetGlowThresholdCurve(stateVisuals.glowThreshold)
                   if curve then return durObj:EvaluateRemainingPercent(curve) end

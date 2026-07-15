@@ -49,6 +49,7 @@ end
 -- ── state ────────────────────────────────────────────────────────────────────
 local containers = {}   -- [unit] -> AuraContainer frame
 local attached   = {}   -- [targetFrame] -> { slot, unit, spellID, key, container }
+local pending    = {}   -- [targetFrame] -> { spellID, unit } (combat-deferred, flushed on regen)
 local slotSeq    = 0
 
 -- Resolve the live frame for a cdID (native cooldownID) or arcID — same lookup the
@@ -112,9 +113,15 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
 
     local c = GetContainer(unit)
     if not c or not c.AddAuraSlot then
-        Log("no container / AddAuraSlot unavailable.")
+        -- Reload mid-combat lands here: container CREATION is hard combat-
+        -- locked by Blizzard, so showing the overlay DURING that combat is
+        -- impossible. Queue it -- the regen flush below re-attaches the moment
+        -- combat drops (and eager creation at login covers every later fight).
+        pending[targetFrame] = { spellID = auraSpellID, unit = unit }
+        Log("no container yet (combat?) -> queued for regen (spellID=%s).", tostring(auraSpellID))
         return nil
     end
+    pending[targetFrame] = nil
 
     -- spellID filtering is only valid for HELPFUL on assistable units, HARMFUL on non-assistable.
     local assist = (unit == "player") or (UnitCanAssist and UnitCanAssist("player", unit))
@@ -140,6 +147,25 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
             -- of the icon's). Disable it on the button + its cooldown at creation.
             if button.EnableMouse then button:EnableMouse(false) end
             if button.ArcCD and button.ArcCD.EnableMouse then button.ArcCD:EnableMouse(false) end
+            -- Anchor + seamless cover INSIDE the init window. PTR5: the button
+            -- and every region we templated into it are FORBIDDEN post-init
+            -- whenever auras are secret -- combat re-attaches (CDM frame
+            -- rebinds) land here, the only moment they are guaranteed legal.
+            -- Slot frames are excluded from the container's flow layout, so
+            -- this anchoring sticks.
+            button:ClearAllPoints()
+            button:SetAllPoints(targetFrame)
+            button:SetFrameStrata(targetFrame:GetFrameStrata())
+            -- LAYERING: sit just above the target's NATIVE SWIPE, not +5 over
+            -- the whole frame -- charge/stack text, glows and labels are all
+            -- designed to draw above the swipe, so slotting in at swipe+1
+            -- keeps them on top of our aura swipe too (the +5 overlay was
+            -- burying stacks and glows).
+            local swipe = targetFrame.Cooldown
+            local lvl = (swipe and swipe.GetFrameLevel and swipe:GetFrameLevel())
+                or targetFrame:GetFrameLevel()
+            button:SetFrameLevel(lvl + 1)
+            MatchCover(button, targetFrame)
         end,
     })
 
@@ -147,16 +173,7 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
         Log("AddAuraSlot returned nil (spellID=%s, filter=%s).", tostring(auraSpellID), filter)
         return nil
     end
-
-    -- Slot frames are excluded from the container's flow layout, so plain anchoring
-    -- over the target sticks. Overlay same-size, one level up.
-    slot:ClearAllPoints()
-    slot:SetAllPoints(targetFrame)
-    slot:SetFrameStrata(targetFrame:GetFrameStrata())
-    slot:SetFrameLevel(targetFrame:GetFrameLevel() + 5)
-    if slot.EnableMouse then slot:EnableMouse(false) end
-    -- Seamless cover: copy the target icon's texture/zoom/bounds so the overlay matches exactly.
-    MatchCover(slot, targetFrame)
+    -- NO slot touches past this point (see the init-window note above).
 
     attached[targetFrame] = { slot = slot, unit = unit, spellID = auraSpellID, key = key, container = c }
     Log("attached: spellID=%s filter=%s key=%s over target (level +5).", tostring(auraSpellID), filter, key)
@@ -164,16 +181,17 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
 end
 
 function DOC.Detach(targetFrame)
+    pending[targetFrame] = nil
     local a = attached[targetFrame]
     if not a then return end
     attached[targetFrame] = nil
-    if a.slot then
-        a.slot:Hide()
-        a.slot:ClearAllPoints()
-    end
-    -- No RemoveAuraSlot in the PoC: retarget the slot to spellID 0 so it never matches again.
+    -- NEVER touch the slot button here: post-init it is FORBIDDEN whenever
+    -- auras are secret (PTR5). Parking the include set on a never-matching id
+    -- makes the ENGINE release + hide the button itself (always legal);
+    -- anchors are kept. Container methods stay callable in combat.
     if a.container and a.container.SetAuraSlotCandidateFilters then
         a.container:SetAuraSlotCandidateFilters(a.key, { includeSpellIDs = { [0] = true } })
+        if a.container.UpdateAllAuras then a.container:UpdateAllAuras() end
     end
     Log("detached: key=%s", a.key)
 end
@@ -182,7 +200,29 @@ function DOC.DetachAll()
     local targets = {}
     for t in pairs(attached) do targets[#targets + 1] = t end
     for _, t in ipairs(targets) do DOC.Detach(t) end
+    wipe(pending)
 end
+
+-- ── combat deferral: eager container creation + pending flush ────────────────
+-- A reload MID-COMBAT cannot show the overlay during that combat (container
+-- creation is hard combat-locked by Blizzard -- no workaround exists). This
+-- makes it self-heal at the first regen, and pre-creates both containers out
+-- of combat so every LATER fight attaches instantly, reload or not.
+local ev = CreateFrame("Frame")
+ev:RegisterEvent("PLAYER_LOGIN")
+ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+ev:SetScript("OnEvent", function()
+    if InCombatLockdown() then return end
+    GetContainer("player")
+    GetContainer("target")
+    if next(pending) then
+        local q = pending
+        pending = {}
+        for targetFrame, req in pairs(q) do
+            DOC.Attach(targetFrame, req.spellID, req.unit)
+        end
+    end
+end)
 
 -- ── test slash: /arcdurovc <cdID|arcID> <auraSpellID> [unit] ─────────────────
 SLASH_ARCDUROVC1 = "/arcdurovc"

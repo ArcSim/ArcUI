@@ -324,6 +324,48 @@ local function UpdateImportantGlow(spellID, cfg)
     end
 end
 
+-- Real-cast path: spell importance and interruptibility may be secret
+-- booleans. We combine them through C_CurveUtil and pass the resulting
+-- secret alpha directly to safe-sink UI APIs, without branching on
+-- either secret value.
+--
+-- When "Hide Non-Important Casts" is enabled, Blizzard must mark the
+-- spell as important. When "Hide Non-Interruptible Casts" is enabled,
+-- the cast must also be interruptible.
+local function UpdateImportantCastVisibility(spellID, cfg)
+    if not mainFrame then return end
+
+    local alpha
+
+    if cfg.hideNotImportant then
+        if not (C_Spell and C_Spell.IsSpellImportant and spellID) then
+            alpha = 0
+        else
+            local isImportant = C_Spell.IsSpellImportant(spellID) -- secret boolean, never tested
+            local importantAlpha = C_CurveUtil.EvaluateColorValueFromBoolean(isImportant, 1, 0)
+
+            if cfg.hideNotInterruptible then
+                -- Visible only when important AND interruptible.
+                alpha = C_CurveUtil.EvaluateColorValueFromBoolean(state_notInterruptible, 0, importantAlpha)
+            else
+                -- Visible whenever the cast is important.
+                alpha = importantAlpha
+            end
+        end
+    elseif cfg.hideNotInterruptible then
+        -- Importance is ignored, but the cast must be interruptible.
+        alpha = C_CurveUtil.EvaluateColorValueFromBoolean(state_notInterruptible, 0, 1)
+    else
+        -- Neither visibility filter is enabled.
+        alpha = 1
+    end
+
+    mainFrame:SetAlpha(alpha)
+    if mainFrame._textFrame then
+        mainFrame._textFrame:SetAlpha(alpha)
+    end
+end
+
 -- Preview path: no secret values involved. `show` is a plain boolean.
 local function UpdateImportantGlowPreview(cfg, show)
     if not (cfg.importantGlowEnabled and ns.Glows and mainFrame.impGlowHost) then
@@ -999,11 +1041,6 @@ StartCast = function()
     mainFrame:EnableMouse(false)
     mainFrame:SetAlpha(1)
 
-    -- Hide non-interruptible casts if configured (secret-safe)
-    if cfg.hideNotInterruptible then
-        mainFrame:SetAlphaFromBoolean(notInterruptible, 0, 1)
-    end
-
     -- Hand the duration to the StatusBar; the client owns the fill from here.
     -- SetTimerDuration sets its own min/max from the duration total — we do
     -- NOT force (0,1) first, and we do NOT call SetValue afterwards.
@@ -1053,6 +1090,7 @@ StartCast = function()
     EnsureOnUpdate()
     mainFrame:Show()
     if textF then textF:Show() end
+    UpdateImportantCastVisibility(spellID, cfg)
 end
 
 -- ===================================================================
@@ -1118,9 +1156,9 @@ local function UpdateInterruptible()
     state_notInterruptible = newNotInt
     local cfg = GetDB()
     if not cfg then return end
-    if cfg.hideNotInterruptible then
-        mainFrame:SetAlphaFromBoolean(state_notInterruptible, 0, 1)
-    end
+    -- Reapply both visibility conditions: interruptibility can change while the
+    -- cast is already in progress (and importance stays constant for the spell).
+    UpdateImportantCastVisibility(currentSpellID, cfg)
     UpdateBarColor(cfg, nil)
 end
 
@@ -1247,6 +1285,7 @@ function FC.ShowPreview()
 
     mainFrame:EnableMouse(true)
     mainFrame:SetAlpha(1)
+    if mainFrame._textFrame then mainFrame._textFrame:SetAlpha(1) end
 
     isPreview = true
     casting   = true

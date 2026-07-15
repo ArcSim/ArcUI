@@ -56,6 +56,11 @@ ns.DB_DEFAULTS = {
     masterCDMPending = nil,
     -- Skin preset library (shared across all characters)
     skinLibrary = {},
+    -- Global Font & Texture (Settings tab): last font/texture pushed via
+    -- ns.API.ApplyGlobalFontTexture. Not a live override -- per-bar settings
+    -- stay independently editable after the push.
+    globalFont       = "Friz Quadrata TT",
+    globalBarTexture = "Blizzard",
   },
   
   -- Profile storage (shared across characters using same profile)
@@ -962,6 +967,7 @@ ns.DB_DEFAULTS.char.focusCastbar = {
   uninterruptibleColor   = { r = 0.5, g = 0.5, b = 0.5, a = 1 },
   raidMarkerDefault    = 8,      -- index shown in preview (moon=8); 0 = off
   hideNotInterruptible = false,
+  hideNotImportant     = false,  -- opt-in: only show focus casts Blizzard marks important
   importantGlowEnabled   = false,
   importantGlowType      = "pixel",
   importantGlowColor     = { r = 1, g = 0.2, b = 0.2, a = 1 },
@@ -1744,6 +1750,136 @@ function ns.API.InitializeNewCooldownBar(cooldownID, spellID, spellName, maxChar
   end
   
   return nil
+end
+
+-- ===================================================================
+-- HELPER: Apply Global Font / Texture
+-- Pushes a chosen font and/or statusbar texture onto every existing aura,
+-- resource, cooldown, timer bar and both castbars in one shot, AND pushes
+-- the font onto every CDM icon group (Groups/Icon Catalog/Arc Icons/totems)
+-- cooldown text, charge/stack text, custom labels, and keybind text.
+--
+-- Bars/castbars have no global-default layer, so those are a direct,
+-- one-time push (like pasting a skin) -- every bar stays fully,
+-- independently editable afterward. Pass nil for either argument to skip
+-- that half (e.g. font-only or texture-only push).
+--
+-- CDM icons DO have a DEFAULT -> global -> per-icon merge already (see
+-- ns.CDMEnhance.GetEffectiveIconSettings), so the font is written to that
+-- global layer via SetGlobalSetting; any icon with its own explicit font
+-- override is then overwritten too so the push is total, not just a new
+-- default for un-customized icons.
+--
+-- Per-spell/per-cast-type override tables (e.g. castbar spellOverrides,
+-- profiles) are left untouched since those are deliberate overrides, as are
+-- CDM icons that don't use LSM textures at all (no "texture" push there).
+-- ===================================================================
+local function ApplyFontTextureToTable(t, font, texture)
+  if not t then return end
+  for k, v in pairs(t) do
+    if type(v) == "string" then
+      if font and (k == "font" or k:match("Font$")) then
+        t[k] = font
+      elseif texture and k == "texture" then
+        t[k] = texture
+      end
+    end
+  end
+end
+
+function ns.API.ApplyGlobalFontTexture(font, texture)
+  local db = ns.API.GetDB()
+  if not db then return end
+
+  if db.bars then
+    for _, cfg in pairs(db.bars) do
+      if type(cfg) == "table" then ApplyFontTextureToTable(cfg.display, font, texture) end
+    end
+  end
+
+  if db.resourceBars then
+    for _, cfg in pairs(db.resourceBars) do
+      if type(cfg) == "table" then ApplyFontTextureToTable(cfg.display, font, texture) end
+    end
+  end
+
+  if db.cooldownBarConfigs then
+    for _, configs in pairs(db.cooldownBarConfigs) do
+      for _, cfg in pairs(configs) do
+        if type(cfg) == "table" then ApplyFontTextureToTable(cfg.display, font, texture) end
+      end
+    end
+  end
+
+  if db.timerBarConfigs then
+    for _, cfg in pairs(db.timerBarConfigs) do
+      if type(cfg) == "table" then ApplyFontTextureToTable(cfg.display, font, texture) end
+    end
+  end
+
+  local cbStore = ns.API.GetCastbarStore and ns.API.GetCastbarStore()
+  if cbStore and cbStore.castbars then
+    for _, cb in pairs(cbStore.castbars) do
+      if type(cb) == "table" then ApplyFontTextureToTable(cb, font, texture) end
+    end
+  end
+
+  if db.focusCastbar then
+    ApplyFontTextureToTable(db.focusCastbar, font, texture)
+  end
+
+  -- Refresh visuals
+  if ns.Display and ns.Display.ApplyAllBars then ns.Display.ApplyAllBars() end
+  if ns.Resources and ns.Resources.ApplyAllBars then ns.Resources.ApplyAllBars() end
+  if db.cooldownBarConfigs and ns.CooldownBars and ns.CooldownBars.ApplyAppearance then
+    for spellID, configs in pairs(db.cooldownBarConfigs) do
+      for barType in pairs(configs) do
+        ns.CooldownBars.ApplyAppearance(spellID, barType)
+      end
+    end
+  end
+  if db.timerBarConfigs and ns.TimerBars and ns.TimerBars.ApplyAppearance then
+    for timerID in pairs(db.timerBarConfigs) do
+      ns.TimerBars.ApplyAppearance(timerID)
+    end
+  end
+  if ns.Castbar and ns.Castbar.ApplyAppearance then ns.Castbar.ApplyAppearance() end
+  if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then ns.FocusCastbar.ApplyAppearance() end
+
+  -- CDM icon groups: cooldown text + charge/stack text global defaults,
+  -- overwriting any per-icon font override too, plus custom labels and
+  -- keybind text. Covers Groups, Icon Catalog, Arc Icons, and totem icons
+  -- since they all share the same per-icon settings store (keyed by
+  -- cooldownID or arcID) and DEFAULT_ICON_SETTINGS merge.
+  if font and ns.CDMEnhance and ns.CDMEnhance.SetGlobalSetting then
+    ns.CDMEnhance.SetGlobalSetting("aura", "chargeText.font", font)
+    ns.CDMEnhance.SetGlobalSetting("aura", "cooldownText.font", font)
+    ns.CDMEnhance.SetGlobalSetting("cooldown", "chargeText.font", font)
+    ns.CDMEnhance.SetGlobalSetting("cooldown", "cooldownText.font", font)
+
+    if ns.CDMShared and ns.CDMShared.GetSpecIconSettings then
+      local iconSettings = ns.CDMShared.GetSpecIconSettings()
+      if iconSettings then
+        for _, cfg in pairs(iconSettings) do
+          if type(cfg) == "table" then
+            if cfg.chargeText and cfg.chargeText.font then cfg.chargeText.font = font end
+            if cfg.cooldownText and cfg.cooldownText.font then cfg.cooldownText.font = font end
+            if cfg.customLabel and cfg.customLabel.font then cfg.customLabel.font = font end
+          end
+        end
+      end
+    end
+
+    if ns.CDMEnhance.RefreshIconType then ns.CDMEnhance.RefreshIconType("all") end
+  end
+
+  if font and ns.Keybinds and ns.Keybinds.SetSetting then
+    ns.Keybinds.SetSetting("font", font)
+    if ns.Keybinds.RefreshAll then ns.Keybinds.RefreshAll() end
+  end
+
+  local reg = LibStub and LibStub("AceConfigRegistry-3.0", true)
+  if reg then reg:NotifyChange("ArcUI") end
 end
 
 -- ===================================================================
