@@ -29,6 +29,36 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.7.9",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Apply Look: Copy a Bar's Style Onto Other Bars", desc = "Style one bar, then apply its look to all bars of that type, all bars of every type, or a hand-picked list. The Include toggles choose what gets copied, and Text is now split into Stack, Duration, Name and Ready text so you can copy exactly the part you want." },
+          { title = "Skins Panel Cleanup + Castbar Skin Picker", desc = "The Load Skin dropdown now lives inside the Skins section for every bar type, and the Castbar finally has its own, so loading a saved skin is where you'd expect it." },
+          { title = "Castbar Skins Remember Position", desc = "Per-spec castbar skins now restore where the bar sits on screen, so switching specs puts each castbar back in its own spot. Re-save each skin once to pick this up." },
+          { title = "Ignore Hard ICD for Charge Spells", desc = "New per-icon option for charge spells that lock briefly after each use (like Monk's Zenith): the icon no longer looks fully spent while you still hold a charge, and the swipe shows the real recharge instead of the lockout." },
+          { title = "Gained-on-Cooldown Spells Just Work", desc = "Arc icons for spells you only have while a cooldown is active (Void Volley, Zenith Stomp) now appear when you gain them and disappear after, instead of being marked \"not part of this spec\" and needing Show Always." },
+          { title = "Per-Side Fill Inset for Aura Bars", desc = "Independent Left/Right/Top/Bottom insets so custom bar textures with built-in borders sit perfectly inside the background. Contributed by Linawow." },
+          { title = "Addon Integration API", desc = "Other addons can now anchor their frames to ArcUI's icon groups reliably (fixes unit frames shifting on druid form changes with MSUF, and opens the door for more integrations)." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Hide Stacks at Zero on Arc Icons", desc = "The \"Hide at 0\" option now works on Arc cooldown icon stack text, everywhere including dungeons." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Castbar No Longer Disappears Mid-Cast", desc = "Casting an instant spell (like Shimmer) or pressing your next cast early no longer hides the bar or flashes a false \"Cancelled\", and reloading mid-cast brings the bar right back." },
+          { title = "Castbar Match Size Sticks After Reload", desc = "Castbars matched to a group's size no longer come back wrong after a reload." },
+          { title = "Timer Text No Longer Flickers on Dimmed Icons", desc = "Cooldown text kept visible with Preserve Duration Text no longer flickers or vanishes while Ignore Aura Override is on (was worst on Fire and Storm Elemental)." },
+          { title = "Custom Timer Icons No Longer Blink", desc = "Timer icons watching a spell no longer randomly flip between their Active and Not Active looks." },
+          { title = "Thin Borders Sit Flush", desc = "1px icon borders no longer drift a pixel off the icon at some UI scales." },
+        },
+      },
+    },
+  },
+  {
     version = "3.7.8",
     sections = {
       {

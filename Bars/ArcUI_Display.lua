@@ -2552,12 +2552,37 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     -- Border inset: when a border is drawn, inset segments so fill textures
     -- can't bleed over the border edges at the leading and trailing ends.
     local segInset = 0
+    local _s2 = barFrame:GetEffectiveScale()
+    local _, _h2 = GetPhysicalScreenSize()
+    local _onePx2 = (_h2 and _h2 > 0 and _s2 and _s2 > 0) and (768 / _h2) / _s2 or 1
     if barConfig.display.showBorder then
       local btRaw = barConfig.display.drawnBorderThickness or 2
-      local _s2 = barFrame:GetEffectiveScale()
-      local _, _h2 = GetPhysicalScreenSize()
-      local _onePx2 = (_h2 and _h2 > 0 and _s2 and _s2 > 0) and (768 / _h2) / _s2 or 1
       segInset = _onePx2 * btRaw
+    end
+
+    -- Per-side fill padding (aura bars, in physical px -> WoW units). Along the fill
+    -- axis the padding stacks on top of the border inset; perpendicular to the fill
+    -- it is padding-only so that zero padding keeps the current look exactly.
+    local padLw = (barConfig.display.barPaddingL or 0) * _onePx2
+    local padRw = (barConfig.display.barPaddingR or 0) * _onePx2
+    local padTw = (barConfig.display.barPaddingT or 0) * _onePx2
+    local padBw = (barConfig.display.barPaddingB or 0) * _onePx2
+    local insetLw, insetRw, insetTw, insetBw
+    if isBarVertical then
+      insetTw, insetBw = segInset + padTw, segInset + padBw  -- fill axis
+      insetLw, insetRw = padLw, padRw                        -- perpendicular
+    else
+      insetLw, insetRw = segInset + padLw, segInset + padRw  -- fill axis
+      insetTw, insetBw = padTw, padBw                        -- perpendicular
+    end
+    -- Fill-axis start/far insets, honouring orientation + reverse fill.
+    local startInset, farInset
+    if isBarVertical then
+      if isBarReverseFill then startInset, farInset = insetTw, insetBw
+      else startInset, farInset = insetBw, insetTw end
+    else
+      if isBarReverseFill then startInset, farInset = insetRw, insetLw
+      else startInset, farInset = insetLw, insetRw end
     end
 
     -- Hide maxColorBar (we use segment color override instead)
@@ -2592,7 +2617,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     
     -- Calculate segment size based on orientation — work in integer screen pixels
     -- throughout so every boundary lands exactly on a physical pixel with zero drift.
-    local totalSize = (isBarVertical and barFrame:GetHeight() or barFrame:GetWidth()) - 2 * segInset
+    local totalSize = (isBarVertical and barFrame:GetHeight() or barFrame:GetWidth()) - startInset - farInset
     local scale = barFrame:GetEffectiveScale()
     local _, _h = GetPhysicalScreenSize()
     local pmult = (_h and _h > 0 and scale and scale > 0) and (768 / _h) / scale or 1
@@ -2613,7 +2638,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       local startPixel = math_floor((i - 1) * totalPixels / numBars)
       local endPixel   = math_floor(i       * totalPixels / numBars)
       local sizePixels = math_max(2, endPixel - startPixel - segGapPx)
-      local offset  = segInset + startPixel * pmult
+      local offset  = startInset + startPixel * pmult
       local barSize = sizePixels * pmult
 
       -- PERFORMANCE: Only apply expensive setup when appearance changes
@@ -2627,40 +2652,40 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
         bar:ClearAllPoints()
         if isBarVertical then
           if isBarReverseFill then
-            bar:SetPoint("TOPLEFT",  barFrame, "TOPLEFT",  0, -offset)
-            bar:SetPoint("TOPRIGHT", barFrame, "TOPRIGHT", 0, -offset)
+            bar:SetPoint("TOPLEFT",  barFrame, "TOPLEFT",  insetLw, -offset)
+            bar:SetPoint("TOPRIGHT", barFrame, "TOPRIGHT", -insetRw, -offset)
             if i == numBars then
-              bar:SetPoint("BOTTOMLEFT",  barFrame, "BOTTOMLEFT",  0,  segInset)
-              bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 0,  segInset)
+              bar:SetPoint("BOTTOMLEFT",  barFrame, "BOTTOMLEFT",  insetLw,  farInset)
+              bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -insetRw, farInset)
             else
               bar:SetHeight(barSize)
             end
           else
-            bar:SetPoint("BOTTOMLEFT",  barFrame, "BOTTOMLEFT",  0, offset)
-            bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 0, offset)
+            bar:SetPoint("BOTTOMLEFT",  barFrame, "BOTTOMLEFT",  insetLw, offset)
+            bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -insetRw, offset)
             if i == numBars then
-              bar:SetPoint("TOPLEFT",  barFrame, "TOPLEFT",  0, -segInset)
-              bar:SetPoint("TOPRIGHT", barFrame, "TOPRIGHT", 0, -segInset)
+              bar:SetPoint("TOPLEFT",  barFrame, "TOPLEFT",  insetLw, -farInset)
+              bar:SetPoint("TOPRIGHT", barFrame, "TOPRIGHT", -insetRw, -farInset)
             else
               bar:SetHeight(barSize)
             end
           end
         else
           if isBarReverseFill then
-            bar:SetPoint("TOPRIGHT",    barFrame, "TOPRIGHT",    -offset, 0)
-            bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -offset, 0)
+            bar:SetPoint("TOPRIGHT",    barFrame, "TOPRIGHT",    -offset, -insetTw)
+            bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -offset,  insetBw)
             if i == numBars then
-              bar:SetPoint("TOPLEFT",    barFrame, "TOPLEFT",     segInset, 0)
-              bar:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT",  segInset, 0)
+              bar:SetPoint("TOPLEFT",    barFrame, "TOPLEFT",     farInset, -insetTw)
+              bar:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT",  farInset,  insetBw)
             else
               bar:SetWidth(barSize)
             end
           else
-            bar:SetPoint("TOPLEFT",    barFrame, "TOPLEFT",    offset, 0)
-            bar:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", offset, 0)
+            bar:SetPoint("TOPLEFT",    barFrame, "TOPLEFT",    offset, -insetTw)
+            bar:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", offset,  insetBw)
             if i == numBars then
-              bar:SetPoint("TOPRIGHT",    barFrame, "TOPRIGHT",    -segInset, 0)
-              bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -segInset, 0)
+              bar:SetPoint("TOPRIGHT",    barFrame, "TOPRIGHT",    -farInset, -insetTw)
+              bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -farInset,  insetBw)
             else
               bar:SetWidth(barSize)
             end
@@ -3761,9 +3786,23 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       end
     end
     
-    -- Apply expensive bar setup (padding always 0 - no UI option exposed)
+    -- Apply expensive bar setup. Inset the fill from each edge by the per-side
+    -- padding (in physical px) so custom fill textures don't need baked-in
+    -- transparent margins. Background stays full-size; zero padding = current look.
     barFrame.bar:ClearAllPoints()
-    barFrame.bar:SetAllPoints(barFrame)
+    local padL = barConfig.display.barPaddingL or 0
+    local padR = barConfig.display.barPaddingR or 0
+    local padT = barConfig.display.barPaddingT or 0
+    local padB = barConfig.display.barPaddingB or 0
+    if padL == 0 and padR == 0 and padT == 0 and padB == 0 then
+      barFrame.bar:SetAllPoints(barFrame)
+    else
+      local _s = barFrame:GetEffectiveScale()
+      local _, _h = GetPhysicalScreenSize()
+      local _onePx = (_h and _h > 0 and _s and _s > 0) and (768 / _h) / _s or 1
+      barFrame.bar:SetPoint("TOPLEFT", barFrame, "TOPLEFT", _onePx * padL, -_onePx * padT)
+      barFrame.bar:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", -_onePx * padR, _onePx * padB)
+    end
     barFrame.bar:SetStatusBarTexture(texturePath)
     -- Note: Frame level is set by the strata block later, but set baseline here
     -- Fill bar should be 1 level above parent (background is at parent level)

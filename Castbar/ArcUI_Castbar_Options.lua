@@ -335,10 +335,59 @@ function ns.CastbarOptions.GetOptionsTable()
 
       skinsDesc = {
         type     = "description",
-        name     = "Save the current look as a skin, then add rules to load skins on spec or talent change.",
+        name     = "Save the current look as a skin, load a saved one below, or add rules to load skins on spec or talent change.",
         order    = 10.05,
         fontSize = "small",
         hidden   = H("skins"),
+      },
+
+      loadSkinSelect = {
+        type   = "select",
+        name   = "Load Skin",
+        desc   = "Apply a saved castbar skin. 'Custom' means manual settings not linked to any skin.\n\nSkins saved from this version on also restore the bar's saved position.",
+        order  = 10.06,
+        width  = 1.2,
+        hidden = H("skins", function()
+          if not ns.Presets then return true end
+          return ns.Presets.GetSkinCount("castbar") == 0
+        end),
+        values = function()
+          local vals = { [""] = "|cff888888Custom|r" }
+          if ns.Presets and ns.Presets.GetSkinNames then
+            for name in pairs(ns.Presets.GetSkinNames("castbar")) do vals[name] = name end
+          end
+          return vals
+        end,
+        sorting = function()
+          local sorted = { "" }
+          if ns.Presets and ns.Presets.GetSkinNames then
+            local list = {}
+            for name in pairs(ns.Presets.GetSkinNames("castbar")) do list[#list + 1] = name end
+            table.sort(list)
+            for _, name in ipairs(list) do sorted[#sorted + 1] = name end
+          end
+          return sorted
+        end,
+        get = function()
+          local c = GetCastbarDB()
+          if not c or not ns.Presets then return "" end
+          return ns.Presets.GetActiveSkin(c) or ""
+        end,
+        set = function(_, value)
+          local c = GetCastbarDB()
+          if not c or not ns.Presets then return end
+          if value == "" then
+            ns.Presets.DetachSkin(c)
+          else
+            local ok, err = ns.Presets.SetActiveSkin(c, "castbar", value)
+            if not ok then
+              print("|cff00ccffArcUI|r: " .. (err or "Failed to load skin"))
+            end
+          end
+          if ns.Castbar and ns.Castbar.ApplyAppearance then ns.Castbar.ApplyAppearance() end
+          Refresh()
+          if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
+        end,
       },
 
       saveSkinName = {

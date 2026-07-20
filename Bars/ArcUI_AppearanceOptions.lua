@@ -458,6 +458,13 @@ local function IsResourceBar()
   return barType == "resource"
 end
 
+-- Check if selected bar is an aura (buff/debuff) bar -- these render via
+-- ns.Display.UpdateBar / UpdateDurationBar, the only path wired for per-side Fill Inset.
+local function IsAuraBar()
+  local barType, _ = GetSelectedBarType()
+  return barType == "buff"
+end
+
 -- Check if the selected bar is a Maelstrom Weapon icons-mode resource bar
 -- Used to unhide the Duration Text section for this specific bar type
 local function IsMaelstromIconsBar()
@@ -737,6 +744,8 @@ end
 local livePreviewEnabled = false
 local livePreviewStatic = false  -- Static mode vs animated
 local _presetSaveName = ""  -- Input field for save skin name
+local _pushSelected = {}    -- [targetKey] = true — bars chosen in the Push Look picker
+local _pushScope = "sameType"  -- "sameType" | "allTypes" | "custom" — Push Look target scope
 local _presetSaveCategories = nil  -- Category toggles for saving (lazy init)
 
 -- Initialize category toggles with defaults
@@ -7562,6 +7571,110 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not (cfg and cfg.display.showBackground)
         end
       },
+      -- Per-side fill inset (aura bars only): insets the fill texture from each edge so
+      -- custom fill textures need no baked-in transparent margins. Background stays full-size.
+      fillInsetHeader = {
+        type = "description",
+        name = "|cffffd100Fill Inset|r  (insets the fill from each edge; the background stays full-size)",
+        order = 41.24,
+        fontSize = "medium",
+        hidden = function()
+          if collapsedSections.background or IsIconMode() then return true end
+          return not IsAuraBar()
+        end
+      },
+      barPaddingL = {
+        type = "range",
+        name = "Inset Left",
+        desc = "Inset between the left edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingL or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingL = value
+            RefreshBar()
+          end
+        end,
+        order = 41.25,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.background or IsIconMode() then return true end
+          return not IsAuraBar()
+        end
+      },
+      barPaddingR = {
+        type = "range",
+        name = "Inset Right",
+        desc = "Inset between the right edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingR or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingR = value
+            RefreshBar()
+          end
+        end,
+        order = 41.26,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.background or IsIconMode() then return true end
+          return not IsAuraBar()
+        end
+      },
+      barPaddingT = {
+        type = "range",
+        name = "Inset Top",
+        desc = "Inset between the top edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingT or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingT = value
+            RefreshBar()
+          end
+        end,
+        order = 41.27,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.background or IsIconMode() then return true end
+          return not IsAuraBar()
+        end
+      },
+      barPaddingB = {
+        type = "range",
+        name = "Inset Bottom",
+        desc = "Inset between the bottom edge and the bar fill texture. 0 = fill touches the edge.",
+        min = 0, max = 50, softMax = 20, step = 1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.barPaddingB or 0
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.barPaddingB = value
+            RefreshBar()
+          end
+        end,
+        order = 41.28,
+        width = 1.0,
+        hidden = function()
+          if collapsedSections.background or IsIconMode() then return true end
+          return not IsAuraBar()
+        end
+      },
       -- Frame Width (only for charge bars when showBackground is enabled)
       frameWidth = {
         type = "range",
@@ -7872,11 +7985,13 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function()
           if IsIconMode() or collapsedSections.border then return true end
           if IsChargeBar() then return true end
+          -- Aura bars use the per-side Fill Inset controls in the Background section instead.
+          if IsAuraBar() then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showBorder)
         end
       },
-      
+
       -- BAR BORDER (deprecated - showBorder now handles all bar types via 4-texture system)
       showBarBorder = {
         type = "toggle",
@@ -12287,10 +12402,11 @@ function ns.AppearanceOptions.GetOptionsTable()
         hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
       },
 
-      -- --- Active Skin dropdown (this IS the load) ---
+      -- --- Active Skin dropdown (this IS the load) — lives INSIDE the Skins
+      -- section, first control, same layout as the castbar's Load Skin ---
       activeSkinSelect = {
         type = "select",
-        name = "Skin",
+        name = "Load Skin",
         desc = "Select a saved skin to apply to this bar instantly.\n\n'Custom' means manual settings not linked to any skin.",
         values = function()
           if not ns.Presets then return { [""] = "Custom" } end
@@ -12334,10 +12450,10 @@ function ns.AppearanceOptions.GetOptionsTable()
             LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
           end
         end,
-        order = 2.1,
-        width = 0.7,
+        order = 2.705,
+        width = 1.2,
         hidden = function()
-          if GetSelectedConfig() == nil then return true end
+          if GetSelectedConfig() == nil or collapsedSections.presets then return true end
           if not ns.Presets then return true end
           local barType = GetSelectedBarType()
           return ns.Presets.GetSkinCount(barType) == 0
@@ -12439,12 +12555,52 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 2.7302, width = 0.4,
         hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
       },
-      skinCatText = {
-        type = "toggle", name = "Text",
-        desc = function() return ns.Presets and ns.Presets.CATEGORY_DESCS.text or "" end,
-        get = function() return EnsureSaveCategories().text end,
-        set = function(_, v) EnsureSaveCategories().text = v end,
-        order = 2.7303, width = 0.4,
+      skinCatTextStacks = {
+        type = "toggle", name = "Stack Text",
+        desc = function() return ns.Presets and ns.Presets.CATEGORY_DESCS.textStacks or "" end,
+        get = function() return EnsureSaveCategories().textStacks end,
+        set = function(_, v)
+          local c = EnsureSaveCategories()
+          c.textStacks = v
+          c.text = c.textStacks or c.textDuration or c.textName or c.textReady
+        end,
+        order = 2.7303, width = 0.6,
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      skinCatTextDuration = {
+        type = "toggle", name = "Duration Text",
+        desc = function() return ns.Presets and ns.Presets.CATEGORY_DESCS.textDuration or "" end,
+        get = function() return EnsureSaveCategories().textDuration end,
+        set = function(_, v)
+          local c = EnsureSaveCategories()
+          c.textDuration = v
+          c.text = c.textStacks or c.textDuration or c.textName or c.textReady
+        end,
+        order = 2.73031, width = 0.7,
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      skinCatTextName = {
+        type = "toggle", name = "Name Text",
+        desc = function() return ns.Presets and ns.Presets.CATEGORY_DESCS.textName or "" end,
+        get = function() return EnsureSaveCategories().textName end,
+        set = function(_, v)
+          local c = EnsureSaveCategories()
+          c.textName = v
+          c.text = c.textStacks or c.textDuration or c.textName or c.textReady
+        end,
+        order = 2.73032, width = 0.6,
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      skinCatTextReady = {
+        type = "toggle", name = "Ready Text",
+        desc = function() return ns.Presets and ns.Presets.CATEGORY_DESCS.textReady or "" end,
+        get = function() return EnsureSaveCategories().textReady end,
+        set = function(_, v)
+          local c = EnsureSaveCategories()
+          c.textReady = v
+          c.text = c.textStacks or c.textDuration or c.textName or c.textReady
+        end,
+        order = 2.73033, width = 0.6,
         hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
       },
       skinCatBG = {
@@ -12470,6 +12626,96 @@ function ns.AppearanceOptions.GetOptionsTable()
         set = function(_, v) EnsureSaveCategories().tickMarks = v end,
         order = 2.7306, width = 0.55,
         hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+
+      -- --- Apply this bar's look onto other bars ---
+      pushLookHeader = {
+        type = "description",
+        name = "|cffffd700Apply Look|r",
+        fontSize = "medium",
+        order = 2.735,
+        width = "full",
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      pushLookDesc = {
+        type = "description",
+        name = "|cff888888Copy this bar's current style onto other bars. The Include toggles above choose which parts get applied. Applied bars become Custom (detached from any skin).|r",
+        fontSize = "small",
+        order = 2.7351,
+        width = "full",
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      pushScope = {
+        type = "select",
+        name = "Apply To",
+        desc = "Which bars receive this look.\n\nCross-type applying uses the shared appearance (colors, fill, size, text, background, border, ticks); settings a bar type doesn't use are ignored.",
+        values = {
+          sameType = "All bars of this type",
+          allTypes = "All bars (every type)",
+          custom   = "Choose bars...",
+        },
+        sorting = { "sameType", "allTypes", "custom" },
+        get = function() return _pushScope end,
+        set = function(_, v) _pushScope = v end,
+        order = 2.7352,
+        width = 1.1,
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      pushGo = {
+        type = "execute",
+        name = "Apply",
+        desc = "Apply this bar's current style (per the Include toggles) to the chosen bars.",
+        confirm = function()
+          local src = GetSelectedConfig()
+          if not src or not ns.Presets or not ns.Presets.EnumeratePushTargets then return true end
+          local n = 0
+          for _, t in ipairs(ns.Presets.EnumeratePushTargets(GetSelectedBarType(), _pushScope ~= "sameType")) do
+            if t.cfg ~= src and (_pushScope ~= "custom" or _pushSelected[t.key]) then n = n + 1 end
+          end
+          return "Overwrite " .. n .. " bar(s) with this bar's look?"
+        end,
+        func = function()
+          local src = GetSelectedConfig()
+          if not src or not ns.Presets or not ns.Presets.PushLook then return end
+          local targets = {}
+          for _, t in ipairs(ns.Presets.EnumeratePushTargets(GetSelectedBarType(), _pushScope ~= "sameType")) do
+            if t.cfg ~= src and (_pushScope ~= "custom" or _pushSelected[t.key]) then
+              targets[#targets + 1] = t
+            end
+          end
+          local n = ns.Presets.PushLook(src, EnsureSaveCategories(), targets)
+          print("|cff00ccffArcUI|r: Applied this look to " .. n .. " bar(s).")
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        order = 2.7353,
+        width = 0.7,
+        disabled = function()
+          if _pushScope ~= "custom" then return false end
+          return next(_pushSelected) == nil
+        end,
+        hidden = function() return GetSelectedConfig() == nil or collapsedSections.presets end
+      },
+      pushTargets = {
+        type = "multiselect",
+        name = "Choose Bars",
+        desc = "Pick which bars receive this look, then press Apply. Only configured bars are listed.",
+        values = function()
+          local vals = {}
+          if not ns.Presets or not ns.Presets.EnumeratePushTargets then return vals end
+          local src = GetSelectedConfig()
+          for _, t in ipairs(ns.Presets.EnumeratePushTargets(GetSelectedBarType(), true)) do
+            if t.cfg ~= src then vals[t.key] = t.label end
+          end
+          return vals
+        end,
+        get = function(_, key) return _pushSelected[key] == true end,
+        set = function(_, key, v) _pushSelected[key] = v or nil end,
+        order = 2.7354,
+        width = 1.1,  -- per-checkbox width: items flow several per row instead of one giant column
+        hidden = function()
+          if GetSelectedConfig() == nil or collapsedSections.presets then return true end
+          return _pushScope ~= "custom"
+        end
       },
 
       skinLibraryCount = {

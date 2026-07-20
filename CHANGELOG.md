@@ -1,3 +1,27 @@
+## 3.7.9
+
+### New Features
+
+- **Apply Look — copy a bar's style onto other bars** — Style one bar, then apply its look to all bars of that type, all bars of every type, or a hand-picked list. The Include toggles choose what gets copied, and Text is now split into Stack, Duration, Name and Ready text so you can copy exactly the part you want.
+- **Skins panel cleanup + Castbar skin picker** — The Load Skin dropdown now lives inside the Skins section for every bar type, and the Castbar finally has its own, so loading a saved skin is where you'd expect it.
+- **Castbar skins remember position** — Per-spec castbar skins now restore where the bar sits on screen, so switching specs puts each castbar back in its own spot. Re-save each skin once to pick this up.
+- **Ignore Hard ICD for charge spells** — New per-icon option for charge spells that lock briefly after each use (like Monk's Zenith): the icon no longer looks fully spent while you still hold a charge, and the swipe shows the real recharge instead of the lockout.
+- **Gained-on-cooldown spells just work** — Arc icons for spells you only have while a cooldown is active (Void Volley, Zenith Stomp) now appear when you gain them and disappear after, instead of being marked "not part of this spec" and needing Show Always.
+- **Per-side Fill Inset for aura bars** — Independent Left/Right/Top/Bottom insets so custom bar textures with built-in borders sit perfectly inside the background. Contributed by Linawow.
+- **Addon integration API** — Other addons can now anchor their frames to ArcUI's icon groups reliably (fixes unit frames shifting on druid form changes with MSUF, and opens the door for more integrations).
+
+### Improvements
+
+- **Hide stacks at zero on Arc icons** — The "Hide at 0" option now works on Arc cooldown icon stack text, everywhere including dungeons.
+
+### Bug Fixes
+
+- **Castbar no longer disappears mid-cast** — Casting an instant spell (like Shimmer) or pressing your next cast early no longer hides the bar or flashes a false "Cancelled", and reloading mid-cast brings the bar right back.
+- **Castbar Match Size sticks after reload** — Castbars matched to a group's size no longer come back wrong after a reload.
+- **Timer text no longer flickers on dimmed icons** — Cooldown text kept visible with Preserve Duration Text no longer flickers or vanishes while Ignore Aura Override is on (was worst on Fire and Storm Elemental).
+- **Custom timer icons no longer blink** — Timer icons watching a spell no longer randomly flip between their Active and Not Active looks.
+- **Thin borders sit flush** — 1px icon borders no longer drift a pixel off the icon at some UI scales.
+
 ## 3.7.8
 
 ### New Features

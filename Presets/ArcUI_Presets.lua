@@ -13,7 +13,7 @@ local Presets = ns.Presets
 -- Keys not in any category are "misc" and always included.
 -- =====================================================================
 Presets.ALL_CATEGORIES = {
-  "colors", "fill", "size", "text", "background", "border", "tickMarks",
+  "colors", "fill", "size", "text", "background", "border", "tickMarks", "position",
 }
 
 Presets.CATEGORY_LABELS = {
@@ -21,27 +21,45 @@ Presets.CATEGORY_LABELS = {
   fill       = "Fill & Texture",
   size       = "Size",
   text       = "Text",
+  textStacks   = "Stack Text",
+  textDuration = "Duration Text",
+  textName     = "Name Text",
+  textReady    = "Ready Text",
   background = "Background",
   border     = "Border",
   tickMarks  = "Tick Marks",
+  position   = "Position",
 }
 
 Presets.CATEGORY_DESCS = {
-  colors     = "Bar color, max color, folded/fragmented colors, color curves, thresholds, spec colors, prediction colors",
-  fill       = "Texture, orientation, smoothing, gradient, reverse fill, fill mode",
-  size       = "Width, height, scale, spacing, padding, slot dimensions",
-  text       = "Fonts, sizes, formats, visibility toggles, anchors, offsets (not text strata/level)",
+  colors     = "Bar/fill coloring: bar color, max color, folded/fragmented colors, color curves, bar thresholds, slot colors, prediction bar colors, desaturation",
+  fill       = "Texture, orientation, smoothing, gradient, reverse fill, fill mode, icon-mode swipe rendering",
+  size       = "Width, height, scale, spacing, padding, slot dimensions, icon-mode layout",
+  text       = "Everything about text elements: fonts, sizes, formats, visibility, anchors, offsets AND text colors (stack, duration, name, ready, cooldown text)",
+  textStacks   = "The stack/value number: font, size, format, anchor, offsets, colors, threshold coloring, segment and prediction text",
+  textDuration = "The duration/countdown text: font, size, decimals, anchor, offsets, color, color curve and thresholds (includes cooldown-bar countdown and timer text)",
+  textName     = "The bar name text: font, size, anchor, offsets, color",
+  textReady    = "The ready text: wording, font placement, offsets, color",
   background = "Background texture, color, visibility",
   border     = "Border color, thickness, visibility, class color border",
   tickMarks  = "Tick marks, dividers, ability cost markers",
+  position   = "Bar screen position (castbar skins only) -- lets per-spec castbar skins restore where the bar sits",
 }
 
--- Default categories for new profiles (all enabled)
+-- Default categories for new profiles (all enabled EXCEPT position: a skin must
+-- never move a bar unless it was explicitly saved with position included --
+-- castbar skins opt in at SaveSkin). Text sub-element flags default true so the
+-- umbrella and the fine-grained toggles agree out of the box.
 function Presets.DefaultCategories()
   local cats = {}
   for _, c in ipairs(Presets.ALL_CATEGORIES) do
     cats[c] = true
   end
+  cats.textStacks   = true
+  cats.textDuration = true
+  cats.textName     = true
+  cats.textReady    = true
+  cats.position = false
   return cats
 end
 
@@ -73,33 +91,52 @@ local KEY_TO_CATEGORY = {
   displayMode = "colors",           -- continuous/perStack/fragmented/icons
   opacity = "colors",
   -- Color curve keys handled by prefix below
-  -- Prediction colors
+  -- Prediction BAR colors (the text colors live under "text")
   predCostColor = "colors",
   predGainColor = "colors",
-  -- Text colors (categorized under colors, not text)
+  fullChargeColor = "colors",
+  -- Icon-mode desaturation (coloring behavior)
+  iconDesaturateOnCooldown = "colors",
+  iconDesaturateWhenInactive = "colors",
+  -- TEXT COLORS live under "text": everything about a text element — font,
+  -- size, position AND color — applies together when the user checks Text.
+  -- (They used to sit under "colors", so Apply with Text checked moved the
+  -- duration text but not its color — reported and wrong.)
   textColor = "text",
   textColorByState = "text",
-  textUsableColor = "colors",
-  textUnusableColor = "colors",
-  durationColor = "colors",
-  nameColor = "colors",
-  readyColor = "colors",
-  cdTextColor = "colors",
-  predTextCostColor = "colors",
-  predTextGainColor = "colors",
+  textUsableColor = "text",
+  textUnusableColor = "text",
+  durationColor = "text",
+  nameColor = "text",
+  readyColor = "text",
+  cdTextColor = "text",
+  iconStackColor = "text",
+  iconDurationColor = "text",
+  predTextCostColor = "text",
+  predTextGainColor = "text",
   -- Slot colors
   slotBackgroundColor = "colors",
   slotBorderColor = "colors",
 
   -- Fill & Texture
   texture = "fill",
+  displayType = "fill",             -- bar vs icon render mode: without a category this was
+                                    -- "misc/always included" — a Colors-only push would silently
+                                    -- flip a bar between bar and icon mode
   barOrientation = "fill",
   rotateTexture = "fill",
   barReverseFill = "fill",
   enableSmoothing = "fill",
   useGradient = "fill",
   fragmentedFillOrientation = "fill",
+  fragmentedLayoutDirection = "fill",
   durationBarFillMode = "fill",
+  -- Icon-mode rendering behavior
+  iconShowTexture = "fill",
+  iconShowCooldownSwipe = "fill",
+  iconCooldownDrawBling = "fill",
+  iconCooldownDrawEdge = "fill",
+  iconCooldownReverse = "fill",
   -- gradient* keys handled by prefix below
 
   -- Size
@@ -111,6 +148,11 @@ local KEY_TO_CATEGORY = {
   frameHeight = "size",
   barIconSize = "size",
   barPadding = "size",
+  barPosition = "position",
+  barPaddingL = "size",
+  barPaddingR = "size",
+  barPaddingT = "size",
+  barPaddingB = "size",
   fragmentedSpacing = "size",
   segmentedSpacing = "size",
   slotSpacing = "size",
@@ -119,6 +161,17 @@ local KEY_TO_CATEGORY = {
   slotOffsetX = "size",
   slotOffsetY = "size",
   drawnBorderThickness = "size",
+  -- Bar icon + icon-mode geometry
+  showBarIcon = "size",
+  barIconAnchor = "size",
+  iconBarSpacing = "size",
+  iconOffsetX = "size",
+  iconOffsetY = "size",
+  iconZoom = "size",
+  iconsMode = "size",
+  iconsShape = "size",
+  iconsSize = "size",
+  iconsSpacing = "size",
 
   -- Text (fonts, formats, visibility, anchors — NOT strata/level)
   font = "text",
@@ -134,6 +187,7 @@ local KEY_TO_CATEGORY = {
   textAnchorOffsetX = "text",
   textAnchorOffsetY = "text",
   showDuration = "text",
+  durationShowWhenReady = "text",
   durationFont = "text",
   durationFontSize = "text",
   durationOutline = "text",
@@ -177,6 +231,24 @@ local KEY_TO_CATEGORY = {
   timerTextAnchor = "text",
   timerTextOffsetX = "text",
   timerTextOffsetY = "text",
+  dynamicTextOffsetX = "text",
+  dynamicTextOffsetY = "text",
+  -- Icon-mode text elements (stack + duration text on icon-mode bars)
+  iconShowStacks = "text",
+  iconStackFont = "text",
+  iconStackFontSize = "text",
+  iconStackOutline = "text",
+  iconStackShadow = "text",
+  iconStackAnchor = "text",
+  iconShowDuration = "text",
+  iconDurationFont = "text",
+  iconDurationFontSize = "text",
+  iconDurationOutline = "text",
+  iconDurationShadow = "text",
+  iconsShowCooldownText = "text",
+  iconsCooldownTextSize = "text",
+  iconsCDTextOffsetX = "text",
+  iconsCDTextOffsetY = "text",
 
   -- Background
   showBackground = "background",
@@ -195,6 +267,9 @@ local KEY_TO_CATEGORY = {
   slotBorderThickness = "border",
   useClassColorBorder = "border",
   barIconShowBorder = "border",
+  iconShowBorder = "border",
+  iconBorderColor = "border",
+  iconsBorderStyle = "border",
 
   -- Tick Marks
   showTickMarks = "tickMarks",
@@ -209,9 +284,17 @@ local KEY_TO_CATEGORY = {
   thresholdAsPercent = "tickMarks",
 }
 
--- Prefix patterns: keys starting with these prefixes get auto-categorized
+-- Prefix patterns: keys starting with these prefixes get auto-categorized.
+-- Checked in order; explicit KEY_TO_CATEGORY entries win over prefixes, and
+-- EXCLUDED_DISPLAY_KEYS wins over everything.
 local KEY_CATEGORY_PREFIXES = {
   { prefix = "colorCurve", category = "colors" },
+  { prefix = "durationColor", category = "text" },         -- duration TEXT color + curve family
+  { prefix = "durationText", category = "text" },          -- duration TEXT threshold colors
+  { prefix = "textColorThreshold", category = "text" },    -- stack-text threshold coloring
+  { prefix = "durationThreshold", category = "colors" },   -- duration BAR threshold colors
+  { prefix = "chargeSlot", category = "colors" },          -- per-slot charge colors
+  { prefix = "iconMulti", category = "size" },             -- icon-mode multi-icon layout
   { prefix = "gradient",   category = "fill" },
   { prefix = "tick",       category = "tickMarks" },
   { prefix = "divider",    category = "tickMarks" },
@@ -229,6 +312,83 @@ local TOP_LEVEL_VISUAL_KEYS = {}
 for key in pairs(TOP_LEVEL_KEY_CATEGORIES) do
   TOP_LEVEL_VISUAL_KEYS[#TOP_LEVEL_VISUAL_KEYS + 1] = key
 end
+
+-- =====================================================================
+-- TEXT SUB-ELEMENTS (second-level fidelity inside the "text" category)
+-- Every text key still belongs to category "text" (saved skins, Auto Share
+-- and old filters keep working), but each maps to a SUB-element so the
+-- Include toggles can apply e.g. only the duration text. Filter semantics:
+-- filter[sub] wins when set; nil falls back to filter.text (old skins have
+-- only .text -> all sub-elements apply, exactly as before).
+-- Keys not listed default to "textStacks" (the main stack/value text).
+-- =====================================================================
+local TEXT_SUBCATEGORY = {
+  -- Duration text (incl. cooldown-bar countdown + timer text + icon-mode duration)
+  showDuration = "textDuration",
+  durationShowWhenReady = "textDuration",
+  durationFont = "textDuration",
+  durationFontSize = "textDuration",
+  durationOutline = "textDuration",
+  durationShadow = "textDuration",
+  durationDecimals = "textDuration",
+  durationThreshold = "textDuration",
+  durationThresholdAsSeconds = "textDuration",
+  durationThresholdMaxDuration = "textDuration",
+  durationAnchor = "textDuration",
+  durationAnchorOffsetX = "textDuration",
+  durationAnchorOffsetY = "textDuration",
+  durationTextFrameWidth = "textDuration",
+  durationColor = "textDuration",
+  cdTextFont = "textDuration",
+  cdTextSize = "textDuration",
+  cdTextOutline = "textDuration",
+  cdTextDecimalPrecision = "textDuration",
+  cdTextOffsetX = "textDuration",
+  cdTextOffsetY = "textDuration",
+  cdTextShow = "textDuration",
+  cdTextColor = "textDuration",
+  timerTextAnchor = "textDuration",
+  timerTextOffsetX = "textDuration",
+  timerTextOffsetY = "textDuration",
+  iconShowDuration = "textDuration",
+  iconDurationFont = "textDuration",
+  iconDurationFontSize = "textDuration",
+  iconDurationOutline = "textDuration",
+  iconDurationShadow = "textDuration",
+  iconDurationColor = "textDuration",
+  iconsShowCooldownText = "textDuration",
+  iconsCooldownTextSize = "textDuration",
+  iconsCDTextOffsetX = "textDuration",
+  iconsCDTextOffsetY = "textDuration",
+  -- Name text
+  showName = "textName",
+  nameFont = "textName",
+  nameFontSize = "textName",
+  nameAnchor = "textName",
+  nameOffsetX = "textName",
+  nameOffsetY = "textName",
+  nameColor = "textName",
+  -- Ready text
+  showReadyText = "textReady",
+  readyText = "textReady",
+  readyTextAnchor = "textReady",
+  readyTextOffsetX = "textReady",
+  readyTextOffsetY = "textReady",
+  readyColor = "textReady",
+}
+
+Presets.TEXT_SUBCATEGORIES = { "textStacks", "textDuration", "textName", "textReady" }
+
+-- Sub-element for a text-category key (prefix families included)
+local function GetTextSubcategory(key)
+  local sub = TEXT_SUBCATEGORY[key]
+  if sub then return sub end
+  if key:sub(1, 13) == "durationColor" or key:sub(1, 12) == "durationText" then
+    return "textDuration"
+  end
+  return "textStacks"
+end
+Presets.GetTextSubcategory = GetTextSubcategory
 
 -- Resolve a display key to its category (or nil for misc/always-included)
 local function GetKeyCategory(key)
@@ -300,6 +460,11 @@ local EXCLUDED_DISPLAY_KEYS = {
   anchorOffsetY = true,
   matchGroupWidth = true,
   matchWidthAdjust = true,
+  matchIconEdges = true,
+  matchSlotsOnly = true,
+  -- Per-bar identity: a custom icon override belongs to THAT bar's tracked
+  -- spell — pushing it would stamp the source's icon onto every target
+  iconOverride = true,
   -- Frame layering
   barFrameLevel = true,
   barFrameStrata = true,
@@ -310,6 +475,7 @@ local EXCLUDED_DISPLAY_KEYS = {
   -- Text position locks
   textPosition = true,
   textLocked = true,
+  textDragMode = true,
   readyTextLocked = true,
   iconStackLocked = true,
   -- Text strata/level
@@ -323,6 +489,8 @@ local EXCLUDED_DISPLAY_KEYS = {
   durationTextStrata = true,
   readyTextLevel = true,
   readyTextStrata = true,
+  iconStackLevel = true,
+  iconStackStrata = true,
   -- Auto power profiles state (internal)
   autoPowerColors = true,
   -- Flat-config behavior/meta keys (castbar uses a flat schema, not .display)
@@ -360,11 +528,20 @@ function Presets.SnapshotSkin(barConfig, categories)
     topLevel = {},
     categories = categories or Presets.DefaultCategories(),
   }
-  -- Capture visual fields (minus excluded keys)
+  -- Capture visual fields (minus excluded keys). Keys starting with "_" are
+  -- runtime/UI scratch (e.g. the castbar's _saveSkinNameInput input buffer) —
+  -- never part of a look, never captured.
   for k, v in pairs(displaySrc) do
-    if not EXCLUDED_DISPLAY_KEYS[k] then
+    if not EXCLUDED_DISPLAY_KEYS[k] and not (type(k) == "string" and k:sub(1, 1) == "_") then
       skin.display[k] = DeepCopy(v)
     end
+  end
+  -- Flat (castbar) configs: capture barPosition explicitly. It's in
+  -- EXCLUDED_DISPLAY_KEYS (bar skins must never carry position), but castbar
+  -- skins opt in via the "position" category -- the gate is at APPLY time, so
+  -- capturing here is harmless for skins saved without the category.
+  if not barConfig.display and displaySrc.barPosition ~= nil then
+    skin.display.barPosition = DeepCopy(displaySrc.barPosition)
   end
   -- Capture top-level visual keys (thresholds, colorRanges, etc.) — only for structured configs
   if barConfig.display then
@@ -442,15 +619,37 @@ function Presets.ApplySkin(barConfig, skinData, categoryFilter)
   -- Determine which categories to apply
   local filter = categoryFilter or skinData.categories or nil  -- nil = everything
 
-  -- Apply display keys
+  -- Apply display keys. "_"-prefixed keys are runtime/UI scratch — skins saved
+  -- before the snapshot-side exclusion may still contain them; never write them.
+  -- "text" keys check their SUB-element flag first (textStacks/textDuration/
+  -- textName/textReady) and fall back to the umbrella .text flag — old skins
+  -- carry only .text and behave exactly as before.
   local displayData = skinData.display or skinData  -- Backward compat: old snapshots were flat
   for k, v in pairs(displayData) do
-    if not EXCLUDED_DISPLAY_KEYS[k] then
+    if not EXCLUDED_DISPLAY_KEYS[k] and not (type(k) == "string" and k:sub(1, 1) == "_") then
       local cat = GetKeyCategory(k)
-      if not filter or not cat or filter[cat] then
+      local allowed
+      if not filter or not cat then
+        allowed = true
+      elseif cat == "text" then
+        allowed = filter[GetTextSubcategory(k)]
+        if allowed == nil then allowed = filter.text end
+      else
+        allowed = filter[cat]
+      end
+      if allowed then
         displayTarget[k] = DeepCopy(v)
       end
     end
+  end
+
+  -- Flat (castbar) configs: barPosition applies ONLY when the skin's category
+  -- filter explicitly includes position. Never on a nil filter -- old export
+  -- strings / clipboard pastes must not move bars. This is what lets per-spec
+  -- castbar skins restore their saved screen position on auto-switch.
+  if not barConfig.display and displayData.barPosition ~= nil
+     and filter and filter.position then
+    displayTarget.barPosition = DeepCopy(displayData.barPosition)
   end
 
   -- Apply top-level visual keys (thresholds, colorRanges — only structured configs use these)
@@ -553,6 +752,14 @@ Presets.GetSkinLibrary = GetProfileLibrary  -- Backward compat alias
 function Presets.SaveSkin(name, barConfig, barType, categories)
   local lib = GetProfileLibrary()
   if not lib then return false end
+  -- Castbar skins carry position by default: per-spec castbar skins exist to
+  -- restore the whole per-spec look INCLUDING where the bar sits (per-spec Y
+  -- offsets were silently kept from the previous spec without this). Regular
+  -- bar skins never carry position (a skin must not teleport a bar).
+  if categories == nil and barType == "castbar" then
+    categories = Presets.DefaultCategories()
+    categories.position = true
+  end
   local skin = Presets.SnapshotSkin(barConfig, categories)
   if not skin then return false end
   lib[name] = {
@@ -564,6 +771,163 @@ function Presets.SaveSkin(name, barConfig, barType, categories)
   return true
 end
 Presets.SaveProfile = Presets.SaveSkin  -- Backward compat alias
+
+-- =====================================================================
+-- PUSH LOOK: apply one bar's current style onto other bars of the
+-- same type (all of them or a chosen subset), category-filtered.
+-- =====================================================================
+
+-- Enumerate bar configs a look can be pushed onto.
+-- allTypes=false: only bars of sourceBarType's group. allTypes=true: every bar
+-- type (cross-type push — shared appearance keys apply; type-specific keys are
+-- ignored by types that don't use them, and SanitizeDisplayMode guards modes).
+-- Only CONFIGURED bars are listed: pre-seeded empty DB slots ("Aura Bar N"
+-- with no tracking target) are not real bars and only bloated the picker.
+-- Returns a sorted array of { key, label, cfg }.
+function Presets.EnumeratePushTargets(sourceBarType, allTypes)
+  local out = {}
+  local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+  if not db then return out end
+  local group = allTypes and "" or Presets.GetBarTypeGroup(sourceBarType)
+
+  local function want(g) return allTypes or group == g end
+  local function tag(t) return allTypes and ("[" .. t .. "] ") or "" end
+
+  if want("buff") and db.bars then
+    for num, cfg in pairs(db.bars) do
+      if type(cfg) == "table" and cfg.display then
+        local t = cfg.tracking
+        local configured = t and (t.enabled
+          or (t.buffName and t.buffName ~= "")
+          or (t.spellID and t.spellID ~= 0)
+          or (t.cooldownID and t.cooldownID ~= 0))
+        if configured then
+          local nm = t.buffName
+          if not nm or nm == "" then nm = "Aura Bar " .. tostring(num) end
+          out[#out + 1] = { key = "buff:" .. tostring(num), label = tag("Aura") .. nm, cfg = cfg }
+        end
+      end
+    end
+  end
+
+  if want("resource") and db.resourceBars then
+    for num, cfg in pairs(db.resourceBars) do
+      if type(cfg) == "table" and cfg.display then
+        local t = cfg.tracking
+        if t and t.enabled then
+          local nm = (t.secondaryType or t.resourceCategory) or "Resource"
+          out[#out + 1] = { key = "res:" .. tostring(num), label = tag("Resource") .. tostring(nm) .. " (" .. tostring(num) .. ")", cfg = cfg }
+        end
+      end
+    end
+  end
+
+  if db.cooldownBarConfigs and (allTypes or group:find("^cd_")) then
+    for spellID, configs in pairs(db.cooldownBarConfigs) do
+      if type(configs) == "table" then
+        for cdKey, cfg in pairs(configs) do
+          if type(cfg) == "table" and cfg.display then
+            -- Keys may carry an instance suffix ("charge_2") — group by the base type
+            local base = tostring(cdKey):match("^(%a+)") or tostring(cdKey)
+            if allTypes or ("cd_" .. base) == group then
+              local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+              out[#out + 1] = {
+                key = "cd:" .. tostring(spellID) .. ":" .. tostring(cdKey),
+                label = tag("Cooldown") .. (nm or ("Spell " .. tostring(spellID))),
+                cfg = cfg,
+              }
+            end
+          end
+        end
+      end
+    end
+  end
+
+  if want("timer") and db.timerBarConfigs then
+    for timerID, cfg in pairs(db.timerBarConfigs) do
+      if type(cfg) == "table" and cfg.display then
+        local nm = cfg.name or cfg.label or ("Timer " .. tostring(timerID))
+        out[#out + 1] = { key = "timer:" .. tostring(timerID), label = tag("Timer") .. tostring(nm), cfg = cfg }
+      end
+    end
+  end
+
+  table.sort(out, function(a, b) return tostring(a.label) < tostring(b.label) end)
+  return out
+end
+
+-- Re-style every live bar. Mirrors the options panel's own per-bar refresh
+-- (RefreshBarImmediate): bump config version + ApplyAppearance + a full update
+-- pass. The update pass is REQUIRED: duration/stack TEXT is styled in
+-- UpdateBar/UpdateDurationBar, not ApplyAppearance — without it an applied
+-- look changed stack text but left duration text stale until the next aura
+-- event (reported).
+function Presets.RefreshAllBarVisuals()
+  local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+
+  -- Aura bars: invalidate Display's cached setup first (version gates skip
+  -- SetTexture/SetOrientation/text styling otherwise), then apply + update.
+  if db and db.bars and ns.Display and ns.Display.BumpConfigVersion then
+    for num, cfg in pairs(db.bars) do
+      if type(cfg) == "table" and cfg.display then
+        ns.Display.BumpConfigVersion(num)
+      end
+    end
+  end
+  if ns.Display and ns.Display.ApplyAllBars then ns.Display.ApplyAllBars() end
+  if db and db.bars and ns.API and ns.API.RefreshDisplay then
+    for num, cfg in pairs(db.bars) do
+      if type(cfg) == "table" and cfg.tracking and cfg.tracking.enabled then
+        ns.API.RefreshDisplay(num)
+      end
+    end
+  end
+
+  if ns.Resources and ns.Resources.ApplyAllBars then ns.Resources.ApplyAllBars() end
+  if ns.Resources and ns.Resources.UpdateAllBars then ns.Resources.UpdateAllBars() end
+
+  if db and db.cooldownBarConfigs and ns.CooldownBars and ns.CooldownBars.ApplyAppearance then
+    for spellID, configs in pairs(db.cooldownBarConfigs) do
+      if type(configs) == "table" then
+        for barType in pairs(configs) do
+          ns.CooldownBars.ApplyAppearance(spellID, barType)
+          if ns.CooldownBars.ForceUpdate then
+            ns.CooldownBars.ForceUpdate(spellID, barType)
+          end
+        end
+      end
+    end
+  end
+  if db and db.timerBarConfigs and ns.TimerBars and ns.TimerBars.ApplyAppearance then
+    for timerID in pairs(db.timerBarConfigs) do
+      ns.TimerBars.ApplyAppearance(timerID)
+      if ns.CooldownBars and ns.CooldownBars.ForceUpdate then
+        ns.CooldownBars.ForceUpdate(timerID, "timer")
+      end
+    end
+  end
+end
+
+-- Snapshot sourceCfg's CURRENT look (category-filtered) and apply it onto each
+-- target config. Pushed bars detach from any active skin (their look is now
+-- "Custom" — it no longer matches a saved skin). Returns the number pushed.
+function Presets.PushLook(sourceCfg, categories, targets)
+  if not sourceCfg or not targets then return 0 end
+  local snap = Presets.SnapshotSkin(sourceCfg, categories)
+  if not snap then return 0 end
+  local pushed = 0
+  for _, t in ipairs(targets) do
+    if t.cfg and t.cfg ~= sourceCfg then
+      Presets.ApplySkin(t.cfg, snap, categories)
+      if t.cfg.presets then t.cfg.presets.activeProfile = nil end
+      pushed = pushed + 1
+    end
+  end
+  if pushed > 0 then
+    Presets.RefreshAllBarVisuals()
+  end
+  return pushed
+end
 
 function Presets.LoadSkin(name, barConfig, targetBarType, categoryOverride)
   local lib = GetProfileLibrary()
@@ -599,6 +963,18 @@ function Presets.DeleteSkin(name)
       end
     end
     clearActive(ns.db.char.timerBarConfigs)
+    clearActive(ns.db.char.cooldownBars)  -- legacy cooldown bars
+  end
+  -- Castbars live on the shared-aware store (account-wide in shared mode),
+  -- not ns.db.char — without this a deleted castbar skin left a ghost
+  -- activeProfile reference and a blank Load Skin dropdown.
+  local cbStore = ns.API and ns.API.GetCastbarStore and ns.API.GetCastbarStore()
+  if cbStore and cbStore.castbars then
+    for _, cb in pairs(cbStore.castbars) do
+      if type(cb) == "table" and cb.presets and cb.presets.activeProfile == name then
+        cb.presets.activeProfile = nil
+      end
+    end
   end
   lib[name] = nil
   return true
@@ -852,6 +1228,13 @@ function Presets.RunAutoSwitchAll()
         for barType in pairs(configs) do
           ns.CooldownBars.ApplyAppearance(spellID, barType)
         end
+      end
+    end
+    -- Refresh timer bars (auto-switched timer skins otherwise sat unstyled
+    -- until the next unrelated update)
+    if db.timerBarConfigs and ns.TimerBars and ns.TimerBars.ApplyAppearance then
+      for timerID in pairs(db.timerBarConfigs) do
+        ns.TimerBars.ApplyAppearance(timerID)
       end
     end
     -- Refresh castbar

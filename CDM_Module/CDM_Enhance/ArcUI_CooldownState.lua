@@ -533,6 +533,16 @@ local function EnsureShadowCooldown(frame)
       self:SetUseAuraDisplayTime(false)
       self:SetCooldownFromDurationObject(pushObj, true)
       pf._arcBypassCDHook = false
+      -- The push above rebuilt CDM's countdown FontString, and the global
+      -- preserve re-apply hook SKIPPED it (it ignores bypassed pushes). Without
+      -- an explicit re-float here, preserved duration text binds to the dimmed
+      -- frame alpha until the next dispatch — the intermittent "Preserve
+      -- Duration Text flicker" on IAO icons. Worst on totem-linked CDs
+      -- (Fire/Storm Elemental): totemData keeps this fight firing on every
+      -- CDM refresh even when CDM isn't actually overriding the cooldown.
+      if pf._arcPreserveDurationText then
+        PreserveDurationText(pf)
+      end
     end
 
     hooksecurefunc(frame.Cooldown, "SetCooldown", IAOFight)
@@ -687,6 +697,17 @@ local function ReadCooldownState(frame, spellID)
   local isOnGCD       = frame._arcLastIsOnGCD         or false
   local isChargeSpell = frame._arcIsChargeSpellCached or false
   local isOnCooldown, isRecharging = GetBinaryCooldownState(frame)
+  -- IGNORE HARD ICD (per-icon opt-in, e.g. Monk Zenith 1249625: 2 charges, 70s
+  -- recharge, 16s hard ICD per cast): some charge spells start a REAL spell
+  -- cooldown alongside the recharge, making main+charge both shown — which this
+  -- model otherwise reads as DEPLETED (full desat) while a charge is in hand.
+  -- With the toggle on, that combination reads RECHARGING instead. Trade-off
+  -- (documented in the option): true 0-charge depletion ALSO reads RECHARGING,
+  -- because the two cases are indistinguishable without comparing durations
+  -- (secret in instances). Pure IsShown logic — secret-safe everywhere.
+  if frame._arcIgnoreHardICD and isChargeSpell and isOnCooldown and isRecharging then
+    isOnCooldown = false
+  end
   return isOnCooldown, isRecharging, isChargeSpell, isOnGCD
 end
 
@@ -1048,23 +1069,37 @@ local function HandleIgnoreAuraOverride(frame, iconTex, cfg, stateVisuals)
   -- _arcBypassCDHook prevents IAOFight from re-firing on the triggered SetCooldown.
   -- The cascade guard: if we're already inside a bypass (prior push), skip.
   --
+  -- ONE-SHOT GUARD (_arcIAOPushKey): this block runs on EVERY dispatch, and each
+  -- SetCooldownFromDurationObject rebuilds CDM's countdown FontString — losing the
+  -- Preserve Duration Text IgnoreParentAlpha state (with _arcBypassCDHook set, the
+  -- re-apply hook skips too). Re-pushing per dispatch made the preserved text
+  -- flicker/vanish while the aura was up (Bestial Wrath). Key the push to the real
+  -- binary cooldown state: push once per aura window, and again only when the
+  -- underlying cooldown genuinely transitions (recast / CD reset mid-aura). The key
+  -- is cleared by the dispatcher when the aura window ends. IAOFight still handles
+  -- any CDM-initiated re-push of the aura duration.
+  --
   -- Just push the durObj. ignoreGCD=true means the durObj encodes zero-span
   -- when spell isn't really on CD → engine auto-hides. No trulyOnCD check.
   if frame._arcIgnoreAuraOverride and frame.wasSetFromAura == true
      and frame.Cooldown and not frame._arcBypassCDHook then
-    local ignoreGCD = frame._arcNoGCDSwipeEnabled and true or false
-    local pushObj
-    if frame._arcIsChargeSpellCached and C_Spell.GetSpellChargeDuration then
-      pushObj = C_Spell.GetSpellChargeDuration(spellID, ignoreGCD)
-    end
-    if not pushObj and C_Spell.GetSpellCooldownDuration then
-      pushObj = C_Spell.GetSpellCooldownDuration(spellID, ignoreGCD)
-    end
-    if pushObj then
-      frame._arcBypassCDHook = true
-      frame.Cooldown:SetUseAuraDisplayTime(false)
-      frame.Cooldown:SetCooldownFromDurationObject(pushObj, true)
-      frame._arcBypassCDHook = false
+    local pushKey = (isOnCooldown and "C" or "c") .. (isRecharging and "R" or "r")
+    if frame._arcIAOPushKey ~= pushKey then
+      local ignoreGCD = frame._arcNoGCDSwipeEnabled and true or false
+      local pushObj
+      if frame._arcIsChargeSpellCached and C_Spell.GetSpellChargeDuration then
+        pushObj = C_Spell.GetSpellChargeDuration(spellID, ignoreGCD)
+      end
+      if not pushObj and C_Spell.GetSpellCooldownDuration then
+        pushObj = C_Spell.GetSpellCooldownDuration(spellID, ignoreGCD)
+      end
+      if pushObj then
+        frame._arcBypassCDHook = true
+        frame.Cooldown:SetUseAuraDisplayTime(false)
+        frame.Cooldown:SetCooldownFromDurationObject(pushObj, true)
+        frame._arcBypassCDHook = false
+        frame._arcIAOPushKey = pushKey  -- only latch on success; retry next dispatch otherwise
+      end
     end
   end
 
@@ -1662,6 +1697,7 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
     else
       frame._arcDesatBranch = "DISPATCH_IAO_NO_AURA"
       frame._arcIgnoreAuraOverride = true
+      frame._arcIAOPushKey = nil  -- aura window ended: re-arm the IAO initial push
       HandleCooldownLogic(frame, iconTex, cfg, stateVisuals)
     end
   elseif useAuraLogic then
@@ -1682,6 +1718,7 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
   else
     frame._arcDesatBranch = "DISPATCH_CD"
     frame._arcIgnoreAuraOverride = false
+    frame._arcIAOPushKey = nil  -- IAO not active on this path: re-arm for next aura window
     HandleCooldownLogic(frame, iconTex, cfg, stateVisuals)
   end
 

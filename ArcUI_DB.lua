@@ -212,6 +212,9 @@ ns.DB_DEFAULTS = {
           borderStyle = "Drawn",
           drawnBorderThickness = 2,
           borderColor = {r=0, g=0, b=0, a=1},
+          -- Per-side fill inset (aura bars only): insets the fill texture from each background
+          -- edge so custom fill textures need no baked-in transparent margins. 0 = original look.
+          barPaddingL = 0, barPaddingR = 0, barPaddingT = 0, barPaddingB = 0,
           showTickMarks = true,
           tickMode = "all",
           tickThickness = 1,

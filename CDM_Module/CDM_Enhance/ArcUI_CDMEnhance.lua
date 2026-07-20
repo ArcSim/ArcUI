@@ -565,17 +565,13 @@ local function MigrateSettingsTable(cfg)
     end
   end
   
-  -- Migration 4: Clear zoom=0 so it uses new default (0.075)
-  -- Old default was 0, new default is 0.075 for cleaner icon edges
-  if cfg.zoom == 0 then
-    cfg.zoom = nil  -- nil = use DEFAULT_ICON_SETTINGS.zoom (0.075)
-  end
+  -- Migration 4 REMOVED: it nulled a user's deliberately-saved zoom == 0 to force the
+  -- 0.075 default, silently destroying an explicit setting. A migration must NEVER overwrite
+  -- a saved value -- if a user chose 0 zoom, that choice stays. New installs still start on
+  -- the current default; only the destructive rewrite of an existing saved value is gone.
   
-  -- Migration 5: Clear edgeScale = 1.0 so CDM's default is used
-  -- Our old default (1.0) was too small compared to CDM's actual default (~1.8)
-  if cfg.cooldownSwipe and cfg.cooldownSwipe.edgeScale == 1.0 then
-    cfg.cooldownSwipe.edgeScale = nil  -- nil = use CDM's default
-  end
+  -- Migration 5 REMOVED: same reason as 4 -- it nulled a user's saved edgeScale == 1.0 to
+  -- force CDM's larger default, destroying an explicit choice. Saved values are preserved.
   
   -- Migration 6: Convert outline "NONE" to "" (WoW expects empty string, not "NONE")
   if cfg.chargeText and cfg.chargeText.outline == "NONE" then
@@ -1626,29 +1622,41 @@ end
 -- ===================================================================
 local function CreateBorderEdges(frame)
   if frame._arcBorderEdges then return frame._arcBorderEdges end
-  
+
+  -- NO pixel-grid snapping on the strips. The old SetSnapToPixelGrid(true) +
+  -- SetTexelSnappingBias(1) made each strip's rendered rect round in ONE
+  -- direction on the physical pixel grid, while the icon texture rounds by its
+  -- own rules — at fractional frame positions/UI scales all four strips
+  -- drifted a pixel the same screen direction relative to the icon: the icon
+  -- poked past a 1px border on two edges and the border overlapped it on the
+  -- others (the classic "off by 1, -1 inset fixes top/left but gaps
+  -- bottom/right" report). Unsnapped, the strips render exactly where they are
+  -- anchored — the same rect the icon fills — so border and icon stay glued at
+  -- any scale. Hairline visibility is guaranteed by the thickness being snapped
+  -- to >= 1 physical pixel in UpdateIconBorder (PixelUtil, minPixels=1), same
+  -- approach as the bar engine's unsnapped textures.
   local edges = {}
-  
+
   edges.top = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.top:SetColorTexture(1, 1, 1, 1)
-  edges.top:SetSnapToPixelGrid(true)
-  edges.top:SetTexelSnappingBias(1)
-  
+  edges.top:SetSnapToPixelGrid(false)
+  edges.top:SetTexelSnappingBias(0)
+
   edges.bottom = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.bottom:SetColorTexture(1, 1, 1, 1)
-  edges.bottom:SetSnapToPixelGrid(true)
-  edges.bottom:SetTexelSnappingBias(1)
-  
+  edges.bottom:SetSnapToPixelGrid(false)
+  edges.bottom:SetTexelSnappingBias(0)
+
   edges.left = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.left:SetColorTexture(1, 1, 1, 1)
-  edges.left:SetSnapToPixelGrid(true)
-  edges.left:SetTexelSnappingBias(1)
-  
+  edges.left:SetSnapToPixelGrid(false)
+  edges.left:SetTexelSnappingBias(0)
+
   edges.right = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.right:SetColorTexture(1, 1, 1, 1)
-  edges.right:SetSnapToPixelGrid(true)
-  edges.right:SetTexelSnappingBias(1)
-  
+  edges.right:SetSnapToPixelGrid(false)
+  edges.right:SetTexelSnappingBias(0)
+
   frame._arcBorderEdges = edges
   return edges
 end
@@ -3143,6 +3151,7 @@ ApplyIconStyle = function(frame, cdID)
     -- Store NoGCD flags (these work with Masque)
     if swipeCfg then
       frame._arcNoGCDSwipeEnabled = swipeCfg.noGCDSwipe
+      frame._arcIgnoreHardICD = swipeCfg.ignoreHardICD
       frame._arcSwipeWaitForNoCharges = swipeCfg.swipeWaitForNoCharges
       frame._arcEdgeWaitForNoCharges = swipeCfg.edgeWaitForNoCharges
     end
@@ -3338,6 +3347,7 @@ ApplyIconStyle = function(frame, cdID)
     -- ═══════════════════════════════════════════════════════════════════
     if swipeCfg then
       frame._arcNoGCDSwipeEnabled = swipeCfg.noGCDSwipe
+      frame._arcIgnoreHardICD = swipeCfg.ignoreHardICD
       frame._arcSwipeWaitForNoCharges = swipeCfg.swipeWaitForNoCharges
       frame._arcEdgeWaitForNoCharges = swipeCfg.edgeWaitForNoCharges
       -- Store swipe/edge settings for noGCDSwipe mode to use

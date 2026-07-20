@@ -1286,9 +1286,60 @@ castEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 castEventFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
 castEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 
+-- ===================================================================
+-- GROUP-ANCHOR RESYNC: re-apply Match Group Width / Match Slots when the
+-- anchored CDM group's container is (re)positioned or resized.
+-- At login the castbar applies its appearance BEFORE the CDM groups finish
+-- building their containers, so the width measured for Match Size/Slots was
+-- stale until the user toggled the option (which re-ran ApplyAppearance).
+-- ns.CDMGroups.SyncAnchorProxy fires on every container rect update (login
+-- build, drags, layout changes) -- re-apply then, debounced. The anchor
+-- POSITION already follows live via SetPoint; only the matched SIZE staled.
+-- ===================================================================
+local _groupSyncHooked  = false
+local _groupSyncPending = false
+local function InstallGroupSyncHook()
+  if _groupSyncHooked then return end
+  if not (ns.CDMGroups and ns.CDMGroups.SyncAnchorProxy) then return end
+  _groupSyncHooked = true
+  hooksecurefunc(ns.CDMGroups, "SyncAnchorProxy", function(group)
+    if _groupSyncPending then return end
+    if not group or not group.name then return end
+    local cfg = GetEffectiveCfg()
+    if not cfg or not cfg.enabled or not cfg.anchorToGroup then return end
+    if not (cfg.matchGroupWidth or cfg.matchSlotsOnly) then return end
+    if group.name ~= cfg.anchorGroupName then return end
+    _groupSyncPending = true
+    C_Timer.After(0.2, function()
+      _groupSyncPending = false
+      ns.Castbar.ApplyAppearance()
+    end)
+  end)
+end
+
 castEventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
   if event == "PLAYER_LOGIN" then
     ns.Castbar.Init()
+    InstallGroupSyncHook()
+    -- Re-acquire a cast already in progress at login / reload. Blizzard does not re-fire the
+    -- START event for a cast that began before the addon finished loading, so a reload mid-cast
+    -- would otherwise leave the bar blank until the next cast. Defer one frame so Init's frames
+    -- exist, then replay the matching START through our own handler.
+    C_Timer.After(0, function()
+      local h = castEventFrame:GetScript("OnEvent")
+      if not h then return end
+      local cName, _, _, _, _, _, castID, _, cSpellID = UnitCastingInfo("player")
+      if cName then
+        h(castEventFrame, "UNIT_SPELLCAST_START", "player", castID, cSpellID)
+        return
+      end
+      local chName, _, _, _, _, _, _, chSpellID, isEmp = UnitChannelInfo("player")
+      if chName then
+        h(castEventFrame,
+          isEmp and "UNIT_SPELLCAST_EMPOWER_START" or "UNIT_SPELLCAST_CHANNEL_START",
+          "player", chSpellID, chSpellID)
+      end
+    end)
     return
   end
 
@@ -1451,7 +1502,14 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     end
 
   elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
-    -- Kicked / interrupted (any cast type). Show feedback then fade.
+    -- Kicked / interrupted. Show feedback then fade.
+    -- GUID guard for HARDCASTS (same as STOP/FAILED/SUCCEEDED below): INTERRUPTED can
+    -- arrive LATE -- after the next cast has already STARTED -- carrying the PREVIOUS
+    -- cast's GUID (common when spam-casting with spell queueing, e.g. Aug Eruption).
+    -- Without the guard the fresh cast's bar gets killed with a false "Cancelled".
+    -- Channels keep the unguarded path: their castCurrentGUID may hold a spellID
+    -- fallback so the GUID compare isn't reliable, and CHANNEL_STOP owns their end.
+    if not castIsChannel and not castIsEmpowered and castGUID ~= castCurrentGUID then return end
     if castActive then EndCast(true) end
 
   elseif event == "UNIT_SPELLCAST_STOP"
@@ -1467,7 +1525,13 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
     -- Channels and empowered casts fire SUCCEEDED while still running (spell commits to server).
     -- Let CHANNEL_STOP / EMPOWER_STOP handle the actual end.
-    if not castIsChannel and not castIsEmpowered then StopCast() end
+    if castIsChannel or castIsEmpowered then return end
+    -- GUID guard (same as STOP above): an INSTANT spell cast DURING a hardcast -- e.g. a Mage's
+    -- Shimmer -- fires SUCCEEDED with its OWN GUID, not the active cast's. Without this the ongoing
+    -- cast's bar would StopCast() and vanish mid-cast. Only end when the succeeded GUID matches the
+    -- cast we started.
+    if castGUID ~= castCurrentGUID then return end
+    StopCast()
 
   elseif event == "UNIT_SPELLCAST_CHANNEL_STOP"
       or event == "UNIT_SPELLCAST_EMPOWER_STOP" then

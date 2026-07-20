@@ -61,6 +61,17 @@ end
 
 GCDFilter.ShouldSuppressGCD = ShouldSuppressGCD
 
+-- Re-float preserved duration text after one of OUR bypassed re-pushes below.
+-- Each re-push rebuilds CDM's countdown FontString, and the global preserve
+-- re-apply hook (CDMEnhance) deliberately ignores bypassed pushes — so without
+-- this the preserved text binds to the dimmed frame alpha until the next
+-- dispatch, showing as intermittent text flicker on dimmed icons.
+local function RefloatPreservedText(pf)
+  if pf._arcPreserveDurationText and ns.CooldownState and ns.CooldownState.PreserveDurationText then
+    ns.CooldownState.PreserveDurationText(pf)
+  end
+end
+
 -- ═══════════════════════════════════════════════════════════════════
 -- INSTALL
 -- Hooks frame.Cooldown (the CDM visual Cooldown widget) once per icon.
@@ -92,7 +103,11 @@ function GCDFilter.Install(frame, cdID)
   hooksecurefunc(cd, "SetCooldown", function(self)
     local pf = self._arcParentFrame
     if not pf then return end
-    if not pf._arcNoGCDSwipeEnabled then return end
+    -- Ignore Hard ICD (charge spells only): even without No-GCD, re-push so the
+    -- visible swipe shows the charge RECHARGE instead of the hard ICD CDM drew
+    -- (the charge branch below already prefers GetSpellChargeDuration).
+    local icdOverride = pf._arcIgnoreHardICD and pf._arcIsChargeSpellCached
+    if not pf._arcNoGCDSwipeEnabled and not icdOverride then return end
     if pf._arcBypassCDHook then return end
 
     -- Aura display frames:
@@ -126,6 +141,7 @@ function GCDFilter.Install(frame, cdID)
         self:Clear()
       end
       pf._arcBypassCDHook = false
+      RefloatPreservedText(pf)
       return
     end
 
@@ -150,6 +166,7 @@ function GCDFilter.Install(frame, cdID)
     pf._arcBypassCDHook = true
     self:SetCooldownFromDurationObject(durObj)
     pf._arcBypassCDHook = false
+    RefloatPreservedText(pf)
   end)
 
   -- 12.1: item (trinket) cooldowns may be pushed via SetCooldownFromDurationObject
@@ -176,6 +193,7 @@ function GCDFilter.Install(frame, cdID)
         self:Clear()
       end
       pf._arcBypassCDHook = false
+      RefloatPreservedText(pf)
     end)
   end
 
