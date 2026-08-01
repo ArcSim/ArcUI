@@ -6044,6 +6044,7 @@ function ns.Resources.UpdateBar(barNumber)
     local hideAlphaMul = (resourceFrames[barNumber] and resourceFrames[barNumber]._arcHideWhenAlpha) or 1.0
     mainFrame:SetAlpha(baseOpacity * hideAlphaMul)
     mainFrame:Show()
+    if textFrame then textFrame:SetAlpha(hideAlphaMul) end
   else
     mainFrame:Hide()
     textFrame:Hide()
@@ -6228,8 +6229,10 @@ function ns.Resources.ApplyAppearance(barNumber)
   if not hideWhenFullHide then
     local hideAlphaMul = (resourceFrames[barNumber] and resourceFrames[barNumber]._arcHideWhenAlpha) or 1.0
     mainFrame:SetAlpha(baseOpacity * hideAlphaMul)
+    if textFrame then textFrame:SetAlpha(hideAlphaMul) end
   else
     mainFrame:SetAlpha(baseOpacity)
+    if textFrame then textFrame:SetAlpha(1) end
   end
   
   -- Frame strata and level
