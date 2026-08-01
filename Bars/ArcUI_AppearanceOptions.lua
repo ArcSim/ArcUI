@@ -462,6 +462,78 @@ IsBarMode = function()
   return not cfg or not cfg.display or cfg.display.displayType ~= "icon"
 end
 
+-- Zone helpers live on one table: Lua 5.1 caps a function at 60 upvalues,
+-- and the options table closes over enough already that six separate
+-- file-level locals push it past the limit.
+local ZoneUtil = {}
+
+function ZoneUtil.TextThresholdIsPercent(cfg)
+  if not cfg then return true end
+  if cfg.display.textColorThresholdAsPercent ~= nil then
+    return cfg.display.textColorThresholdAsPercent
+  end
+  return not (cfg.tracking and cfg.tracking.resourceCategory == "secondary")
+end
+
+function ZoneUtil.ResourceBarPowerType(cfg)
+  if not cfg or not cfg.tracking then return nil end
+  if cfg.tracking.resourceCategory == "autoPrimary" then return (UnitPowerType("player")) end
+  if cfg.tracking.resourceCategory == "secondary" then
+    local st = cfg.tracking.secondaryType
+    local info = st and ns.Resources and ns.Resources.SecondaryTypesLookup
+                 and ns.Resources.SecondaryTypesLookup[st]
+    return info and info.powerType or nil
+  end
+  return cfg.tracking.powerType
+end
+
+function ZoneUtil.ZoneSpells(cfg, i)
+  if not cfg or not cfg.display then return nil end
+  local set = cfg.display["textColorThresholdT" .. i .. "Spells"]
+  if type(set) == "table" and next(set) then return set end
+  local legacy = cfg.display["textColorThresholdT" .. i .. "Spell"]
+  if legacy then return { [tostring(legacy)] = true } end
+  return nil
+end
+
+function ZoneUtil.ZoneHasSpell(cfg, i)
+  return ZoneUtil.ZoneSpells(cfg, i) ~= nil
+end
+function ZoneUtil.SpellIconMarkup(icon)
+  if not icon then return "" end
+  return string.format("|T%s:16:16:0:0:64:64:5:59:5:59|t ", tostring(icon))
+end
+
+function ZoneUtil.ZoneSpellChoices(cfg, i, keyBase)
+  local out = { [""] = "|cff888888(fixed value)|r" }
+  if not (ns.Resources and ns.Resources.GetResourceSpenders) then return out end
+  for _, s in ipairs(ns.Resources.GetResourceSpenders(ZoneUtil.ResourceBarPowerType(cfg))) do
+    if s.castable then
+      out[tostring(s.spellID)] = string.format("%s%s |cff888888(%d)|r",
+        ZoneUtil.SpellIconMarkup(s.icon), s.name, s.cost)
+    else
+      out[tostring(s.spellID)] = string.format("%s%s |cff888888(%d)|r |cffffcc00not talented|r",
+        ZoneUtil.SpellIconMarkup(s.icon), s.name, s.cost)
+    end
+  end
+  local set
+  if keyBase then
+    set = cfg and cfg.display and cfg.display[keyBase .. "Spells"]
+  else
+    set = ZoneUtil.ZoneSpells(cfg, i)
+  end
+  if set then
+    for key in pairs(set) do
+      if not out[key] then
+        local si = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(tonumber(key))
+        out[key] = string.format("%s%s |cffff6b6b(unavailable)|r",
+          ZoneUtil.SpellIconMarkup(si and si.iconID), (si and si.name) or ("Spell " .. key))
+      end
+    end
+  end
+  return out
+end
+
 -- Check if selected bar is a resource bar
 local function IsResourceBar()
   local barType, _ = GetSelectedBarType()
@@ -4472,6 +4544,64 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       
       -- MAX COLOR
+      enableZeroColor = {
+        type = "toggle",
+        name = "At 0",
+        desc = "Use a different color when the resource is empty",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.enableZeroColor
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.enableZeroColor = value
+            local _, barNum = GetSelectedBarType()
+            if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+              ns.Resources.ClearResourceColorCurve(barNum)
+            end
+            RefreshBar()
+          end
+        end,
+        order = 30.95,
+        width = 0.6,
+        hidden = function()
+          if IsIconMode() or collapsedSections.colorOptions then return true end
+          if IsDurationBar() then return true end
+          if not IsResourceBar() then return true end
+          if IsDurationBar() or IsChargeBar() or IsCooldownDurationBar() then return true end
+          if IsNonContinuousMode() then return true end  -- Non-continuous modes have their own color systems
+          return GetSelectedConfig() == nil
+        end
+      },
+      zeroColor = {
+        type = "color",
+        name = "Color",
+        hasAlpha = true,
+        get = function()
+          local cfg = GetSelectedConfig()
+          local c = cfg and cfg.display.zeroColor or {r=1, g=0, b=0, a=1}
+          return c.r or 1, c.g or 0, c.b or 0, c.a or 1
+        end,
+        set = function(info, r, g, b, a)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.zeroColor = {r=r, g=g, b=b, a=a}
+            local _, barNum = GetSelectedBarType()
+            if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+              ns.Resources.ClearResourceColorCurve(barNum)
+            end
+            RefreshBar()
+          end
+        end,
+        order = 30.96,
+        width = 0.5,
+        hidden = function()
+          local cfg = GetSelectedConfig()
+          if not cfg or not cfg.display.enableZeroColor then return true end
+          return false
+        end
+      },
       enableMaxColor = {
         type = "toggle",
         name = "At Max",
@@ -5003,413 +5133,663 @@ function ns.AppearanceOptions.GetOptionsTable()
           return false
         end
       },
-      thresholdAsPercent = {
-        type = "toggle",
-        name = "As %",
-        desc = "Interpret threshold values as percentages of max instead of raw values",
-        get = function()
-          local cfg = GetSelectedConfig()
-          if not cfg then return false end
-          -- If explicitly set, use that
-          if cfg.display.colorCurveThresholdAsPercent ~= nil then
-            return cfg.display.colorCurveThresholdAsPercent
-          end
-          -- Auto-default: OFF for secondary resources (small max), ON for primary (large max)
-          local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
-          return not isSecondary
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThresholdAsPercent = value
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
-          end
-        end,
-        order = 33.01,
-        width = 0.4,
+      resourceThresholdGroup = {
+        type = "group",
+        name = "Thresholds",
+        inline = true,
+        order = 33.005,
         hidden = function()
           if IsIconMode() or collapsedSections.colorOptions then return true end
           if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
+          if not IsResourceBar() then return true end
           local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      thresholdDirection = {
-        type = "select",
-        name = "",
-        desc = "Fills To: threshold colors activate as the resource builds up.\nDrains To: threshold colors activate as the resource depletes.",
-        values = {
-          ["fill"] = "Fills To",
-          ["drain"] = "Drains To",
+          if not cfg or not cfg.display.colorCurveEnabled then return true end
+          if cfg.display.thresholdMode == "perStack" or cfg.display.thresholdMode == "fragmented"
+             or cfg.display.thresholdMode == "icons" then return true end
+          return false
+        end,
+        args = {
+        thresholdAsPercent = {
+          type = "toggle",
+          name = "As %",
+          desc = "Interpret threshold values as percentages of max instead of raw values",
+          get = function()
+            local cfg = GetSelectedConfig()
+            if not cfg then return false end
+            -- If explicitly set, use that
+            if cfg.display.colorCurveThresholdAsPercent ~= nil then
+              return cfg.display.colorCurveThresholdAsPercent
+            end
+            -- Auto-default: OFF for secondary resources (small max), ON for primary (large max)
+            local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+            return not isSecondary
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThresholdAsPercent = value
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.01,
+          width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
+          end
         },
-        sorting = {"fill", "drain"},
-        get = function()
-          local cfg = GetSelectedConfig()
-          if not cfg then return "drain" end
-          if cfg.display.colorCurveDirection then
-            return cfg.display.colorCurveDirection
+        thresholdLineBreak = {
+          type = "description",
+          name = "",
+          order = 33.06,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-          -- Legacy fallback: old boolean field
-          if cfg.display.colorCurveDirectionFilling then
-            return "fill"
+        },
+        thresholdDirection = {
+          type = "select",
+          name = "",
+          desc = "Fills To: threshold colors activate as the resource builds up.\nDrains To: threshold colors activate as the resource depletes.",
+          values = {
+            ["fill"] = "Fills To",
+            ["drain"] = "Drains To",
+          },
+          sorting = {"fill", "drain"},
+          get = function()
+            local cfg = GetSelectedConfig()
+            if not cfg then return "drain" end
+            if cfg.display.colorCurveDirection then
+              return cfg.display.colorCurveDirection
+            end
+            -- Legacy fallback: old boolean field
+            if cfg.display.colorCurveDirectionFilling then
+              return "fill"
+            end
+            -- Auto-default: "fill" for secondary resources (build up combo points etc.)
+            local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
+            return isSecondary and "fill" or "drain"
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveDirection = value
+              -- Keep legacy field in sync
+              cfg.display.colorCurveDirectionFilling = (value == "fill")
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.09,
+          width = 0.8,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-          -- Auto-default: "fill" for secondary resources (build up combo points etc.)
-          local isSecondary = cfg.tracking and cfg.tracking.resourceCategory == "secondary"
-          return isSecondary and "fill" or "drain"
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveDirection = value
-            -- Keep legacy field in sync
-            cfg.display.colorCurveDirectionFilling = (value == "fill")
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        spthreshold2Enable = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 33.095,
+        },
+        threshold2Enable = {
+          type = "toggle",
+          name = "At",
+          get = function()
+            local cfg = GetSelectedConfig()
+            return cfg and cfg.display.colorCurveThreshold2Enabled
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold2Enabled = value
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.1,
+          width = 0.25,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-        end,
-        order = 33.09,
-        width = 0.8,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      thresholdLineBreak = {
-        type = "description",
-        name = "",
-        order = 33.06,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      threshold2Enable = {
-        type = "toggle",
-        name = "At",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.colorCurveThreshold2Enabled
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold2Enabled = value
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold2Min = {
+          type = "input",
+          dialogControl = "ArcUI_EditBox",
+          name = "",
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.colorCurveThreshold2Value
+          if v == false then return "" end
+          local set = cfg and cfg.display and cfg.display.colorCurveThreshold2Spells
+          if v == nil and type(set) == "table" and next(set) then return "" end
+          return tostring(v or 75)
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(value)
+              if num then
+                cfg.display.colorCurveThreshold2Value = num
+              elseif value == nil or value:trim() == "" then
+                cfg.display.colorCurveThreshold2Value = false
+              else
+                cfg.display.colorCurveThreshold2Value = 75
+              end
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.2,
+          width = 0.2,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold2Enabled
           end
-        end,
-        order = 33.1,
-        width = 0.25,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      threshold2Min = {
-        type = "input",
-        dialogControl = "ArcUI_EditBox",
-        name = "",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return tostring(cfg and cfg.display.colorCurveThreshold2Value or 75)
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold2Value = tonumber(value) or 75
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold2Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell",
+          desc = "Trigger this threshold at a spell's cost instead of a fixed number, so it "
+              .. "follows talents and cost-reduction procs. Several can be selected: whichever "
+              .. "the current build can cast prices the threshold.",
+          order = 33.25,
+          width = 1.15,
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), nil, "colorCurveThreshold2") end,
+          get = function(_, key)
+            local cfg = GetSelectedConfig()
+            local set = cfg and cfg.display.colorCurveThreshold2Spells
+            return type(set) == "table" and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.colorCurveThreshold2Spells
+              if type(set) ~= "table" then
+                set = {}
+                cfg.display.colorCurveThreshold2Spells = set
+              end
+              set[key] = value or nil
+              local _, barNum = GetSelectedBarType()
+              if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+                ns.Resources.ClearResourceColorCurve(barNum)
+              end
+              RefreshBar()
+            end
+          end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not cfg or not cfg.display.colorCurveEnabled
+              or not cfg.display.colorCurveThreshold2Enabled
           end
-        end,
-        order = 33.2,
-        width = 0.2,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold2Enabled
-        end
-      },
-      threshold2Color = {
-        type = "color",
-        name = "Color",
-        hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.colorCurveThreshold2Color then
-              return SafeColor(cfg.display.colorCurveThreshold2Color, 1, 1, 0, 1)
+        },
+        threshold2Color = {
+          type = "color",
+          name = "Color",
+          hasAlpha = true,
+          get = function()
+            local cfg = GetSelectedConfig()
+            if cfg and cfg.display.colorCurveThreshold2Color then
+                return SafeColor(cfg.display.colorCurveThreshold2Color, 1, 1, 0, 1)
+            end
+            return 1, 1, 0, 1  -- Yellow default
+          end,
+          set = function(info, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold2Color = {r=r, g=g, b=b, a=a}
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.3,
+          width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold2Enabled
           end
-          return 1, 1, 0, 1  -- Yellow default
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold2Color = {r=r, g=g, b=b, a=a}
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        spthreshold3Enable = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 33.39,
+        },
+        threshold3Enable = {
+          type = "toggle",
+          name = "At",
+          get = function()
+            local cfg = GetSelectedConfig()
+            return cfg and cfg.display.colorCurveThreshold3Enabled
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold3Enabled = value
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.4,
+          width = 0.25,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-        end,
-        order = 33.3,
-        width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold2Enabled
-        end
-      },
-      threshold3Enable = {
-        type = "toggle",
-        name = "At",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.colorCurveThreshold3Enabled
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold3Enabled = value
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold3Min = {
+          type = "input",
+          dialogControl = "ArcUI_EditBox",
+          name = "",
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.colorCurveThreshold3Value
+          if v == false then return "" end
+          local set = cfg and cfg.display and cfg.display.colorCurveThreshold3Spells
+          if v == nil and type(set) == "table" and next(set) then return "" end
+          return tostring(v or 50)
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(value)
+              if num then
+                cfg.display.colorCurveThreshold3Value = num
+              elseif value == nil or value:trim() == "" then
+                cfg.display.colorCurveThreshold3Value = false
+              else
+                cfg.display.colorCurveThreshold3Value = 50
+              end
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.5,
+          width = 0.2,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold3Enabled
           end
-        end,
-        order = 33.4,
-        width = 0.25,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      threshold3Min = {
-        type = "input",
-        dialogControl = "ArcUI_EditBox",
-        name = "",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return tostring(cfg and cfg.display.colorCurveThreshold3Value or 50)
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold3Value = tonumber(value) or 50
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold3Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell",
+          desc = "Trigger this threshold at a spell's cost instead of a fixed number, so it "
+              .. "follows talents and cost-reduction procs. Several can be selected: whichever "
+              .. "the current build can cast prices the threshold.",
+          order = 33.55,
+          width = 1.15,
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), nil, "colorCurveThreshold3") end,
+          get = function(_, key)
+            local cfg = GetSelectedConfig()
+            local set = cfg and cfg.display.colorCurveThreshold3Spells
+            return type(set) == "table" and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.colorCurveThreshold3Spells
+              if type(set) ~= "table" then
+                set = {}
+                cfg.display.colorCurveThreshold3Spells = set
+              end
+              set[key] = value or nil
+              local _, barNum = GetSelectedBarType()
+              if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+                ns.Resources.ClearResourceColorCurve(barNum)
+              end
+              RefreshBar()
+            end
+          end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not cfg or not cfg.display.colorCurveEnabled
+              or not cfg.display.colorCurveThreshold3Enabled
           end
-        end,
-        order = 33.5,
-        width = 0.2,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold3Enabled
-        end
-      },
-      threshold3Color = {
-        type = "color",
-        name = "Color",
-        hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.colorCurveThreshold3Color then
-              return SafeColor(cfg.display.colorCurveThreshold3Color, 1, 0.5, 0, 1)
+        },
+        threshold3Color = {
+          type = "color",
+          name = "Color",
+          hasAlpha = true,
+          get = function()
+            local cfg = GetSelectedConfig()
+            if cfg and cfg.display.colorCurveThreshold3Color then
+                return SafeColor(cfg.display.colorCurveThreshold3Color, 1, 0.5, 0, 1)
+            end
+            return 1, 0.5, 0, 1  -- Orange default
+          end,
+          set = function(info, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold3Color = {r=r, g=g, b=b, a=a}
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.6,
+          width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold3Enabled
           end
-          return 1, 0.5, 0, 1  -- Orange default
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold3Color = {r=r, g=g, b=b, a=a}
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        spthreshold4Enable = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 33.69,
+        },
+        threshold4Enable = {
+          type = "toggle",
+          name = "At",
+          get = function()
+            local cfg = GetSelectedConfig()
+            return cfg and cfg.display.colorCurveThreshold4Enabled
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold4Enabled = value
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.7,
+          width = 0.25,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-        end,
-        order = 33.6,
-        width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold3Enabled
-        end
-      },
-      threshold4Enable = {
-        type = "toggle",
-        name = "At",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.colorCurveThreshold4Enabled
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold4Enabled = value
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold4Min = {
+          type = "input",
+          dialogControl = "ArcUI_EditBox",
+          name = "",
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.colorCurveThreshold4Value
+          if v == false then return "" end
+          local set = cfg and cfg.display and cfg.display.colorCurveThreshold4Spells
+          if v == nil and type(set) == "table" and next(set) then return "" end
+          return tostring(v or 25)
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(value)
+              if num then
+                cfg.display.colorCurveThreshold4Value = num
+              elseif value == nil or value:trim() == "" then
+                cfg.display.colorCurveThreshold4Value = false
+              else
+                cfg.display.colorCurveThreshold4Value = 25
+              end
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.8,
+          width = 0.2,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold4Enabled
           end
-        end,
-        order = 33.7,
-        width = 0.25,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      threshold4Min = {
-        type = "input",
-        dialogControl = "ArcUI_EditBox",
-        name = "",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return tostring(cfg and cfg.display.colorCurveThreshold4Value or 25)
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold4Value = tonumber(value) or 25
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold4Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell",
+          desc = "Trigger this threshold at a spell's cost instead of a fixed number, so it "
+              .. "follows talents and cost-reduction procs. Several can be selected: whichever "
+              .. "the current build can cast prices the threshold.",
+          order = 33.85,
+          width = 1.15,
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), nil, "colorCurveThreshold4") end,
+          get = function(_, key)
+            local cfg = GetSelectedConfig()
+            local set = cfg and cfg.display.colorCurveThreshold4Spells
+            return type(set) == "table" and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.colorCurveThreshold4Spells
+              if type(set) ~= "table" then
+                set = {}
+                cfg.display.colorCurveThreshold4Spells = set
+              end
+              set[key] = value or nil
+              local _, barNum = GetSelectedBarType()
+              if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+                ns.Resources.ClearResourceColorCurve(barNum)
+              end
+              RefreshBar()
+            end
+          end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not cfg or not cfg.display.colorCurveEnabled
+              or not cfg.display.colorCurveThreshold4Enabled
           end
-        end,
-        order = 33.8,
-        width = 0.2,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold4Enabled
-        end
-      },
-      threshold4Color = {
-        type = "color",
-        name = "Color",
-        hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.colorCurveThreshold4Color then
-              return SafeColor(cfg.display.colorCurveThreshold4Color, 1, 0, 0, 1)
+        },
+        threshold4Color = {
+          type = "color",
+          name = "Color",
+          hasAlpha = true,
+          get = function()
+            local cfg = GetSelectedConfig()
+            if cfg and cfg.display.colorCurveThreshold4Color then
+                return SafeColor(cfg.display.colorCurveThreshold4Color, 1, 0, 0, 1)
+            end
+            return 1, 0, 0, 1  -- Red default
+          end,
+          set = function(info, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold4Color = {r=r, g=g, b=b, a=a}
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 33.9,
+          width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold4Enabled
           end
-          return 1, 0, 0, 1  -- Red default
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold4Color = {r=r, g=g, b=b, a=a}
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        spthreshold5Enable = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 33.99,
+        },
+        threshold5Enable = {
+          type = "toggle",
+          name = "At",
+          get = function()
+            local cfg = GetSelectedConfig()
+            return cfg and cfg.display.colorCurveThreshold5Enabled
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold5Enabled = value
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 34.0,
+          width = 0.25,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled
           end
-        end,
-        order = 33.9,
-        width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold4Enabled
-        end
-      },
-      threshold5Enable = {
-        type = "toggle",
-        name = "At",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.colorCurveThreshold5Enabled
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold5Enabled = value
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold5Min = {
+          type = "input",
+          dialogControl = "ArcUI_EditBox",
+          name = "",
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.colorCurveThreshold5Value
+          if v == false then return "" end
+          local set = cfg and cfg.display and cfg.display.colorCurveThreshold5Spells
+          if v == nil and type(set) == "table" and next(set) then return "" end
+          return tostring(v or 10)
+          end,
+          set = function(info, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(value)
+              if num then
+                cfg.display.colorCurveThreshold5Value = num
+              elseif value == nil or value:trim() == "" then
+                cfg.display.colorCurveThreshold5Value = false
+              else
+                cfg.display.colorCurveThreshold5Value = 10
+              end
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 34.1,
+          width = 0.2,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold5Enabled
           end
-        end,
-        order = 34.0,
-        width = 0.25,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled
-        end
-      },
-      threshold5Min = {
-        type = "input",
-        dialogControl = "ArcUI_EditBox",
-        name = "",
-        get = function()
-          local cfg = GetSelectedConfig()
-          return tostring(cfg and cfg.display.colorCurveThreshold5Value or 10)
-        end,
-        set = function(info, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold5Value = tonumber(value) or 10
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
+        },
+        threshold5Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell",
+          desc = "Trigger this threshold at a spell's cost instead of a fixed number, so it "
+              .. "follows talents and cost-reduction procs. Several can be selected: whichever "
+              .. "the current build can cast prices the threshold.",
+          order = 34.15,
+          width = 1.15,
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), nil, "colorCurveThreshold5") end,
+          get = function(_, key)
+            local cfg = GetSelectedConfig()
+            local set = cfg and cfg.display.colorCurveThreshold5Spells
+            return type(set) == "table" and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.colorCurveThreshold5Spells
+              if type(set) ~= "table" then
+                set = {}
+                cfg.display.colorCurveThreshold5Spells = set
+              end
+              set[key] = value or nil
+              local _, barNum = GetSelectedBarType()
+              if barNum and ns.Resources and ns.Resources.ClearResourceColorCurve then
+                ns.Resources.ClearResourceColorCurve(barNum)
+              end
+              RefreshBar()
+            end
+          end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not cfg or not cfg.display.colorCurveEnabled
+              or not cfg.display.colorCurveThreshold5Enabled
           end
-        end,
-        order = 34.1,
-        width = 0.2,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold5Enabled
-        end
-      },
-      threshold5Color = {
-        type = "color",
-        name = "Color",
-        hasAlpha = true,
-        get = function()
-          local cfg = GetSelectedConfig()
-          if cfg and cfg.display.colorCurveThreshold5Color then
-              return SafeColor(cfg.display.colorCurveThreshold5Color, 0.5, 0, 0.5, 1)
+        },
+        threshold5Color = {
+          type = "color",
+          name = "Color",
+          hasAlpha = true,
+          get = function()
+            local cfg = GetSelectedConfig()
+            if cfg and cfg.display.colorCurveThreshold5Color then
+                return SafeColor(cfg.display.colorCurveThreshold5Color, 0.5, 0, 0.5, 1)
+            end
+            return 0.5, 0, 0.5, 1  -- Purple default
+          end,
+          set = function(info, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.colorCurveThreshold5Color = {r=r, g=g, b=b, a=a}
+              ns.Resources.ClearAllResourceColorCurves()
+              RefreshBar()
+            end
+          end,
+          order = 34.2,
+          width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.colorOptions then return true end
+            if IsDurationBar() then return true end
+            if not IsResourceBar() then return true end  -- Only show for resource bars
+            local cfg = GetSelectedConfig()
+            return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold5Enabled
           end
-          return 0.5, 0, 0.5, 1  -- Purple default
-        end,
-        set = function(info, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.colorCurveThreshold5Color = {r=r, g=g, b=b, a=a}
-            ns.Resources.ClearAllResourceColorCurves()
-            RefreshBar()
-          end
-        end,
-        order = 34.2,
-        width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.colorOptions then return true end
-          if IsDurationBar() then return true end
-          if not IsResourceBar() then return true end  -- Only show for resource bars
-          local cfg = GetSelectedConfig()
-          return not cfg or not cfg.display.colorCurveEnabled or not cfg.display.colorCurveThreshold5Enabled
-        end
+        },
+        },
       },
       
       -- ============================================================
@@ -9395,6 +9775,9 @@ function ns.AppearanceOptions.GetOptionsTable()
         order = 72,
         width = 0.45,
         hidden = function()
+          local tcfg = GetSelectedConfig()
+          if tcfg and tcfg.display.showText and tcfg.display.textColorThresholdEnabled
+             and IsResourceBar() then return true end
           if IsIconMode() or collapsedSections.stackText then return true end
           local cfg = GetSelectedConfig()
           if not (cfg and cfg.display.showText) then return true end
@@ -9562,342 +9945,896 @@ function ns.AppearanceOptions.GetOptionsTable()
           end
         end,
       },
-
-      textColorThresholdFill = {
-        type  = "toggle",
-        name  = "Filling Direction",
-        desc  = "Fill: base color at 0, threshold colors as resource grows. Drain (default): threshold colors at low values, base at full.",
-        order = 72.41,
-        width = 1.1,
+      textColorThresholdGroup = {
+        type = "group",
+        name = "Text Color Thresholds",
+        inline = true,
+        order = 72.405,
         hidden = function()
           if IsIconMode() or collapsedSections.stackText then return true end
           if not IsResourceBar() then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
         end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          return cfg and cfg.display.textColorThresholdFill
-        end,
-        set = function(_, value)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdFill = value
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType()
-              ns.Resources.ClearTextColorCurves(tonumber(barNum))
+        args = {
+        textColorThresholdFill = {
+          type  = "select",
+          name  = "",
+          desc  = "Fills To: a zone applies once the resource reaches its value, so colours build up as you gain.\n\n"
+               .. "Drains To: a zone applies while the resource is below its value, so colours appear as you spend.",
+          values  = { fill = "Fills To", drain = "Drains To" },
+          sorting = { "fill", "drain" },
+          order = 72.41,
+          width = 1.1,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            return (cfg and cfg.display.textColorThresholdFill) and "fill" or "drain"
+          end,
+          set = function(_, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdFill = (value == "fill")
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType()
+                ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
             end
-            RefreshBar()
-          end
-        end,
+          end,
+        },
+        textColorThresholdAsPercent = {
+          type = "toggle",
+          name = "As %",
+          desc = "Interpret zone values as percentages of max instead of raw resource units.\n\n"
+              .. "Defaults to off for secondary resources (combo points, Chi, Essence), whose max "
+              .. "is too small for percentages to address individual points, and on for primary "
+              .. "resources such as mana.",
+          order = 72.42,
+          width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() return ZoneUtil.TextThresholdIsPercent(GetSelectedConfig()) end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdAsPercent = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerColors = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.44,
+        },
+        textColorThresholdBaseColor = {
+          type     = "color",
+          name     = "Base Color",
+          desc     = "Text color when no threshold is active (below all thresholds in Fill mode; at full in Drain mode).",
+          hasAlpha = true,
+          order    = 72.45,
+          width    = 0.7,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdBaseColor or {r=1, g=1, b=1, a=1}
+            return c.r or 1, c.g or 1, c.b or 1, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdBaseColor = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType()
+                ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerEnds = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.455,
+        },
+        textColorThresholdEnableZeroColor = {
+          type = "toggle",
+          name = "At 0",
+          desc = "Use a dedicated color at exactly zero resource.\n\n"
+              .. "Independent of the zones below, so an empty resource reads the same whether "
+              .. "the zones are set in percent or raw units.",
+          order = 72.46,
+          width = 0.5,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdEnableZeroColor end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdEnableZeroColor = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdZeroColor = {
+          type     = "color",
+          name     = "Color",
+          hasAlpha = true,
+          order    = 72.465,
+          width    = 0.5,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdEnableZeroColor)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdZeroColor or {r=1, g=0, b=0, a=1}
+            return c.r or 1, c.g or 0, c.b or 0, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdZeroColor = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdEnableMaxColor = {
+          type = "toggle",
+          name = "At Max",
+          desc = "Use a dedicated color at exactly maximum resource.\n\n"
+              .. "Independent of the zones below, so it stays correct when a talent changes max "
+              .. "power -- unlike a percent zone, which silently moves.",
+          order = 72.47,
+          width = 0.5,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdEnableMaxColor end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdEnableMaxColor = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdMaxColor = {
+          type     = "color",
+          name     = "Color",
+          hasAlpha = true,
+          order    = 72.48,
+          width    = 0.5,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdEnableMaxColor)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdMaxColor or {r=0, g=1, b=0, a=1}
+            return c.r or 0, c.g or 1, c.b or 0, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdMaxColor = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerZone1 = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.49,
+        },
+        -- T1
+        textColorThresholdT1Enabled = {
+          type  = "toggle", name = "Zone 1", order = 72.5, width = 0.55,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT1Enabled end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT1Enabled = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT1Value = {
+          type = "range",
+          name = function()
+            local cfg = GetSelectedConfig()
+            return (cfg and cfg.display.textColorThresholdFill) and "At % ≥" or "Below %"
+          end,
+          order = 72.51,
+          min = 1, max = 100, step = 1, width = 0.85,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.TextThresholdIsPercent(cfg) then return true end
+            if ZoneUtil.ZoneHasSpell(cfg, 1) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT1Enabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT1Value or 15 end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT1Value = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT1Raw = {
+          type = "input", dialogControl = "ArcUI_EditBox",
+          name = function()
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.ZoneHasSpell(cfg, 1) then return "Fallback" end
+            return (cfg and cfg.display.textColorThresholdFill) and "At ≥" or "Below"
+          end,
+          desc = "Used when this zone has no spell, or when the chosen spell is unavailable in "
+              .. "the current talent build.\n\nLeave empty to skip the zone entirely instead.",
+          order = 72.511, width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.TextThresholdIsPercent(cfg) and not ZoneUtil.ZoneHasSpell(cfg, 1) then
+              return true
+            end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT1Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.textColorThresholdT1Value
+            if v == false then return "" end
+            if v == nil and ZoneUtil.ZoneHasSpell(cfg, 1) then return "" end
+            return tostring(v or 15)
+          end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(v)
+            if num then
+              cfg.display.textColorThresholdT1Value = num
+            elseif v == nil or v:trim() == "" then
+              cfg.display.textColorThresholdT1Value = false
+            else
+              cfg.display.textColorThresholdT1Value = 15
+            end
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT1Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell", order = 72.512, width = 1.15,
+          desc = "Trigger this zone at a spell's cost instead of a fixed number, so it follows "
+              .. "talents and cost-reduction procs on its own. Only spells that cost this bar's "
+              .. "resource are listed, with their current cost in brackets.",
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), 1) end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT1Enabled)
+          end,
+          get = function(_, key)
+            local set = ZoneUtil.ZoneSpells(GetSelectedConfig(), 1)
+            return set ~= nil and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.textColorThresholdT1Spells
+              if type(set) ~= "table" then
+                set = {}
+                local legacy = cfg.display.textColorThresholdT1Spell
+                if legacy then set[tostring(legacy)] = true end
+                cfg.display.textColorThresholdT1Spells = set
+              end
+              cfg.display.textColorThresholdT1Spell = nil
+              set[key] = value or nil
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT1Color = {
+          type = "color", name = "Color", hasAlpha = true, order = 72.52, width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT1Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdT1Color or {r=1, g=0.6, b=0.8, a=1}
+            return c.r or 1, c.g or 0.6, c.b or 0.8, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT1Color = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerZone2 = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.59,
+        },
+        -- T2
+        textColorThresholdT2Enabled = {
+          type  = "toggle", name = "Zone 2", order = 72.6, width = 0.55,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT2Enabled end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT2Enabled = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT2Value = {
+          type = "range",
+          name = function()
+            local cfg = GetSelectedConfig()
+            return (cfg and cfg.display.textColorThresholdFill) and "At % ≥" or "Below %"
+          end,
+          order = 72.61,
+          min = 1, max = 100, step = 1, width = 0.85,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.TextThresholdIsPercent(cfg) then return true end
+            if ZoneUtil.ZoneHasSpell(cfg, 2) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT2Enabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT2Value or 30 end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT2Value = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT2Raw = {
+          type = "input", dialogControl = "ArcUI_EditBox",
+          name = function()
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.ZoneHasSpell(cfg, 2) then return "Fallback" end
+            return (cfg and cfg.display.textColorThresholdFill) and "At ≥" or "Below"
+          end,
+          desc = "Used when this zone has no spell, or when the chosen spell is unavailable in "
+              .. "the current talent build.\n\nLeave empty to skip the zone entirely instead.",
+          order = 72.611, width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.TextThresholdIsPercent(cfg) and not ZoneUtil.ZoneHasSpell(cfg, 2) then
+              return true
+            end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT2Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.textColorThresholdT2Value
+            if v == false then return "" end
+            if v == nil and ZoneUtil.ZoneHasSpell(cfg, 2) then return "" end
+            return tostring(v or 30)
+          end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(v)
+            if num then
+              cfg.display.textColorThresholdT2Value = num
+            elseif v == nil or v:trim() == "" then
+              cfg.display.textColorThresholdT2Value = false
+            else
+              cfg.display.textColorThresholdT2Value = 30
+            end
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT2Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell", order = 72.612, width = 1.15,
+          desc = "Trigger this zone at a spell's cost instead of a fixed number, so it follows "
+              .. "talents and cost-reduction procs on its own. Only spells that cost this bar's "
+              .. "resource are listed, with their current cost in brackets.",
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), 2) end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT2Enabled)
+          end,
+          get = function(_, key)
+            local set = ZoneUtil.ZoneSpells(GetSelectedConfig(), 2)
+            return set ~= nil and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.textColorThresholdT2Spells
+              if type(set) ~= "table" then
+                set = {}
+                local legacy = cfg.display.textColorThresholdT2Spell
+                if legacy then set[tostring(legacy)] = true end
+                cfg.display.textColorThresholdT2Spells = set
+              end
+              cfg.display.textColorThresholdT2Spell = nil
+              set[key] = value or nil
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT2Color = {
+          type = "color", name = "Color", hasAlpha = true, order = 72.62, width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT2Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdT2Color or {r=0.5, g=1, b=0.5, a=1}
+            return c.r or 0.5, c.g or 1, c.b or 0.5, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT2Color = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerZone3 = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.69,
+        },
+        -- T3
+        textColorThresholdT3Enabled = {
+          type  = "toggle", name = "Zone 3", order = 72.7, width = 0.55,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT3Enabled end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT3Enabled = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT3Value = {
+          type = "range",
+          name = function()
+            local cfg = GetSelectedConfig()
+            return (cfg and cfg.display.textColorThresholdFill) and "At % ≥" or "Below %"
+          end,
+          order = 72.71,
+          min = 1, max = 100, step = 1, width = 0.85,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.TextThresholdIsPercent(cfg) then return true end
+            if ZoneUtil.ZoneHasSpell(cfg, 3) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT3Enabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT3Value or 90 end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT3Value = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT3Raw = {
+          type = "input", dialogControl = "ArcUI_EditBox",
+          name = function()
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.ZoneHasSpell(cfg, 3) then return "Fallback" end
+            return (cfg and cfg.display.textColorThresholdFill) and "At ≥" or "Below"
+          end,
+          desc = "Used when this zone has no spell, or when the chosen spell is unavailable in "
+              .. "the current talent build.\n\nLeave empty to skip the zone entirely instead.",
+          order = 72.711, width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.TextThresholdIsPercent(cfg) and not ZoneUtil.ZoneHasSpell(cfg, 3) then
+              return true
+            end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT3Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.textColorThresholdT3Value
+            if v == false then return "" end
+            if v == nil and ZoneUtil.ZoneHasSpell(cfg, 3) then return "" end
+            return tostring(v or 90)
+          end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(v)
+            if num then
+              cfg.display.textColorThresholdT3Value = num
+            elseif v == nil or v:trim() == "" then
+              cfg.display.textColorThresholdT3Value = false
+            else
+              cfg.display.textColorThresholdT3Value = 90
+            end
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT3Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell", order = 72.712, width = 1.15,
+          desc = "Trigger this zone at a spell's cost instead of a fixed number, so it follows "
+              .. "talents and cost-reduction procs on its own. Only spells that cost this bar's "
+              .. "resource are listed, with their current cost in brackets.",
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), 3) end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT3Enabled)
+          end,
+          get = function(_, key)
+            local set = ZoneUtil.ZoneSpells(GetSelectedConfig(), 3)
+            return set ~= nil and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.textColorThresholdT3Spells
+              if type(set) ~= "table" then
+                set = {}
+                local legacy = cfg.display.textColorThresholdT3Spell
+                if legacy then set[tostring(legacy)] = true end
+                cfg.display.textColorThresholdT3Spells = set
+              end
+              cfg.display.textColorThresholdT3Spell = nil
+              set[key] = value or nil
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT3Color = {
+          type = "color", name = "Color", hasAlpha = true, order = 72.72, width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT3Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdT3Color or {r=1, g=0.3, b=0.3, a=1}
+            return c.r or 1, c.g or 0.3, c.b or 0.3, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT3Color = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        tctSpacerZone4 = {
+          type = "description",
+          name = " ",
+          width = "full",
+          order = 72.79,
+        },
+        -- T4
+        textColorThresholdT4Enabled = {
+          type  = "toggle", name = "Zone 4", order = 72.8, width = 0.55,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT4Enabled end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT4Enabled = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT4Value = {
+          type = "range",
+          name = function()
+            local cfg = GetSelectedConfig()
+            return (cfg and cfg.display.textColorThresholdFill) and "At % ≥" or "Below %"
+          end,
+          order = 72.81,
+          min = 1, max = 100, step = 1, width = 0.85,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.TextThresholdIsPercent(cfg) then return true end
+            if ZoneUtil.ZoneHasSpell(cfg, 4) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT4Enabled)
+          end,
+          get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT4Value or 100 end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT4Value = v
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT4Raw = {
+          type = "input", dialogControl = "ArcUI_EditBox",
+          name = function()
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.ZoneHasSpell(cfg, 4) then return "Fallback" end
+            return (cfg and cfg.display.textColorThresholdFill) and "At ≥" or "Below"
+          end,
+          desc = "Used when this zone has no spell, or when the chosen spell is unavailable in "
+              .. "the current talent build.\n\nLeave empty to skip the zone entirely instead.",
+          order = 72.811, width = 0.4,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if ZoneUtil.TextThresholdIsPercent(cfg) and not ZoneUtil.ZoneHasSpell(cfg, 4) then
+              return true
+            end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT4Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local v = cfg and cfg.display.textColorThresholdT4Value
+            if v == false then return "" end
+            if v == nil and ZoneUtil.ZoneHasSpell(cfg, 4) then return "" end
+            return tostring(v or 100)
+          end,
+          set = function(_, v)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local num = tonumber(v)
+            if num then
+              cfg.display.textColorThresholdT4Value = num
+            elseif v == nil or v:trim() == "" then
+              cfg.display.textColorThresholdT4Value = false
+            else
+              cfg.display.textColorThresholdT4Value = 100
+            end
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT4Spell = {
+          type = "multiselect",
+          dialogControl = "Dropdown",
+          name = "Spell", order = 72.812, width = 1.15,
+          desc = "Trigger this zone at a spell's cost instead of a fixed number, so it follows "
+              .. "talents and cost-reduction procs on its own. Only spells that cost this bar's "
+              .. "resource are listed, with their current cost in brackets.",
+          values = function() return ZoneUtil.ZoneSpellChoices(GetSelectedConfig(), 4) end,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            if not ZoneUtil.ResourceBarPowerType(cfg) then return true end
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT4Enabled)
+          end,
+          get = function(_, key)
+            local set = ZoneUtil.ZoneSpells(GetSelectedConfig(), 4)
+            return set ~= nil and set[key] == true
+          end,
+          set = function(_, key, value)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              local set = cfg.display.textColorThresholdT4Spells
+              if type(set) ~= "table" then
+                set = {}
+                local legacy = cfg.display.textColorThresholdT4Spell
+                if legacy then set[tostring(legacy)] = true end
+                cfg.display.textColorThresholdT4Spells = set
+              end
+              cfg.display.textColorThresholdT4Spell = nil
+              set[key] = value or nil
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        textColorThresholdT4Color = {
+          type = "color", name = "Color", hasAlpha = true, order = 72.82, width = 0.45,
+          hidden = function()
+            if IsIconMode() or collapsedSections.stackText then return true end
+            if not IsResourceBar() then return true end
+            local cfg = GetSelectedConfig()
+            return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
+              and cfg.display.textColorThresholdT4Enabled)
+          end,
+          get = function()
+            local cfg = GetSelectedConfig()
+            local c = cfg and cfg.display.textColorThresholdT4Color or {r=1, g=1, b=0.3, a=1}
+            return c.r or 1, c.g or 1, c.b or 0.3, c.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            local cfg = GetSelectedConfig()
+            if cfg then
+              cfg.display.textColorThresholdT4Color = {r=r, g=g, b=b, a=a}
+              if ns.Resources and ns.Resources.ClearTextColorCurves then
+                local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
+              end
+              RefreshBar()
+            end
+          end,
+        },
+        },
       },
 
-      textColorThresholdBaseColor = {
-        type     = "color",
-        name     = "Base Color",
-        desc     = "Text color when no threshold is active (below all thresholds in Fill mode; at full in Drain mode).",
-        hasAlpha = true,
-        order    = 72.45,
-        width    = 0.7,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
-        end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          local c = cfg and cfg.display.textColorThresholdBaseColor or {r=1, g=1, b=1, a=1}
-          return c.r or 1, c.g or 1, c.b or 1, c.a or 1
-        end,
-        set = function(_, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdBaseColor = {r=r, g=g, b=b, a=a}
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType()
-              ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
 
-      -- T1
-      textColorThresholdT1Enabled = {
-        type  = "toggle", name = "Zone 1", order = 72.5, width = 0.55,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT1Enabled end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT1Enabled = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT1Value = {
-        type = "range", name = "At % ≥", order = 72.51,
-        min = 1, max = 99, step = 1, width = 0.85,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT1Enabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT1Value or 15 end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT1Value = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT1Color = {
-        type = "color", name = "Color", hasAlpha = true, order = 72.52, width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT1Enabled)
-        end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          local c = cfg and cfg.display.textColorThresholdT1Color or {r=1, g=0.6, b=0.8, a=1}
-          return c.r or 1, c.g or 0.6, c.b or 0.8, c.a or 1
-        end,
-        set = function(_, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT1Color = {r=r, g=g, b=b, a=a}
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
 
-      -- T2
-      textColorThresholdT2Enabled = {
-        type  = "toggle", name = "Zone 2", order = 72.6, width = 0.55,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT2Enabled end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT2Enabled = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT2Value = {
-        type = "range", name = "At % ≥", order = 72.61,
-        min = 1, max = 99, step = 1, width = 0.85,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT2Enabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT2Value or 30 end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT2Value = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT2Color = {
-        type = "color", name = "Color", hasAlpha = true, order = 72.62, width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT2Enabled)
-        end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          local c = cfg and cfg.display.textColorThresholdT2Color or {r=0.5, g=1, b=0.5, a=1}
-          return c.r or 0.5, c.g or 1, c.b or 0.5, c.a or 1
-        end,
-        set = function(_, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT2Color = {r=r, g=g, b=b, a=a}
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
 
-      -- T3
-      textColorThresholdT3Enabled = {
-        type  = "toggle", name = "Zone 3", order = 72.7, width = 0.55,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT3Enabled end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT3Enabled = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT3Value = {
-        type = "range", name = "At % ≥", order = 72.71,
-        min = 1, max = 99, step = 1, width = 0.85,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT3Enabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT3Value or 90 end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT3Value = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT3Color = {
-        type = "color", name = "Color", hasAlpha = true, order = 72.72, width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT3Enabled)
-        end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          local c = cfg and cfg.display.textColorThresholdT3Color or {r=1, g=0.3, b=0.3, a=1}
-          return c.r or 1, c.g or 0.3, c.b or 0.3, c.a or 1
-        end,
-        set = function(_, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT3Color = {r=r, g=g, b=b, a=a}
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
 
-      -- T4
-      textColorThresholdT4Enabled = {
-        type  = "toggle", name = "Zone 4", order = 72.8, width = 0.55,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT4Enabled end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT4Enabled = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT4Value = {
-        type = "range", name = "At % ≥", order = 72.81,
-        min = 1, max = 99, step = 1, width = 0.85,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT4Enabled)
-        end,
-        get = function() local cfg = GetSelectedConfig(); return cfg and cfg.display.textColorThresholdT4Value or 100 end,
-        set = function(_, v)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT4Value = v
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
-      textColorThresholdT4Color = {
-        type = "color", name = "Color", hasAlpha = true, order = 72.82, width = 0.45,
-        hidden = function()
-          if IsIconMode() or collapsedSections.stackText then return true end
-          if not IsResourceBar() then return true end
-          local cfg = GetSelectedConfig()
-          return not (cfg and cfg.display.showText and cfg.display.textColorThresholdEnabled
-            and cfg.display.textColorThresholdT4Enabled)
-        end,
-        get = function()
-          local cfg = GetSelectedConfig()
-          local c = cfg and cfg.display.textColorThresholdT4Color or {r=1, g=1, b=0.3, a=1}
-          return c.r or 1, c.g or 1, c.b or 0.3, c.a or 1
-        end,
-        set = function(_, r, g, b, a)
-          local cfg = GetSelectedConfig()
-          if cfg then
-            cfg.display.textColorThresholdT4Color = {r=r, g=g, b=b, a=a}
-            if ns.Resources and ns.Resources.ClearTextColorCurves then
-              local _, barNum = GetSelectedBarType(); ns.Resources.ClearTextColorCurves(tonumber(barNum))
-            end
-            RefreshBar()
-          end
-        end,
-      },
+
 
       font = {
         type = "select",
