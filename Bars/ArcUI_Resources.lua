@@ -1070,6 +1070,145 @@ end
 -- Forward declaration: defined later near DK_SPEC_DEFAULT_COLORS
 local GetSpecAwareBarColor
 
+local function IsSpellCastable(spellID)
+  if not spellID or not C_SpellBook then return spellID ~= nil end
+  return ((C_SpellBook.IsSpellKnownOrInSpellBook and C_SpellBook.IsSpellKnownOrInSpellBook(spellID))
+       or (C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(spellID))) and true or false
+end
+
+local function GetRawSpellCost(spellID, powerType)
+  if not spellID or spellID <= 0 or not powerType then return nil end
+  if not C_Spell or not C_Spell.GetSpellPowerCost then return nil end
+  local ok, costInfo = pcall(C_Spell.GetSpellPowerCost, spellID)
+  if not ok or type(costInfo) ~= "table" then return nil end
+  for _, entry in ipairs(costInfo) do
+    if entry.type == powerType then
+      local c = entry.cost
+      if type(c) == "number" and c > 0 then return c end
+    end
+  end
+  return nil
+end
+
+local function GetSpellCostForPower(spellID, powerType)
+  if not IsSpellCastable(spellID) then return nil end
+  return GetRawSpellCost(spellID, powerType)
+end
+ns.Resources.GetSpellCostForPower = GetSpellCostForPower
+ns.Resources.GetRawSpellCost = GetRawSpellCost
+ns.Resources.IsSpellCastable = IsSpellCastable
+
+local talentSpellCache = { configID = nil, ids = nil }
+local function GetTalentTreeSpellIDs()
+  if not C_ClassTalents or not C_Traits then return nil end
+  local configID = C_ClassTalents.GetActiveConfigID()
+  if not configID then return nil end
+  if talentSpellCache.configID == configID and talentSpellCache.ids then
+    return talentSpellCache.ids
+  end
+  local configInfo = C_Traits.GetConfigInfo(configID)
+  if not configInfo or not configInfo.treeIDs then return nil end
+  local ids = {}
+  for _, treeID in ipairs(configInfo.treeIDs) do
+    for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID) or {}) do
+      local ni = C_Traits.GetNodeInfo(configID, nodeID)
+      for _, entryID in ipairs((ni and ni.entryIDs) or {}) do
+        local entryInfo = C_Traits.GetEntryInfo(configID, entryID)
+        local defInfo = entryInfo and entryInfo.definitionID
+                        and C_Traits.GetDefinitionInfo(entryInfo.definitionID)
+        if defInfo and defInfo.spellID then ids[defInfo.spellID] = true end
+      end
+    end
+  end
+  talentSpellCache.configID, talentSpellCache.ids = configID, ids
+  return ids
+end
+
+function ns.Resources.GetResourceSpenders(powerType)
+  local out = {}
+  if not powerType or not C_SpellBook or not C_SpellBook.GetNumSpellBookSkillLines then
+    return out
+  end
+  local seen = {}
+  for skillIndex = 1, (C_SpellBook.GetNumSpellBookSkillLines() or 0) do
+    local skillInfo = C_SpellBook.GetSpellBookSkillLineInfo(skillIndex)
+    if skillInfo and not skillInfo.isGuild and not skillInfo.shouldHide then
+      local startIndex = skillInfo.itemIndexOffset + 1
+      for i = startIndex, startIndex + (skillInfo.numSpellBookItems or 0) - 1 do
+        local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+        local spellID = info and (info.actionID or info.spellID)
+        if spellID and not info.isPassive and not info.isOffSpec and not seen[spellID] then
+          seen[spellID] = true
+          local cost = GetSpellCostForPower(spellID, powerType)
+          if cost then
+            local si = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            table.insert(out, { spellID = spellID, cost = cost, castable = true,
+                                name = (si and si.name) or tostring(spellID),
+                                icon = si and si.iconID })
+          end
+        end
+      end
+    end
+  end
+  for spellID in pairs(GetTalentTreeSpellIDs() or {}) do
+    if not seen[spellID] then
+      seen[spellID] = true
+      local cost = GetRawSpellCost(spellID, powerType)
+      if cost then
+        local si = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+        table.insert(out, { spellID = spellID, cost = cost, castable = false,
+                            name = (si and si.name) or tostring(spellID),
+                            icon = si and si.iconID })
+      end
+    end
+  end
+
+  table.sort(out, function(a, b)
+    if a.castable ~= b.castable then return a.castable end
+    if a.cost ~= b.cost then return a.cost < b.cost end
+    return a.name < b.name
+  end)
+  return out
+end
+
+local function ResolveSpellZone(cfg, keyBase, powerType, defaultValue)
+  local key = keyBase
+
+  local best
+  local function consider(spellID)
+    spellID = tonumber(spellID)
+    if not IsSpellCastable(spellID) then return end
+    local c = GetRawSpellCost(spellID, powerType)
+    if c and (not best or c < best) then best = c end
+  end
+
+  local hasSpells = false
+  local list = cfg[key .. "Spells"]
+  if type(list) == "table" then
+    for spellID, selected in pairs(list) do
+      if selected then hasSpells = true; consider(spellID) end
+    end
+  end
+
+  if not hasSpells and cfg[key .. "Spell"] then
+    hasSpells = true
+    consider(cfg[key .. "Spell"])
+  end
+
+  if best then return best, true end
+  local v = cfg[key .. "Value"]
+  if v == false then return nil, false end
+  if v == nil then
+    if hasSpells then return nil, false end
+    v = defaultValue
+  end
+  return v or 0, false
+end
+
+local function ResolveZoneValue(cfg, i, powerType)
+  return ResolveSpellZone(cfg, "textColorThresholdT" .. i, powerType)
+end
+
 -- Hash function for cache invalidation
 local function GetResourceThresholdHash(cfg, baseColor, powerType)
   local parts = {}
@@ -1078,16 +1217,26 @@ local function GetResourceThresholdHash(cfg, baseColor, powerType)
   
   for i = 2, 5 do
     local enabled = cfg["colorCurveThreshold" .. i .. "Enabled"]
-    local value = cfg["colorCurveThreshold" .. i .. "Value"] or RESOURCE_THRESHOLD_DEFAULT_VALUES[i]
     local color = cfg["colorCurveThreshold" .. i .. "Color"] or RESOURCE_THRESHOLD_DEFAULT_COLORS[i]
     if enabled then
-      local cR, cG, cB, cA = SafeColorRGBA(color, 1, 1, 1, 1)
-      table.insert(parts, string.format("t%d:%d,%.2f,%.2f,%.2f,%.2f", i, value, cR, cG, cB, cA))
+      local value, isRaw = ResolveSpellZone(cfg, "colorCurveThreshold" .. i, powerType,
+        RESOURCE_THRESHOLD_DEFAULT_VALUES[i])
+      if value == nil then
+        table.insert(parts, string.format("t%d:off", i))
+      else
+        local cR, cG, cB, cA = SafeColorRGBA(color, 1, 1, 1, 1)
+        table.insert(parts, string.format("t%d:%.2f%s,%.2f,%.2f,%.2f,%.2f",
+          i, value, isRaw and "r" or "", cR, cG, cB, cA))
+      end
     end
   end
   
   table.insert(parts, cfg.colorCurveThresholdAsPercent and "pct" or "num")
   table.insert(parts, (cfg.colorCurveDirection == "fill" or cfg.colorCurveDirectionFilling) and "fill" or "drain")
+  if cfg.enableZeroColor then
+    local zR, zG, zB, zA = SafeColorRGBA(cfg.zeroColor, 1, 0, 0, 1)
+    table.insert(parts, string.format("zc:%.2f,%.2f,%.2f,%.2f", zR, zG, zB, zA))
+  end
   -- Include actual max power for numeric mode so curve rebuilds when talents change max
   local effectiveMax = cfg.colorCurveMaxValue or 100
   if not cfg.colorCurveThresholdAsPercent and powerType then
@@ -1147,11 +1296,14 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
   
   for i = 2, 5 do
     local enabled = cfg["colorCurveThreshold" .. i .. "Enabled"]
-    local value = cfg["colorCurveThreshold" .. i .. "Value"] or RESOURCE_THRESHOLD_DEFAULT_VALUES[i]
     local color = cfg["colorCurveThreshold" .. i .. "Color"] or RESOURCE_THRESHOLD_DEFAULT_COLORS[i]
-    
+
     if enabled then
-      table.insert(thresholds, { value = value, color = color })
+      local value, isRaw = ResolveSpellZone(cfg, "colorCurveThreshold" .. i, powerType,
+        RESOURCE_THRESHOLD_DEFAULT_VALUES[i])
+      if value ~= nil then
+        table.insert(thresholds, { value = value, color = color, isRaw = isRaw })
+      end
     end
   end
   
@@ -1181,7 +1333,38 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
   end
   
   local EPSILON = 0.0001
-  
+
+  for _, t in ipairs(thresholds) do
+    local pct = (asPercent and not t.isRaw) and (t.value / 100) or (t.value / maxValue)
+    t.pct = math.max(0, math.min(1, pct))
+  end
+  table.sort(thresholds, function(a, b) return a.pct < b.pct end)
+
+  local spaced = {}
+  for i = 1, #thresholds do
+    local t, prev = thresholds[i], spaced[#spaced]
+    if prev and t.pct <= prev.pct + EPSILON then
+      spaced[#spaced] = t
+    else
+      spaced[#spaced + 1] = t
+    end
+  end
+  thresholds = spaced
+
+  local function AddZeroPoint(color, nextPct)
+    local r, g, b, a = SafeColorRGBA(color)
+    if cfg.enableZeroColor then
+      local zc = cfg.zeroColor or {r=1, g=0, b=0, a=1}
+      local zR, zG, zB, zA = SafeColorRGBA(zc, 1, 0, 0, 1)
+      curve:AddPoint(0.0, CreateColor(zR, zG, zB, zA))
+      if not nextPct or nextPct > EPSILON then
+        curve:AddPoint(EPSILON, CreateColor(r, g, b, a))
+      end
+    else
+      curve:AddPoint(0.0, CreateColor(r, g, b, a))
+    end
+  end
+
   if isFilling then
     -- FILLING MODE: base color at 0%, threshold colors as resource builds up
     -- Example: thresholds = [{50%, Yellow}, {75%, Orange}], base = Blue
@@ -1190,19 +1373,12 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
     -- 75% to 100%: Orange
     
     -- Start at 0% with base color
-    local bR, bG, bB, bA = SafeColorRGBA(baseColor)
-    curve:AddPoint(0.0, CreateColor(bR, bG, bB, bA))
-    
+    AddZeroPoint(baseColor, thresholds[1].pct)
+
     for i = 1, #thresholds do
       local t = thresholds[i]
-      local pct
-      if asPercent then
-        pct = t.value / 100
-      else
-        pct = t.value / maxValue
-      end
-      pct = math.max(0, math.min(1, pct))
-      
+      local pct = t.pct
+
       -- Color before this threshold (base or previous threshold)
       local prevColor
       if i == 1 then
@@ -1225,9 +1401,11 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
     -- End at 100% with highest threshold color (or max color if enabled)
     local highestColor = thresholds[#thresholds].color
     if enableMaxColor then
-      -- Step: highest threshold color just below max, then max color at exactly 100%
       local hR, hG, hB, hA = SafeColorRGBA(highestColor)
-      curve:AddPoint(1.0 - EPSILON, CreateColor(hR, hG, hB, hA))
+      -- Step: highest threshold color just below max, then max color at exactly 100%
+      if thresholds[#thresholds].pct < 1.0 - EPSILON then
+        curve:AddPoint(1.0 - EPSILON, CreateColor(hR, hG, hB, hA))
+      end
       local mcR, mcG, mcB, mcA = SafeColorRGBA(maxColor)
       curve:AddPoint(1.0, CreateColor(mcR, mcG, mcB, mcA))
     else
@@ -1244,20 +1422,12 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
     -- 50% to 100%: Green (base)
     
     -- Start at 0% with the lowest (most urgent) threshold color
-    local lowestThreshold = thresholds[1]
-    local lR, lG, lB, lA = SafeColorRGBA(lowestThreshold.color)
-    curve:AddPoint(0.0, CreateColor(lR, lG, lB, lA))
-    
+    AddZeroPoint(thresholds[1].color, thresholds[1].pct)
+
     for i = 1, #thresholds do
       local t = thresholds[i]
-      local pct
-      if asPercent then
-        pct = t.value / 100
-      else
-        pct = t.value / maxValue
-      end
-      pct = math.max(0, math.min(1, pct))
-      
+      local pct = t.pct
+
       -- Determine next color (above this threshold)
       local nextColor
       if i == #thresholds then
@@ -1281,9 +1451,11 @@ local function GetResourceColorCurve(barNumber, barConfig, powerType)
     
     -- End with base color at 100% (or max color step if enabled)
     if enableMaxColor then
-      -- Step: base color just below max, then max color at exactly 100%
       local bR, bG, bB, bA = SafeColorRGBA(baseColor)
-      curve:AddPoint(1.0 - EPSILON, CreateColor(bR, bG, bB, bA))
+      -- Step: base color just below max, then max color at exactly 100%
+      if thresholds[#thresholds].pct < 1.0 - EPSILON then
+        curve:AddPoint(1.0 - EPSILON, CreateColor(bR, bG, bB, bA))
+      end
       local mcR, mcG, mcB, mcA = SafeColorRGBA(maxColor)
       curve:AddPoint(1.0, CreateColor(mcR, mcG, mcB, mcA))
     else
@@ -1350,23 +1522,31 @@ local function EvaluateThresholdsDirectly(barConfig, currentValue, maxValue)
   
   for i = 2, 5 do
     local enabled = cfg["colorCurveThreshold" .. i .. "Enabled"]
-    local value = cfg["colorCurveThreshold" .. i .. "Value"] or RESOURCE_THRESHOLD_DEFAULT_VALUES[i]
     local color = cfg["colorCurveThreshold" .. i .. "Color"] or RESOURCE_THRESHOLD_DEFAULT_COLORS[i]
-    
+
     if enabled then
+      local value, isRaw = ResolveSpellZone(cfg, "colorCurveThreshold" .. i, powerType,
+        RESOURCE_THRESHOLD_DEFAULT_VALUES[i])
+      if value ~= nil then
       -- Convert threshold value to absolute if in percent mode
       local absValue
-      if asPercent then
+      if asPercent and not isRaw then
         absValue = (value / 100) * maxValue
       else
         absValue = value
       end
+      if absValue > maxValue then absValue = maxValue end
+      if absValue < 0 then absValue = 0 end
       table.insert(thresholds, { value = absValue, color = color })
+      end
     end
   end
   
   -- No thresholds enabled → just handle at-max
   if #thresholds == 0 then
+    if cfg.enableZeroColor and currentValue <= 0 then
+      return cfg.zeroColor or {r=1, g=0, b=0, a=1}
+    end
     if enableMaxColor and currentValue >= maxValue then
       return maxColor
     end
@@ -1384,6 +1564,9 @@ local function EvaluateThresholdsDirectly(barConfig, currentValue, maxValue)
   end
   
   -- At-max override
+  if cfg.enableZeroColor and currentValue <= 0 then
+    return cfg.zeroColor or {r=1, g=0, b=0, a=1}
+  end
   if enableMaxColor and currentValue >= maxValue then
     return maxColor
   end
@@ -1419,7 +1602,8 @@ end
 -- ═══════════════════════════════════════════════════════════════
 local resourceTextColorCurves = {}  -- [barNumber] = { curve, settingsHash }
 
-local function GetTextThresholdHash(cfg)
+
+local function GetTextThresholdHash(cfg, asPercent, maxValue, powerType)
   local parts = {}
   local bc = cfg.textColorThresholdBaseColor or {r=1, g=1, b=1, a=1}
   table.insert(parts, string.format("bc:%.2f,%.2f,%.2f,%.2f",
@@ -1427,21 +1611,52 @@ local function GetTextThresholdHash(cfg)
   for i = 1, 4 do
     local key = "textColorThresholdT" .. i
     if cfg[key .. "Enabled"] then
-      local v = cfg[key .. "Value"] or 0
+      local v, isRaw = ResolveZoneValue(cfg, i, powerType)
       local c = cfg[key .. "Color"] or {r=1, g=1, b=1, a=1}
-      table.insert(parts, string.format("t%d:%d,%.2f,%.2f,%.2f,%.2f",
-        i, v, c.r or 1, c.g or 1, c.b or 1, c.a or 1))
+      if v == nil then
+        table.insert(parts, string.format("t%d:off", i))
+      else
+        table.insert(parts, string.format("t%d:%.2f%s,%.2f,%.2f,%.2f,%.2f",
+          i, v, isRaw and "r" or "", c.r or 1, c.g or 1, c.b or 1, c.a or 1))
+      end
     end
   end
   table.insert(parts, cfg.textColorThresholdFill and "fill" or "drain")
+  table.insert(parts, asPercent and "pct" or "num")
+  if not asPercent then
+    table.insert(parts, tostring(maxValue or 0))
+  end
+  if cfg.textColorThresholdEnableZeroColor then
+    local zc = cfg.textColorThresholdZeroColor or {r=1, g=0, b=0, a=1}
+    table.insert(parts, string.format("zc:%.2f,%.2f,%.2f,%.2f",
+      zc.r or 1, zc.g or 0, zc.b or 0, zc.a or 1))
+  end
+  if cfg.textColorThresholdEnableMaxColor then
+    local mc = cfg.textColorThresholdMaxColor or {r=0, g=1, b=0, a=1}
+    table.insert(parts, string.format("mc:%.2f,%.2f,%.2f,%.2f",
+      mc.r or 0, mc.g or 1, mc.b or 0, mc.a or 1))
+  end
   return table.concat(parts, "|")
 end
 
-local function GetTextColorCurve(barNumber, dispCfg)
+local function GetTextColorCurve(barNumber, dispCfg, maxValue, powerType)
   if not dispCfg or not dispCfg.textColorThresholdEnabled then return nil end
   if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
 
-  local hash   = GetTextThresholdHash(dispCfg)
+  local asPercent = dispCfg.textColorThresholdAsPercent ~= false
+  local needsMax = not asPercent
+  if not needsMax then
+    for i = 1, 4 do
+      if dispCfg["textColorThresholdT" .. i .. "Enabled"]
+         and GetSpellCostForPower(tonumber(dispCfg["textColorThresholdT" .. i .. "Spell"]), powerType) then
+        needsMax = true
+        break
+      end
+    end
+  end
+  if needsMax and not (maxValue and maxValue > 0) then return nil end
+
+  local hash   = GetTextThresholdHash(dispCfg, asPercent, maxValue, powerType)
   local cached = resourceTextColorCurves[barNumber]
   if cached and cached.settingsHash == hash then return cached.curve end
 
@@ -1449,9 +1664,13 @@ local function GetTextColorCurve(barNumber, dispCfg)
   for i = 1, 4 do
     local key = "textColorThresholdT" .. i
     if dispCfg[key .. "Enabled"] then
-      local pct   = dispCfg[key .. "Value"] or 0
-      local color = dispCfg[key .. "Color"] or {r=1, g=1, b=1, a=1}
-      table.insert(thresholds, { value = pct / 100, color = color })
+      local color      = dispCfg[key .. "Color"] or {r=1, g=1, b=1, a=1}
+      local v, isRaw   = ResolveZoneValue(dispCfg, i, powerType)
+      if v ~= nil then
+        local frac = (asPercent and not isRaw) and (v / 100) or (v / maxValue)
+        if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+        table.insert(thresholds, { value = frac, color = color })
+      end
     end
   end
 
@@ -1467,8 +1686,46 @@ local function GetTextColorCurve(barNumber, dispCfg)
   local curve   = C_CurveUtil.CreateColorCurve()
   local EPSILON = 0.0001
 
+  local spaced = {}
+  for i = 1, #thresholds do
+    local t    = thresholds[i]
+    local prev = spaced[#spaced]
+    if prev and t.value <= prev.value + EPSILON then
+      spaced[#spaced] = t
+    else
+      spaced[#spaced + 1] = t
+    end
+  end
+  thresholds = spaced
+
+  local function AddBottomPoint(color, nextFrac)
+    local r, g, b, a = color.r or 1, color.g or 1, color.b or 1, color.a or 1
+    if dispCfg.textColorThresholdEnableZeroColor then
+      local zc = dispCfg.textColorThresholdZeroColor or {r=1, g=0, b=0, a=1}
+      curve:AddPoint(0.0, CreateColor(zc.r or 1, zc.g or 0, zc.b or 0, zc.a or 1))
+      if not nextFrac or nextFrac > EPSILON then
+        curve:AddPoint(EPSILON, CreateColor(r, g, b, a))
+      end
+    else
+      curve:AddPoint(0.0, CreateColor(r, g, b, a))
+    end
+  end
+
+  local function AddTopPoint(color, prevFrac)
+    local r, g, b, a = color.r or 1, color.g or 1, color.b or 1, color.a or 1
+    if dispCfg.textColorThresholdEnableMaxColor then
+      local mc = dispCfg.textColorThresholdMaxColor or {r=0, g=1, b=0, a=1}
+      if not prevFrac or prevFrac < 1.0 - EPSILON then
+        curve:AddPoint(1.0 - EPSILON, CreateColor(r, g, b, a))
+      end
+      curve:AddPoint(1.0, CreateColor(mc.r or 0, mc.g or 1, mc.b or 0, mc.a or 1))
+    else
+      curve:AddPoint(1.0, CreateColor(r, g, b, a))
+    end
+  end
+
   if fill then
-    curve:AddPoint(0.0, CreateColor(bc.r or 1, bc.g or 1, bc.b or 1, bc.a or 1))
+    AddBottomPoint(bc, thresholds[1].value)
     for i = 1, #thresholds do
       local t    = thresholds[i]
       local prev = (i == 1) and bc or thresholds[i - 1].color
@@ -1479,11 +1736,9 @@ local function GetTextColorCurve(barNumber, dispCfg)
       curve:AddPoint(t.value,
         CreateColor(t.color.r or 1, t.color.g or 1, t.color.b or 1, t.color.a or 1))
     end
-    local top = thresholds[#thresholds].color
-    curve:AddPoint(1.0, CreateColor(top.r or 1, top.g or 1, top.b or 1, top.a or 1))
+    AddTopPoint(thresholds[#thresholds].color, thresholds[#thresholds].value)
   else
-    local bot = thresholds[1].color
-    curve:AddPoint(0.0, CreateColor(bot.r or 1, bot.g or 1, bot.b or 1, bot.a or 1))
+    AddBottomPoint(thresholds[1].color, thresholds[1].value)
     for i = 1, #thresholds do
       local t    = thresholds[i]
       local next = (i == #thresholds) and bc or thresholds[i + 1].color
@@ -1494,26 +1749,38 @@ local function GetTextColorCurve(barNumber, dispCfg)
       curve:AddPoint(t.value,
         CreateColor(next.r or 1, next.g or 1, next.b or 1, next.a or 1))
     end
-    curve:AddPoint(1.0, CreateColor(bc.r or 1, bc.g or 1, bc.b or 1, bc.a or 1))
+    AddTopPoint(bc, thresholds[#thresholds].value)
   end
 
   resourceTextColorCurves[barNumber] = { curve = curve, settingsHash = hash }
   return curve
 end
 
-local function EvaluateTextThresholdsDirectly(dispCfg, displayValue, maxValue)
+local function EvaluateTextThresholdsDirectly(dispCfg, displayValue, maxValue, powerType)
   if not dispCfg or not dispCfg.textColorThresholdEnabled then return nil end
   if type(displayValue) ~= "number" then return nil end
   if issecretvalue and issecretvalue(displayValue) then return nil end
   if not maxValue or maxValue <= 0 then return nil end
 
+  local asPercent = dispCfg.textColorThresholdAsPercent == true
+
+  if dispCfg.textColorThresholdEnableZeroColor and displayValue <= 0 then
+    return dispCfg.textColorThresholdZeroColor or {r=1, g=0, b=0, a=1}
+  end
+  if dispCfg.textColorThresholdEnableMaxColor and displayValue >= maxValue then
+    return dispCfg.textColorThresholdMaxColor or {r=0, g=1, b=0, a=1}
+  end
+
   local thresholds = {}
   for i = 1, 4 do
     local key = "textColorThresholdT" .. i
     if dispCfg[key .. "Enabled"] then
-      local pct   = dispCfg[key .. "Value"] or 0
-      local color = dispCfg[key .. "Color"] or {r=1, g=1, b=1, a=1}
-      table.insert(thresholds, { value = pct / 100 * maxValue, color = color })
+      local color      = dispCfg[key .. "Color"] or {r=1, g=1, b=1, a=1}
+      local v, isRaw   = ResolveZoneValue(dispCfg, i, powerType)
+      if v ~= nil then
+        local at = (asPercent and not isRaw) and (v / 100 * maxValue) or v
+        table.insert(thresholds, { value = at, color = color })
+      end
     end
   end
 
@@ -1545,11 +1812,12 @@ local function ApplyResourceTextColor(barNumber, cfg, textFrame, displayValue, m
   end
 
   if resourceCategory == "secondary" then
-    local color = EvaluateTextThresholdsDirectly(dispCfg, displayValue, maxValue)
+    local color = EvaluateTextThresholdsDirectly(dispCfg, displayValue, maxValue, ResolvePowerType(cfg))
     if color then
       textFrame.text:SetTextColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
     else
-      local tc = dispCfg.textColor or {r=1, g=1, b=1, a=1}
+      local tc = dispCfg.textColorThresholdBaseColor
+               or dispCfg.textColor or {r=1, g=1, b=1, a=1}
       textFrame.text:SetTextColor(tc.r or 1, tc.g or 1, tc.b or 1, tc.a or 1)
     end
     return
@@ -1558,12 +1826,13 @@ local function ApplyResourceTextColor(barNumber, cfg, textFrame, displayValue, m
   -- Primary resource: use ColorCurve + UnitPowerPercent (secret-safe)
   local powerType = ResolvePowerType(cfg)
   if not powerType or powerType < 0 then
-    local tc = dispCfg.textColor or {r=1, g=1, b=1, a=1}
+    local tc = dispCfg.textColorThresholdBaseColor
+             or dispCfg.textColor or {r=1, g=1, b=1, a=1}
     textFrame.text:SetTextColor(tc.r or 1, tc.g or 1, tc.b or 1, tc.a or 1)
     return
   end
 
-  local textCurve = GetTextColorCurve(barNumber, dispCfg)
+  local textCurve = GetTextColorCurve(barNumber, dispCfg, GetCachedMaxPower(powerType), powerType)
   local colorResult = textCurve and UnitPowerPercent("player", powerType, false, textCurve)
   if colorResult then
     -- Secret-safe: the curve result is a SECRET colour inside instances/M+, so read
@@ -1573,7 +1842,8 @@ local function ApplyResourceTextColor(barNumber, cfg, textFrame, displayValue, m
     -- FontString so the colour channels can't compound.
     textFrame.text:SetTextColor(colorResult:GetRGBA())
   else
-    local tc = dispCfg.textColor or {r=1, g=1, b=1, a=1}
+    local tc = dispCfg.textColorThresholdBaseColor
+             or dispCfg.textColor or {r=1, g=1, b=1, a=1}
     textFrame.text:SetTextColor(tc.r or 1, tc.g or 1, tc.b or 1, tc.a or 1)
   end
 end
