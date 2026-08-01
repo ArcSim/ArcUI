@@ -480,6 +480,12 @@ local function ResolvePowerType(cfg)
   if cfg.tracking.resourceCategory == "autoPrimary" then
     return (UnitPowerType("player"))
   end
+  if cfg.tracking.resourceCategory == "secondary" then
+    local st = cfg.tracking.secondaryType
+    local info = st and ns.Resources.SecondaryTypesLookup
+                 and ns.Resources.SecondaryTypesLookup[st]
+    return info and info.powerType or nil
+  end
   return cfg.tracking.powerType
 end
 
