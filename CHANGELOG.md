@@ -1,3 +1,9 @@
+## 3.7.10.a
+
+### Improvements
+
+- **Loads on 12.0.x again** — For players whose game client has not updated to Midnight 12.1 yet, ArcUI no longer shows as incompatible. The new 12.1 features stay dormant until your client is on 12.1, and the What's New window waits for it too.
+
 ## 3.7.10
 
 ### New Features

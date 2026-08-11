@@ -576,6 +576,13 @@ local function CheckOnLogin()
   g.changelog = g.changelog or {}
   if g.changelog.disabled then return end
 
+  -- The 3.7.10 notes (and their guided tours) describe 12.1 features. If the
+  -- client is still on an older patch, hold the auto-pop and DON'T mark the
+  -- version seen — it then pops on the first login after the client is 12.1.
+  -- Manual /arccl is unaffected.
+  local iface = select(4, GetBuildInfo())
+  if type(iface) == "number" and iface < 120100 then return end
+
   local cur = GetBaseVersion()   -- base version: minor hotfixes (.a/.b) don't re-pop
   if g.changelog.lastSeen ~= cur then
     g.changelog.lastSeen = cur   -- mark seen so it only pops once per base version

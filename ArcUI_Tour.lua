@@ -1019,6 +1019,7 @@ function T.OfferIfNew()
         local f = CreateFrame("Frame", "ArcUITourOffer", UIParent, "BackdropTemplate")
         f:SetSize(360, 132)
         f:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+        f:SetClampedToScreen(true)
         -- TOOLTIP: the options window is FULLSCREEN_DIALOG, and this asks its
         -- question ON TOP of it (same reason the changelog uses TOOLTIP)
         f:SetFrameStrata("TOOLTIP")
@@ -1065,6 +1066,20 @@ function T.OfferIfNew()
 
     offerFrame.title:SetText("New in " .. (C_AddOns and C_AddOns.GetAddOnMetadata
         and C_AddOns.GetAddOnMetadata(ADDON, "Version") or ver))
+    -- Anchor to the CENTER OF THE OPTIONS PANEL, wherever the player has it
+    -- right now (the ask only ever fires because the panel was just opened).
+    -- Re-anchored on every show: the panel moves between opens. Falls back to
+    -- screen-center if the ACD frame can't be resolved.
+    local panel
+    local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
+    local open = acd and acd.OpenFrames and acd.OpenFrames["ArcUI"]
+    if open and open.frame and open.frame:IsShown() then panel = open.frame end
+    offerFrame:ClearAllPoints()
+    if panel then
+        offerFrame:SetPoint("CENTER", panel, "CENTER", 0, 0)
+    else
+        offerFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+    end
     offerFrame:Show()
     return true
 end

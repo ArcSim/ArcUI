@@ -1,8 +1,8 @@
-﻿## Interface: 120100
+﻿## Interface: 120000, 120001, 120005, 120007, 120100
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.7.10
+## Version: 3.7.10.a
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
