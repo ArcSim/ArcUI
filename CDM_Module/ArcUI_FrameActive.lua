@@ -380,6 +380,27 @@ local function InstallHooks(frame)
 end
 
 -- ===================================================================
+-- GLOBAL TOTEM SAFETY NET
+-- Every totem signal above rides PER-FRAME hooks (OnPlayerTotemUpdateEvent,
+-- Cooldown OnHide/OnCooldownDone). If Blizzard never calls that method on a
+-- given frame — reparented-into-group frames are the suspect class — the
+-- recompute never runs and the cached state sticks: seen live as an Earthbind
+-- icon reading ACTIVE (IsActive=true) while totemData, Cooldown:IsShown and
+-- Blizzard's own isActive all said inactive. PLAYER_TOTEM_UPDATE only fires on
+-- totem summon/expire/destroy, so deferring a recompute for every registered
+-- frame is near-free (OnTotem_Deferred coalesces to one next-frame full check
+-- per frame, and the deferral guarantees CDM's own ClearTotemData has already
+-- run by the time we read the state). Zero idle cost.
+-- ===================================================================
+local totemSafetyFrame = CreateFrame("Frame")
+totemSafetyFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
+totemSafetyFrame:SetScript("OnEvent", function()
+    for frame in pairs(entries) do
+        OnTotem_Deferred(frame)
+    end
+end)
+
+-- ===================================================================
 -- PUBLIC API
 -- ===================================================================
 

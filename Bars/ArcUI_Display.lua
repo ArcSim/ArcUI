@@ -91,6 +91,9 @@ local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 -- Bars stay hidden until initialization completes (after PLAYER_ENTERING_WORLD + delay)
 -- ===================================================================
 local initializationComplete = false
+-- true only while ns.Display.EnginePrebuild runs: lets the update path reach
+-- the engine attach during the load window, before init is marked complete
+local prebuildPass = false
 
 -- Mark initialization as complete (called from Core.lua after setup)
 function ns.Display.MarkInitializationComplete()
@@ -1814,17 +1817,40 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
     end
 
     -- ── Shared sizing ────────────────────────────────────────────
+    local scale = barFrame:GetEffectiveScale()
+    local _, _hpx = GetPhysicalScreenSize()
+    local onePx = (_hpx and _hpx > 0 and scale and scale > 0) and (768 / _hpx) / scale or 1
+
     local segInset = 0
     if barConfig.display.showBorder and (displayMode == "granular" or displayMode == "perStack") then
       local btRaw = barConfig.display.drawnBorderThickness or 2
-      local _s1 = barFrame:GetEffectiveScale()
-      local _, _h1 = GetPhysicalScreenSize()
-      local _onePx1 = (_h1 and _h1 > 0 and _s1 and _s1 > 0) and (768 / _h1) / _s1 or 1
-      segInset = _onePx1 * btRaw
+      segInset = onePx * btRaw
     end
+
+    -- Per-side Fill Inset awareness: mirror the fill's own insets so ticks
+    -- track the ACTUAL fill area, not the frame. Only the modes whose fill
+    -- honours the padding (granular/perStack segments + duration bars) —
+    -- simple-mode fills don't inset, so their ticks don't either.
+    local padL, padR, padT, padB = 0, 0, 0, 0
+    if displayMode == "granular" or displayMode == "perStack" or displayMode == "duration" then
+      padL = (barConfig.display.barPaddingL or 0) * onePx
+      padR = (barConfig.display.barPaddingR or 0) * onePx
+      padT = (barConfig.display.barPaddingT or 0) * onePx
+      padB = (barConfig.display.barPaddingB or 0) * onePx
+    end
+    -- Along-axis start/far insets, honouring orientation + reverse fill
+    -- (same mapping as the fill's segment loop)
+    local insetAlongStart, insetAlongFar
+    if isVertical then
+      if isReverseFill then insetAlongStart, insetAlongFar = segInset + padT, segInset + padB
+      else insetAlongStart, insetAlongFar = segInset + padB, segInset + padT end
+    else
+      if isReverseFill then insetAlongStart, insetAlongFar = segInset + padR, segInset + padL
+      else insetAlongStart, insetAlongFar = segInset + padL, segInset + padR end
+    end
+
     local tickTotalSize = isVertical and barFrame:GetHeight() or barFrame:GetWidth()
-    local tickInsetSize = tickTotalSize - 2 * segInset
-    local scale         = barFrame:GetEffectiveScale()
+    local tickInsetSize = tickTotalSize - insetAlongStart - insetAlongFar
 
     local tickHeightPct  = barConfig.display.tickHeightPercent or 100
     local heightAnchor   = barConfig.display.tickHeightAnchor  or "center"
@@ -1833,13 +1859,10 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
     local borderInset    = 0
     if barConfig.display.showBorder and (displayMode == "granular" or displayMode == "perStack") then
       local btRawCross = barConfig.display.drawnBorderThickness or 0
-      -- Use same exact-pixel formula as segInset so tick span matches fill area exactly
-      local _sc = barFrame:GetEffectiveScale()
-      local _, _hc = GetPhysicalScreenSize()
-      local _onePxC = (_hc and _hc > 0 and _sc and _sc > 0) and (768 / _hc) / _sc or 1
-      borderInset = _onePxC * btRawCross
+      borderInset = onePx * btRawCross
     end
-    local availCross     = math.max(1, barCrossSize - 2 * borderInset)
+    local crossPads = isVertical and (padL + padR) or (padT + padB)
+    local availCross = math.max(1, barCrossSize - 2 * borderInset - crossPads)
 
     -- ── Draw ticks ───────────────────────────────────────────────
     local tickIndex = 1
@@ -1873,12 +1896,10 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
           -- Match the exact formula used in the perStack segment loop:
           -- integer pixel boundaries via math_floor (not nearest-round) so ticks
           -- land on the same physical pixel as the segment edge they mark.
-          local _, _h = GetPhysicalScreenSize()
-          local _pmult = (_h and _h > 0 and scale and scale > 0) and (768 / _h) / scale or 1
-          local _totalPx = math_floor(tickInsetSize / _pmult + 0.5)
-          rawPos = segInset + math_floor(tickValue / tickMaxValue * _totalPx) * _pmult
+          local _totalPx = math_floor(tickInsetSize / onePx + 0.5)
+          rawPos = insetAlongStart + math_floor(tickValue / tickMaxValue * _totalPx) * onePx
         else
-          rawPos = segInset + tickValue / tickMaxValue * tickInsetSize
+          rawPos = insetAlongStart + tickValue / tickMaxValue * tickInsetSize
         end
 
         -- Thickness anchor: nudge tick so its centre/end aligns with rawPos
@@ -1887,6 +1908,19 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
           posAlong = rawPos - halfThick
         elseif thicknessAnchor == "end" then
           posAlong = rawPos - pixelThickness
+        end
+
+        -- PIXEL SNAP (ns.Display.tickPixelSnap, default on): quantize the tick's
+        -- DRAWN EDGE to the physical pixel grid. The textures are unsnapped, so
+        -- an edge landing mid-pixel rasterizes with partial coverage — at
+        -- fractional positions (e.g. 5% spacing) each tick got a different
+        -- fraction, rendering some crisp-1px and some soft-2px = "unevenly wide"
+        -- ticks. Thickness is already an exact physical-pixel multiple, so with
+        -- the edge snapped every tick draws identical. Position error <= half a
+        -- pixel. Kill switch for in-game A/B:
+        --   /run ArcUI_Display.tickPixelSnap = false  (then /reload)
+        if ns.Display.tickPixelSnap ~= false then
+          posAlong = math_floor(posAlong / onePx + 0.5) * onePx
         end
 
         if isVertical then
@@ -1933,6 +1967,83 @@ end
 -- Expose for barFrame OnSizeChanged hook (defined in CreateBarFrame above)
 ns.Display._UpdateTickMarks = UpdateTickMarks
 
+-- Tick-edge pixel snapping (see PIXEL SNAP inside UpdateTickMarks).
+-- Runtime kill switch: /run ArcUI_Display.tickPixelSnap = false  (then /reload)
+ns.Display.tickPixelSnap = true
+
+-- ===================================================================
+-- BUTTON-OWNED CHROME spec (custom aura bars, Hide When Inactive):
+-- resolves the bar's background/border styling into the table
+-- BD.SetOwnChrome / the attach opts consume -- the chrome is then built as
+-- CHILDREN OF THE ENGINE BUTTON so the whole visible bar shows/hides with
+-- the aura natively (presence is a secret boolean and must never be read).
+-- ===================================================================
+-- Tick marks for the button-owned chrome: replicates UpdateTickMarks'
+-- SIMPLE-mode math (value list per tickMode, fraction*size, center-anchored
+-- thickness, physical-pixel snap). Positions are px offsets from the FILL
+-- ORIGIN; BD places the textures. "custom" tickMode (ability thresholds) is
+-- not mirrored here.
+local function BuildOwnChromeTicks(d, barFrame, maxValue, durationMode)
+  if not d.showTickMarks or not maxValue or maxValue <= 1 then return nil end
+  local bar = barFrame.bar
+  if not bar then return nil end
+  local vertical = d.barOrientation == "vertical"
+  local size = vertical and (bar:GetHeight() or 0) or (bar:GetWidth() or 0)
+  local cross = vertical and (bar:GetWidth() or 0) or (bar:GetHeight() or 0)
+  if size <= 1 then return nil end
+  local _s = barFrame:GetEffectiveScale()
+  local _, _h = GetPhysicalScreenSize()
+  local onePx = (_h and _h > 0 and _s and _s > 0) and (768 / _h) / _s or 1
+  local thick = onePx * (d.tickThickness or 2)
+  local mode = d.tickMode or "percent"
+  if durationMode and mode == "all" and maxValue > 100 then mode = "percent" end
+  local values = {}
+  if mode == "all" then
+    for i = 1, math_floor(maxValue) - 1 do values[#values + 1] = i end
+  elseif mode == "percent" then
+    local pct = d.tickPercent or 10
+    local num = math_floor(100 / pct)
+    for i = 1, num - 1 do
+      local v = maxValue * (i * pct / 100)
+      if v > 0 and v < maxValue then values[#values + 1] = v end
+    end
+  end
+  if #values == 0 then return nil end
+  local pos = {}
+  for i, v in ipairs(values) do
+    local raw = (v / maxValue) * size - thick / 2
+    pos[i] = math_floor(raw / onePx + 0.5) * onePx
+  end
+  return {
+    positions = pos,
+    color = d.tickColor or { r = 0, g = 0, b = 0, a = 1 },
+    thicknessPx = thick,
+    spanPx = math.max(1, cross * ((d.tickHeightPercent or 100) / 100)),
+    vertical = vertical,
+    reverse = d.barReverseFill or false,
+  }
+end
+
+local function BuildOwnChrome(barConfig, barFrame, tickMaxValue, durationMode)
+  local d = barConfig.display
+  local _s = barFrame:GetEffectiveScale()
+  local _, _h = GetPhysicalScreenSize()
+  local onePx = (_h and _h > 0 and _s and _s > 0) and (768 / _h) / _s or 1
+  local bgTex
+  if LSM and d.backgroundTexture and d.backgroundTexture ~= "Solid" then
+    bgTex = LSM:Fetch("background", d.backgroundTexture, true)
+  end
+  return {
+    bgShown = d.showBackground and true or false,
+    bgColor = d.backgroundColor or { r = 0.2, g = 0.2, b = 0.2, a = 0.8 },
+    bgTexture = bgTex,
+    borderShown = d.showBorder and true or false,
+    borderColor = d.borderColor or { r = 0, g = 0, b = 0, a = 1 },
+    borderPx = onePx * (d.drawnBorderThickness or 2),
+    ticks = BuildOwnChromeTicks(d, barFrame, tickMaxValue, durationMode),
+  }
+end
+
 -- ===================================================================
 -- UPDATE SPECIFIC BAR
 -- ===================================================================
@@ -1962,7 +2073,17 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   if previewMode and IsOptionsOpen() and durationFontString then
     return  -- Skip real tracking update, let preview control the display
   end
-  
+
+  -- CUSTOM AURA STACK BAR (12.1, no CDM entry): presence/stacks are
+  -- unreadable (secret); the engine ApplicationBar binding drives the fill
+  -- and the ArcStacks/ArcTimer overlays drive the texts. The bar frame is
+  -- treated as permanently active (chrome always renders).
+  local isCustomAura = barConfig.tracking.customAura
+    and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
+  if isCustomAura then
+    active = true
+  end
+
   if PM then PM("VisibilityChecks") end
   
   -- ═══════════════════════════════════════════════════════════════════════════
@@ -1974,7 +2095,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   -- ═══════════════════════════════════════════════════════════════════════════
   -- INITIALIZATION CHECK: Keep bars hidden until init complete (prevents flash on reload)
   -- ═══════════════════════════════════════════════════════════════════════════
-  if not initializationComplete and not optionsOpen then
+  if not initializationComplete and not optionsOpen and not prebuildPass then
     if barFrames[barNumber] then
       SafeHide(barFrames[barNumber].barFrame)
       SafeHide(barFrames[barNumber].textFrame)
@@ -2207,9 +2328,28 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   -- Hide icon frame if in bar mode
   SafeHide(iconFrame)
   
-  -- Use cached optionsOpen from function start for preview mode
-  local showPreview = optionsOpen and (not active or previewMode)
-  
+  -- Use cached optionsOpen from function start for preview mode.
+  -- Custom aura bars force active=true (presence unreadable) -- treat them
+  -- as previewable whenever the panel is open, like the duration bars.
+  local showPreview = optionsOpen and (not active or previewMode or isCustomAura)
+
+  -- HIDE WHEN INACTIVE (ownership model): move the bar chrome onto the
+  -- engine button so the whole visible bar appears/vanishes with the aura
+  -- natively; our barFrame stays SHOWN as the invisible container host and
+  -- its native chrome is suppressed. The options panel restores the native
+  -- chrome so the bar is always editable like every other bar.
+  local engineOwnsChrome = isCustomAura and barConfig.behavior
+    and barConfig.behavior.hideWhenInactive and not optionsOpen
+  if isCustomAura and barConfig.behavior and barConfig.behavior.hideWhenInactive then
+    if barFrame.bg then
+      barFrame.bg:SetShown((not engineOwnsChrome) and (barConfig.display.showBackground and true or false))
+    end
+    if barFrame.tickOverlay then barFrame.tickOverlay:SetShown(not engineOwnsChrome) end
+    if ns.BarDuration and ns.BarDuration.SetOwnChrome then
+      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxStacks) or nil)
+    end
+  end
+
   -- For preview mode, calculate a sample stack count from the global preview slider
   -- We can't use 'stacks' parameter for math as it may be a secret value
   local effectiveStacks = stacks
@@ -2320,7 +2460,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   end
   barFrame._lastOptionsOpen = optionsOpen
 
-  if not optionsOpen and not needsSetup and not optionsTransition and barFrame._lastActive == active and barFrame._lastActive ~= nil then
+  if not isCustomAura and not optionsOpen and not needsSetup and not optionsTransition and barFrame._lastActive == active and barFrame._lastActive ~= nil then
     if active then
       -- Cancel any pending hideWhenInactive hide
       if barFrames[barNumber] then barFrames[barNumber]._arcHideWhenInactivePending = nil end
@@ -2922,6 +3062,9 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   if barConfig.display.showText then
     if showPreview then
       textFrame.text:SetText(effectiveStacks)
+    elseif isCustomAura then
+      -- engine ArcStacks overlays the live count; blank ours (customs pass 0)
+      textFrame.text:SetText("")
     else
       textFrame.text:SetText(stacks)
     end
@@ -2930,7 +3073,16 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   end
   
   -- Update duration text (pass secret value directly from GetText/GetValue to SetText)
-  if barConfig.display.showDuration and durationFrame then
+  -- CUSTOM (engine lane): the button's ArcTimer overlays the countdown -- keep
+  -- the frame shown for anchoring, text clear, and skip the source machinery.
+  if isCustomAura and not showPreview and barConfig.display.showDuration and durationFrame then
+    if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(durationFrame.text) end
+    durationFrame:SetScript("OnUpdate", nil)
+    durationFrame.isActive = false
+    durationFrame.sourceBar = nil
+    durationFrame.text:SetText("")
+    durationFrame:Show()
+  elseif barConfig.display.showDuration and durationFrame then
     -- durationFontString can be either:
     -- 1. A FontString reference (from icon source) - use GetText()
     -- 2. A StatusBar reference (from bar source) - use GetValue()
@@ -3140,6 +3292,114 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     UpdateTickMarks(barFrame, barConfig, maxStacks, displayMode)
   end
 
+  -- ═══════════════════════════════════════════════════════════════════
+  -- 12.1 ENGINE LANE (custom stack bar): the invisible AuraButton drives the
+  -- continuous fill via the ApplicationBar binding (min/max 0..maxStacks,
+  -- value = the secret application count, C-side) plus the stack count and
+  -- countdown overlays. Native fills above stay at 0 underneath. Requires
+  -- Max Stacks > 0 (the engine binding REQUIRES maxApplications).
+  -- ═══════════════════════════════════════════════════════════════════
+  if isCustomAura and not showPreview and ns.BarDuration and ns.BarDuration.Attach
+     and maxStacks and maxStacks > 0 then
+    -- keep barFrame.bar styled to this bar's config: it is the style SOURCE
+    -- the engine fill copies from (WireSub/ApplyStyle), even though the
+    -- native fill itself stays empty under the overlay
+    barFrame.bar:SetStatusBarTexture(texturePath)
+    barFrame.bar:SetOrientation(barOrientation)
+    barFrame.bar:SetReverseFill(isBarReverseFill)
+    barFrame.bar:SetRotatesTexture(rotateBarTex)
+    local bdUnit = (barConfig.tracking.trackType == "debuff") and "target" or "player"
+    local bdDurFmt, bdColorKey
+    if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
+      bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(barConfig.display, barConfig.display.durationDecimals or 1)
+      bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(barConfig.display)
+    end
+    local bdDurFontPath = "Fonts\\FRIZQT__.TTF"
+    if LSM and barConfig.display.durationFont then
+      local ff = LSM:Fetch("font", barConfig.display.durationFont)
+      if ff and ff ~= "" then bdDurFontPath = ff end
+    end
+    -- THRESHOLD BAND COLORING (zero reads): one saturating-max overlay per
+    -- enabled threshold. Overlay for boundary T (maxApplications = T, width =
+    -- T/maxStacks of the bar) tracks the base fill edge exactly and stops
+    -- growing at T, so it paints the fill region below T in the band-below
+    -- color; the base slot renders the TOP band's color. bandsKey rewires the
+    -- slots when any band value/color (or the base color) changes.
+    local engineBaseColor = baseColor
+    local applicationBands, applicationSteps, bandsKey
+    do
+      local list = {}
+      for i = 2, 6 do
+        local th = thresholds[i]
+        if th and th.enabled and th.color then
+          local v = GetThresholdValue(th.minValue, nil, thresholdAsPercent, maxStacks)
+          v = v and math_floor(v + 0.5)
+          if v and v > 1 and v <= maxStacks then list[#list + 1] = { v = v, color = th.color } end
+        end
+      end
+      table.sort(list, function(x, y) return x.v < y.v end)
+      if #list > 0 then
+        local parts = {}
+        -- The Style dropdown maps Segmented = thresholdMode "perStack" ONLY;
+        -- the Continuous family is simple/folded/GRANULAR (the "Thresholds"
+        -- checkbox writes "granular"!) -- so steps for everything but perStack.
+        if displayMode ~= "perStack" then
+          -- CONTINUOUS: whole-fill color switch at each threshold (step
+          -- overlays; higher thresholds drawn on top). Key is STRUCTURE ONLY
+          -- -- colours are pushed live by BD, so recolouring never recreates.
+          applicationSteps = {}
+          for i, e in ipairs(list) do
+            applicationSteps[#applicationSteps + 1] = { threshold = e.v, color = e.color, boost = i }
+            parts[#parts + 1] = "s" .. e.v
+          end
+        else
+          -- SEGMENTED: region band coloring (width-stretch overlays; smaller
+          -- thresholds drawn on top; base slot renders the top band's color)
+          applicationBands = {}
+          local below = baseColor
+          for i, e in ipairs(list) do
+            applicationBands[#applicationBands + 1] = {
+              max = e.v, widthFrac = e.v / maxStacks,
+              color = below, boost = #list - i + 1,
+            }
+            parts[#parts + 1] = "b" .. e.v
+            below = e.color
+          end
+          engineBaseColor = below
+        end
+        bandsKey = table.concat(parts, "|")
+      end
+    end
+    ns.BarDuration.Attach(barFrame, durationFrame and durationFrame.text,
+      nil, barConfig.tracking.trackedSpellID, bdUnit, {
+      applicationMax = maxStacks,
+      applicationBands = applicationBands,
+      applicationSteps = applicationSteps,
+      bandsKey = bandsKey,
+      lockColor = applicationBands ~= nil,
+      -- unused by the ApplicationBar binding, but stored for ApplyStyle's
+      -- direction-change detection -- must mirror its bdDir formula or every
+      -- appearance apply would look like a direction change and churn the slot
+      direction = (barConfig.display.durationBarFillMode == "fill")
+        and Enum.StatusBarTimerDirection.ElapsedTime or Enum.StatusBarTimerDirection.RemainingTime,
+      interpolation = barConfig.display.enableSmoothing and Enum.StatusBarInterpolation.ExponentialEaseOut or Enum.StatusBarInterpolation.Immediate,
+      showDuration = barConfig.display.showDuration,
+      baseColor = engineBaseColor,
+      durationColor = barConfig.display.durationColor or {r=1, g=1, b=1, a=1},
+      durFontPath = bdDurFontPath,
+      durFontSize = barConfig.display.durationFontSize or 18,
+      durOutline = GetOutlineFlag(barConfig.display.durationOutline),
+      durDecimals = barConfig.display.durationDecimals or 1,
+      durFormatter = bdDurFmt,
+      textColorEnabled = barConfig.display.durationTextColorEnabled and true or false,
+      colorKey = bdColorKey,
+      stacksText = (barConfig.display.showText and textFrame and textFrame.text) or nil,
+      stackColor = barConfig.display.textColor,
+      ownChrome = engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxStacks) or nil,
+    })
+    barFrame._arcBDActive = true
+  end
+
   -- Bar icon - only setup when config changes
   if needsSetup and barConfig.display.showBarIcon and barIconFrame then
     -- Set icon texture
@@ -3168,19 +3428,30 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     barIconFrame:Hide()
   end
   
-  -- Visibility already determined at function start - just show/hide based on that
+  -- Visibility already determined at function start - just show/hide based on that.
+  -- engineOwnsChrome: the button carries the visible bar; our aux frames stay
+  -- hidden so nothing lingers while the aura is down (barFrame itself must
+  -- stay SHOWN -- it hosts the aura container).
   if shouldShow and barConfig.display.enabled then
     barFrame:Show()
-    if barConfig.display.showText then
+    if barConfig.display.showText and not engineOwnsChrome then
       textFrame:Show()
     else
       textFrame:Hide()
     end
-    if barConfig.display.showName and nameFrame then
-      nameFrame:Show()
+    if nameFrame then
+      if barConfig.display.showName and not engineOwnsChrome then
+        nameFrame:Show()
+      elseif engineOwnsChrome then
+        nameFrame:Hide()
+      end
     end
-    if barConfig.display.showBarIcon and barIconFrame then
-      barIconFrame:Show()
+    if barIconFrame then
+      if barConfig.display.showBarIcon and not engineOwnsChrome then
+        barIconFrame:Show()
+      elseif engineOwnsChrome then
+        barIconFrame:Hide()
+      end
     end
   else
     barFrame:Hide()
@@ -3511,7 +3782,10 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
 
   -- 12.1 duration-bar diagnostics: record what we see per bar so /arcbardur can show WHERE the
   -- AuraButton driver path breaks (no trackedSpellID / wrong source branch / not active / not secret).
-  if ns.BarDuration and ns.BarDuration.Trace then
+  -- gated on debug: this builds a fresh table on EVERY duration-bar refresh,
+  -- which is pure garbage in normal play (the flag persists across reloads, so
+  -- a bug report still captures it from login onward)
+  if ns.BarDuration and ns.BarDuration.debug and ns.BarDuration.Trace then
     ns.BarDuration.Trace(barNumber, {
       active = active,
       hasAuraInfo = (sourceBar and sourceBar.GetAuraInfo) and true or false,
@@ -3523,6 +3797,38 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       secret = (ns.API and ns.API.AurasSecret and ns.API.AurasSecret("player")) and true or false,
     })
   end
+
+  -- CUSTOM AURA BARS (12.1): no CDM source exists and aura presence cannot
+  -- be read (secret) — the bar is treated as permanently "active"; the
+  -- engine lane below drives the actual fill/countdown, which appear only
+  -- while the aura is up (the invisible AuraButton hides with it).
+  local isCustomAura = barConfig.tracking.customAura
+    and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
+  if isCustomAura then
+    active = true
+    sourceBar = nil
+  end
+
+  -- PREBUILD (load window): a CDM bar has no resolved CDM frame this early, so
+  -- Core reports it inactive with no sourceBar and the engine branch never
+  -- runs -- yet the engine only needs the SAVED cooldownID/trackedSpellID to
+  -- create its slot. Force the branch here so the slot exists before secrecy
+  -- locks creation for the rest of the session. (Stack bars never needed this:
+  -- their fill takes the secret count straight through SetValue, which is why
+  -- they survived a combat reload and duration bars did not.)
+  -- ARM THE ENGINE EVEN WHILE THE AURA IS ABSENT (12.1). The slot does not
+  -- need the aura to be up -- it WATCHES for it -- but the attach used to sit
+  -- behind `active`, so a CDM bar only tried to create its slot the first time
+  -- the buff landed. Reload, then first gain the buff IN COMBAT, and that one
+  -- attempt is refused (auras are secret, creation blocked) and the fill never
+  -- moves again that session. Gaining it once out of combat "fixed" it, which
+  -- is exactly the report. Custom bars never hit this: they force active.
+  -- NOTE: `active` itself is NOT forced here -- that would break Hide When
+  -- Inactive and the dimmed look for CDM bars, which CAN read their state.
+  local engineArm = not isCustomAura
+    and barConfig.tracking
+    and (((barConfig.tracking.cooldownID or 0) > 0) or ((barConfig.tracking.trackedSpellID or 0) > 0))
+    and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
 
   if PM then PM("VisibilityChecks") end
   
@@ -3578,9 +3884,13 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   if shouldShow and not optionsOpen and not active and barConfig.behavior and barConfig.behavior.hideWhenInactive then
     shouldShow = false
   end
-  
-  -- Early exit if bar shouldn't show and options not open
-  if not shouldShow and not optionsOpen then
+
+  -- Early exit if bar shouldn't show and options not open.
+  -- NOT during the prebuild: this return sits BEFORE the engine attach, and
+  -- with Hide When Inactive on (aura down at login) it swallowed the bar's
+  -- only chance to create its slot -- the exact "fill never moves if the buff
+  -- first lands in combat" bug. The prebuild hides all frames afterwards.
+  if not shouldShow and not optionsOpen and not prebuildPass then
     if deactivate then
       DeactivateBar(barNumber)
     else
@@ -3756,8 +4066,25 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   local maxValue = barConfig.tracking.maxDuration or 30
   if maxValue <= 0 then maxValue = 30 end  -- Fallback for "auto" or invalid values
   
-  -- Use cached optionsOpen from function start
-  local showPreview = optionsOpen and (not active or previewMode)
+  -- Use cached optionsOpen from function start. Custom aura bars force
+  -- active=true (presence is unreadable), which would suppress the preview
+  -- forever -- treat them as previewable whenever the panel is open.
+  local showPreview = optionsOpen and (not active or previewMode or isCustomAura)
+
+  -- HIDE WHEN INACTIVE (ownership model): chrome moves onto the engine
+  -- button (shows/hides with the aura natively); native chrome suppressed
+  -- outside the options panel. See UpdateBar's twin block.
+  local engineOwnsChrome = isCustomAura and barConfig.behavior
+    and barConfig.behavior.hideWhenInactive and not optionsOpen
+  if isCustomAura and barConfig.behavior and barConfig.behavior.hideWhenInactive then
+    if barFrame.bg then
+      barFrame.bg:SetShown((not engineOwnsChrome) and (barConfig.display.showBackground and true or false))
+    end
+    if barFrame.tickOverlay then barFrame.tickOverlay:SetShown(not engineOwnsChrome) end
+    if ns.BarDuration and ns.BarDuration.SetOwnChrome then
+      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxValue, true) or nil)
+    end
+  end
   
   -- ═══════════════════════════════════════════════════════════════════
   -- COLORCURVE SUPPORT (v2.9.0 - Simplified)
@@ -3848,7 +4175,10 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     barFrame.bar.colorCurveData = nil
     barFrame.bar:SetScript("OnUpdate", nil)
     UnregisterAuraPolling(barNumber)
-    
+    -- release the engine-lane claim so the preview duration/stack text render
+    -- (the engine attachment itself stays; it re-flags on the next live pass)
+    barFrame._arcBDActive = nil
+
     barFrame.bar:SetMinMaxValues(0, maxValue)
     local pct = previewStacks or 0.5
     local previewValue = maxValue * pct
@@ -3984,9 +4314,15 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     ApplyBarGradient(barFrame.bar, barConfig, baseColor)
     barFrame.bar:Show()
     
-  elseif active and sourceBar and sourceBar.GetAuraInfo then
-    -- AURA DURATION BAR
-    local auraID, unit = sourceBar:GetAuraInfo()
+  elseif (active and ((sourceBar and sourceBar.GetAuraInfo) or isCustomAura)) or engineArm then
+    -- AURA DURATION BAR (CDM-sourced, or a CUSTOM spell-ID bar with no
+    -- sourceBar — the engine lane below handles the custom case; engineArm
+    -- runs it while the aura is ABSENT so the slot exists before secrecy
+    -- blocks creation)
+    local auraID, unit
+    if sourceBar and sourceBar.GetAuraInfo then
+      auraID, unit = sourceBar:GetAuraInfo()
+    end
     
     -- Disable legacy SetSmoothing - we use interpolation enum on SetValue instead
     -- AUTO mode: SetTimerDuration has its own interpolation param (inherently smooth)
@@ -4008,9 +4344,78 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     local bdUnit = (barConfig.tracking and barConfig.tracking.trackType == "debuff") and "target" or "player"
     local aurasSecret121 = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(bdUnit)
     local bdCooldownID   = barConfig.tracking and barConfig.tracking.cooldownID
-    local bdTrackedSpell = barConfig.tracking and barConfig.tracking.trackedSpellID
-    if aurasSecret121 and ns.BarDuration and ns.BarDuration.IsAvailable()
+    -- Fall back to the bar's own saved spell ID. A CDM bar usually has no
+    -- trackedSpellID and lets ResolveCandidateSpellIDs read the candidates off
+    -- C_CooldownViewer -- but that data is NOT loaded during the load window,
+    -- so the set came back EMPTY, Attach bailed before creating anything, and
+    -- the slot could never be made once combat locked creation: the bar showed
+    -- (Core knew the aura was active) with a fill nothing was driving. The
+    -- saved ID is the same one the CDM info reports, so this only ever adds a
+    -- candidate the engine would have had anyway.
+    local bdTrackedSpell = barConfig.tracking
+      and (barConfig.tracking.trackedSpellID or barConfig.tracking.spellID)
+    -- CDM IS ONLY THE LOOKUP. The moment it tells us which aura this bar is,
+    -- SAVE that spell ID: from then on the bar sets itself up exactly like one
+    -- added by spell ID, arming at login from its own config with no CDM
+    -- dependency at all. (Waiting on CDM every session is what left these bars
+    -- unable to create their slot before secrecy locked creation.) idKey still
+    -- prefers the cooldownID, and the ID was already in the candidate set, so
+    -- storing it never triggers a rewire.
+    if bdCooldownID and bdCooldownID > 0
+       and not (bdTrackedSpell and bdTrackedSpell > 0)
+       and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+      local cdInfo = C_CooldownViewer.GetCooldownViewerCooldownInfo(bdCooldownID)
+      local sid = cdInfo and cdInfo.spellID
+      if sid and sid > 0 then
+        barConfig.tracking.trackedSpellID = sid
+        bdTrackedSpell = sid
+      end
+    end
+    -- CUSTOM bars always ride the engine lane on 12.1 (it works whether or
+    -- not auras are currently secret; there is no live-data fallback for
+    -- auras with no CDM entry)
+    if (aurasSecret121 or isCustomAura) and ns.BarDuration and ns.BarDuration.IsAvailable()
        and ((bdCooldownID and bdCooldownID > 0) or (bdTrackedSpell and bdTrackedSpell > 0)) then
+      if barConfig.tracking.cdmMirror and bdCooldownID and bdCooldownID > 0
+         and ns.BarDuration.AttachMirror then
+      -- CDM TIMER MIRROR: hidden/internal auras (e.g. Crusading Strikes'
+      -- swing aura) never match AuraContainer filters, so the engine lane
+      -- below can't drive them. The mirror re-pushes the CDM bar item's OWN
+      -- SetValue/SetMinMaxValues/SetText (secret-accepting sinks) into OUR
+      -- bar + countdown text. Our bar IS the fill here (no engine overlay).
+      ns.BarDuration.Detach(barFrame)
+      barFrame.bar:SetScript("OnUpdate", nil)
+      barFrame.bar.colorCurveData = nil
+      UnregisterAuraPolling(barNumber)
+      ns.BarDuration.AttachMirror(barFrame,
+        (barConfig.display.showDuration and durationFrame and durationFrame.text) or nil,
+        bdCooldownID)
+      local bdTex = barFrame.bar:GetStatusBarTexture()
+      if bdTex then bdTex:SetVertexColor(1, 1, 1, 1) end
+      barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+      barFrame.bar:SetValue(0)
+      barFrame.bar:SetAlpha(1)
+      barFrame.bar:Show()
+      barFrame._arcBDActive = true
+      if durationFrame then
+        if barConfig.display.showDuration then
+          -- reclaim the fontstring from other lanes: the engine lane HIDES it
+          -- (ArcTimer overlays it) and the live lane may have a DurationText
+          -- binding / OnUpdate driver on it -- the mirror owns it now
+          if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(durationFrame.text) end
+          durationFrame:SetScript("OnUpdate", nil)
+          durationFrame.isActive = false
+          durationFrame.sourceBar = nil
+          local mdc = barConfig.display.durationColor or { r = 1, g = 1, b = 1, a = 1 }
+          durationFrame.text:SetTextColor(mdc.r, mdc.g, mdc.b, mdc.a or 1)
+          durationFrame.text:SetText("")   -- mirror SetTexts the live countdown into it
+          durationFrame.text:Show()
+          durationFrame:Show()
+        else
+          durationFrame:Hide()
+        end
+      end
+      else
       -- 12.1 AuraButton-driven duration bar: the invisible button drives the FILL (and the
       -- countdown text via SetDurationText); we own only color + visibility here. No OnUpdate,
       -- no polling, no durObj, no secret compare.
@@ -4032,14 +4437,72 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       end
       -- Colour-by-time text: reuse the LIVE approach -- seconds bands baked into the formatter,
       -- applied C-side with no durObj read -- so it survives 12.1. nil when the toggle/bands are off.
-      local bdDurFmt
+      local bdDurFmt, bdColorKey
       if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
         bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(barConfig.display, barConfig.display.durationDecimals or 1)
+        bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(barConfig.display)
+      end
+      -- CONDITIONAL COLOUR BY REMAINING TIME (12.1 engine lane). The fill
+      -- value is secret, so colour comes from stacked engine layers instead
+      -- of a curve: per threshold fraction f, a TRACK layer (follows the
+      -- fill, masked to its side of f) and a STEP layer (gated at f). See
+      -- the engine-bar-threshold-coloring skill.
+      --   DRAIN (value = remaining): base c0, then TRACK(low, f_i, c_i) for
+      --     i = n..1, then STEP(low, f_i, colour ABOVE f_i) for i = 1..n.
+      --   FILL (value = elapsed, f_i mirrored to 1-f_i): pairs from the
+      --     least urgent up -- TRACK(high, q_i, c_i) then STEP(low, q_i, c_i).
+      local bdDurSteps, bdDurKey
+      if barConfig.display.durationColorCurveEnabled then
+        local d, list = barConfig.display, {}
+        local asSeconds = d.durationThresholdAsSeconds
+        local thrMax = d.durationThresholdMaxDuration or 30
+        for i = 2, 5 do
+          if d["durationThreshold" .. i .. "Enabled"] then
+            local v = tonumber(d["durationThreshold" .. i .. "Value"])
+            local col = d["durationThreshold" .. i .. "Color"]
+            local f = v and (asSeconds and (thrMax > 0 and v / thrMax or nil) or v / 100)
+            if f and col and f > 0.001 and f < 0.999 then
+              list[#list + 1] = { f = f, color = col }
+            end
+          end
+        end
+        table.sort(list, function(a, b) return a.f < b.f end)
+        if #list > 0 then
+          bdDurSteps = {}
+          local parts, n = {}, #list
+          local function add(side, frac, color, step)
+            bdDurSteps[#bdDurSteps + 1] = {
+              side = side, frac = frac, color = color, step = step,
+              boost = #bdDurSteps + 1,
+            }
+          end
+          if fillMode == "fill" then
+            for i = n, 1, -1 do
+              local e = list[i]
+              add("high", 1 - e.f, e.color, false)
+              add("low",  1 - e.f, e.color, true)
+            end
+          else
+            for i = n, 1, -1 do add("low", list[i].f, list[i].color, false) end
+            for i = 1, n do
+              add("low", list[i].f, (i < n) and list[i + 1].color or baseColor, true)
+            end
+          end
+          -- STRUCTURE ONLY (no colours): colours are pushed live by BD's
+          -- retarget path, so recolouring never recreates slots
+          for _, e in ipairs(list) do
+            parts[#parts + 1] = string.format("d%.4f", e.f)
+          end
+          parts[#parts + 1] = fillMode
+          bdDurKey = table.concat(parts, "|")
+        end
       end
       ns.BarDuration.Attach(barFrame, durationFrame and durationFrame.text, bdCooldownID, bdTrackedSpell, bdUnit, {
         direction = bdDirection,
         interpolation = barConfig.display.enableSmoothing and Enum.StatusBarInterpolation.ExponentialEaseOut or Enum.StatusBarInterpolation.Immediate,
         showDuration = barConfig.display.showDuration,
+        durationSteps = bdDurSteps,
+        bandsKey = bdDurKey,
         baseColor = baseColor,
         durationColor = ddc,
         durFontPath = bdDurFontPath,
@@ -4048,6 +4511,10 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
         durDecimals = barConfig.display.durationDecimals or 1,
         durFormatter = bdDurFmt,
         textColorEnabled = barConfig.display.durationTextColorEnabled and true or false,
+        colorKey = bdColorKey,
+        stacksText = (barConfig.display.showText and textFrame and textFrame.text) or nil,
+        stackColor = barConfig.display.textColor,
+        ownChrome = engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxValue, true) or nil,
       })
       -- Our own fill sits empty UNDER the engine's ArcBar overlay (which shows the real drain);
       -- the bar frame's border/background/ticks still render normally around it.
@@ -4055,7 +4522,13 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       if bdTex then bdTex:SetVertexColor(1, 1, 1, 1) end
       barFrame.bar:SetMinMaxValues(0, maxValue)
       barFrame.bar:SetValue(0)
-      barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+      -- armed-but-inactive keeps the dimmed look the inactive branch would
+      -- have painted; the engine overlay stays empty until the aura lands
+      local bc = baseColor
+      if not active then
+        bc = { r = baseColor.r * 0.5, g = baseColor.g * 0.5, b = baseColor.b * 0.5, a = baseColor.a or 0.8 }
+      end
+      barFrame.bar:SetStatusBarColor(bc.r, bc.g, bc.b, bc.a or 1)
       barFrame.bar:SetAlpha(1)
       barFrame.bar:Show()
       barFrame._arcBDActive = true
@@ -4070,6 +4543,7 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
           durationFrame:Hide()
         end
       end
+      end -- cdmMirror / engine-lane split
     elseif auraID and unit and not aurasSecret121 then
       barFrame._arcBDActive = nil
       -- Determine timer direction based on fillMode setting
@@ -4369,6 +4843,11 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       -- Preview mode - show sample stacks value
       local previewStackCount = math_max(1, math_floor((maxStacks or 3) * (previewStacks or 0.5)))
       textFrame.text:SetText(previewStackCount)
+    elseif barFrame._arcBDActive then
+      -- 12.1 engine lane: the AuraButton's ApplicationCount binding overlays the
+      -- live stack count (ArcStacks) -- blank ours so no stale/placeholder value
+      -- (customs pass stacks=0) shows underneath.
+      textFrame.text:SetText("")
     elseif active and not sourceBar and IsNumericAndPositive(stacks) then
       -- Preview from ApplyPreviewValue - use passed stacks value
       textFrame.text:SetText(stacks)
@@ -4605,22 +5084,32 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   local maxDuration = barConfig.tracking.maxDuration or 30
   UpdateTickMarks(barFrame, barConfig, maxDuration, "duration")
   
-  -- Visibility already determined at function start - just show/hide based on that
+  -- Visibility already determined at function start - just show/hide based on that.
+  -- engineOwnsChrome: the button carries the visible bar; our aux frames stay
+  -- hidden (barFrame itself stays SHOWN -- it hosts the aura container).
   if shouldShow and barConfig.display.enabled then
     barFrame:Show()
     barFrame:SetAlpha(1)  -- Always full opacity for duration bars
-    if barConfig.display.showText then
+    if barConfig.display.showText and not engineOwnsChrome then
       textFrame:Show()
     else
       textFrame:Hide()
     end
     -- Note: durationFrame visibility is already handled earlier in the function
     -- based on whether the cooldown is active and durationShowWhenReady setting
-    if barConfig.display.showName and nameFrame then
-      nameFrame:Show()
+    if nameFrame then
+      if barConfig.display.showName and not engineOwnsChrome then
+        nameFrame:Show()
+      elseif engineOwnsChrome then
+        nameFrame:Hide()
+      end
     end
-    if barConfig.display.showBarIcon and barIconFrame then
-      barIconFrame:Show()
+    if barIconFrame then
+      if barConfig.display.showBarIcon and not engineOwnsChrome then
+        barIconFrame:Show()
+      elseif engineOwnsChrome then
+        barIconFrame:Hide()
+      end
     end
   else
     barFrame:Hide()
@@ -4732,10 +5221,10 @@ function ns.Display.ApplyAppearance(barNumber)
   -- ═══════════════════════════════════════════════════════════════════
   -- INITIALIZATION CHECK: Skip appearance until init complete (prevents flash on reload)
   -- ═══════════════════════════════════════════════════════════════════
-  if not initializationComplete and not IsOptionsOpen() then
+  if not initializationComplete and not IsOptionsOpen() and not prebuildPass then
     return
   end
-  
+
   -- If bar is not enabled, hide all frames and return
   -- CRITICAL: Do NOT call GetBarFrames for disabled bars - it would create ghost frames!
   if not barConfig.tracking or not barConfig.tracking.enabled then
@@ -5407,10 +5896,12 @@ function ns.Display.ApplyAppearance(barNumber)
     local bdDir = (cfg.durationBarFillMode == "fill")
       and Enum.StatusBarTimerDirection.ElapsedTime or Enum.StatusBarTimerDirection.RemainingTime
     local bdDurFmt
+    local bdColorKey
     if cfg.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
       bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(cfg, cfg.durationDecimals or 1)
+      bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(cfg)
     end
-    ns.BarDuration.ApplyStyle(barFrame, durationFrame, cfg.showDuration, cfg.durationDecimals or 1, cfg.durationColor, cfg.barColor, bdDir, bdDurFmt, cfg.durationTextColorEnabled and true or false)
+    ns.BarDuration.ApplyStyle(barFrame, durationFrame, cfg.showDuration, cfg.durationDecimals or 1, cfg.durationColor, cfg.barColor, bdDir, bdDurFmt, cfg.durationTextColorEnabled and true or false, bdColorKey)
   end
 
   -- CRITICAL FIX: Check preview mode BEFORE refreshing
@@ -5736,7 +6227,99 @@ end
 -- Hook CDMGroups.UpdateGroupVisibility so buff/debuff bars refresh
 -- in sync with group visibility (mount, combat, death, target, etc.)
 -- Same pattern as CooldownBars.lua and Resources.lua.
--- ===================================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- ENGINE PREBUILD (reload/login mid-combat or mid-instance)
+-- Slot CREATION is blocked from addon stacks while auras are secret
+-- (RC 69189), and the normal bar init runs from a C_Timer well AFTER the
+-- load window, so reloading during a pull left every engine bar empty
+-- until combat ended. Fix (same shape as the aura-icons prebuild): run the
+-- REAL update path once inside the load window, at PLAYER_LOGIN. Slots get
+-- created there -- always legal -- and every later pass only retargets
+-- filters, which is legal under secrecy.
+--
+-- Deliberately reuses the live path instead of a parallel opts builder: the
+-- composition (bindings, thresholds, text) must match EXACTLY or the later
+-- pass detects a change and tries to recreate, which is the very thing that
+-- cannot happen in combat.
+-- ═══════════════════════════════════════════════════════════════════
+local enginePrebuildDone = false
+
+function ns.Display.EnginePrebuild()
+  if enginePrebuildDone then return end
+  if not (ns.API and ns.API.IS_121) then return end
+  local db = ns.API.GetDB and ns.API.GetDB()
+  if not db or not db.bars then return end
+  -- guard the early-login "Unknown" character key (spec-key fabrication lesson)
+  local pn = UnitName and UnitName("player")
+  if not pn or pn == "Unknown" then return end
+  enginePrebuildDone = true
+
+  -- CDM-sourced bars resolve their engine identity from the CDM frame, so the
+  -- catalogue has to be scanned BEFORE the pass or those bars simply skip the
+  -- attach and get nothing for the session (they were the ones "sometimes not
+  -- animating"). Custom spell-ID bars never needed this.
+  if ns.API.ScanAllCDMIcons then ns.API.ScanAllCDMIcons() end
+
+  -- tell BarDuration this is the load window: slot creation is legal here even
+  -- when auras are already secret (reloading straight into an instance)
+  if ns.BarDuration then
+    ns.BarDuration.loadWindow = true
+    -- restore the saved debug flag FIRST: everything worth diagnosing about a
+    -- combat reload happens in the next few lines, before any slash command
+    -- could turn logging on
+    local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+    if g and g.barDurDebug then ns.BarDuration.debug = true end
+  end
+  prebuildPass = true
+  for barNumber, cfg in pairs(db.bars) do
+    if type(cfg) == "table" and cfg.tracking and cfg.tracking.enabled
+       and cfg.display and cfg.display.displayType ~= "icon" then
+      ns.Display.ApplyAppearance(barNumber)      -- sizes/positions the frame the slots anchor to
+      if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNumber) end
+      -- ...and then call the update DIRECTLY. RefreshDisplay goes through
+      -- Core, which resolves the bar's CDM frame first and simply returns for
+      -- any bar whose frame is not in the CDM cache yet -- at login that is
+      -- most of them, so those bars never reached the engine attach and lost
+      -- their only chance to create a slot (log: cd=82624 attached at 04:02:06
+      -- instead of at login, then deferred forever in between). Calling the
+      -- update straight lets engineArm arm the slot from the saved config,
+      -- which is all the engine needs; the aura does not have to be present.
+      local cfgT = cfg.tracking
+      if cfgT.useDurationBar then
+        ns.Display.UpdateDurationBar(barNumber, 0, 0, false, nil, nil,
+          cfgT.iconTextureID, cfgT.buffName)
+      end
+    end
+  end
+  -- TEXTURES arm here too: their drain/countdown engines have the same
+  -- one-chance-per-session constraint, and their own update bails on
+  -- inactive before the attach (Textures._prebuild lifts that gate).
+  if ns.Textures and ns.Textures.UpdateTexture and db.textures then
+    ns.Textures._prebuild = true
+    for num, tcfg in pairs(db.textures) do
+      if type(tcfg) == "table" and tcfg.tracking and tcfg.tracking.enabled then
+        ns.Textures.UpdateTexture(num)
+      end
+    end
+    ns.Textures._prebuild = nil
+    if ns.Textures.RefreshAll then ns.Textures.RefreshAll() end
+  end
+
+  prebuildPass = false
+  if ns.BarDuration then ns.BarDuration.loadWindow = false end
+
+  -- the real init pass (MarkInitializationComplete + RefreshAllBars) shows
+  -- these properly a moment later; keep them hidden until then so nothing
+  -- flashes unpositioned
+  for barNumber in pairs(db.bars) do
+    local f = barFrames[barNumber]
+    if f then
+      SafeHide(f.barFrame); SafeHide(f.textFrame); SafeHide(f.durationFrame)
+      SafeHide(f.nameFrame); SafeHide(f.barIconFrame)
+    end
+  end
+end
+
 local function InstallDisplayVisibilityHook()
   if not ns.CDMGroups or not ns.CDMGroups.UpdateGroupVisibility then return end
   if ns.Display._visHookInstalled then return end

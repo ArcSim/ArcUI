@@ -278,19 +278,34 @@ end
 
 local function FcOnSetFrameStrata(self, strata)
     if self._cdmgSettingStrata then return end
-    
+
     local parent = self:GetParent()
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
     local isManaged = isInContainer or isFreeIcon
-    
+
     if isManaged then
-        local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
+        -- Free icons: honor the per-icon Stack Priority strata (resolved LIVE
+        -- from settings). CRITICAL: this hook shares the _cdmgSettingStrata
+        -- guard with Maintain's OnSetFrameStrata, so a hardcoded MEDIUM here
+        -- silently overrode the configured strata as the final write - the
+        -- Maintain hook could never fight a write made under the shared guard.
+        local freeStrata
+        if isFreeIcon and not isInContainer and ns.CDMGroups.GetFreeIconStackPriority then
+            freeStrata = ns.CDMGroups.GetFreeIconStackPriority(self)
+        end
+        local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or freeStrata or "MEDIUM"
         if strata ~= expectedStrata then
             self._cdmgSettingStrata = true
             self:SetFrameStrata(expectedStrata)
             self._cdmgSettingStrata = false
             state.stats.hookFights.strata = state.stats.hookFights.strata + 1
+            -- Guarded correction bypasses the hooks: re-sync strata-pinned
+            -- children (glows, keybind text) so the whole icon stack moves.
+            if isFreeIcon and ns.CDMGroups.ResyncStrataChildren then
+                self._cdmgLastSeenStrata = self:GetFrameStrata()
+                ns.CDMGroups.ResyncStrataChildren(self)
+            end
         end
     end
 end
@@ -680,9 +695,36 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         end
     end
     
+    -- NEVER silently overwrite a grid cell held by another LIVE member: the
+    -- incoming icon yields to an adjacent slot instead. Nothing is saved, so
+    -- when the visitor later disappears the next restore puts everyone back
+    -- at their saved homes. (Bug: equipping a second on-use trinket whose
+    -- saved cell matched an existing icon's home clobbered that icon's grid
+    -- entry here; the follow-up conflict sweeps then shuffled and PERSISTED
+    -- the mess, so the original icon "moved and never came back".)
+    local function ResolveTargetCell(r, c)
+        if not group.grid or r == nil or c == nil then return r, c end
+        local occupant = group.grid[r] and group.grid[r][c]
+        if not occupant or occupant == cdID then return r, c end
+        local occMember = group.members[occupant]
+        if not (occMember and occMember.frame and occMember.frame.cooldownID == occupant) then
+            return r, c  -- stale grid entry, safe to take over
+        end
+        if group.FindAdjacentFreeSlot then
+            local fr, fc = group:FindAdjacentFreeSlot(r, c, true)
+            if fr and fc then return fr, fc end
+        end
+        return r, c  -- grid completely full: overlap (previous behavior)
+    end
+
     -- Get or create member entry
     if not member then
-        -- Create new member at specified position
+        -- Create new member at specified position (yield if the cell is taken;
+        -- hidden dynamic-layout auras occupy no cell, so they never yield)
+        local willOccupyGrid = group.grid and not ShouldHideFromDynamicGrid(group, frame, viewerType)
+        if willOccupyGrid then
+            row, col = ResolveTargetCell(row or 0, col or 0)
+        end
         member = {
             cooldownID = cdID,
             row = row or 0,
@@ -691,9 +733,8 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
             originalViewerName = viewerName,
         }
         group.members[cdID] = member
-        
-        -- Update grid (skip if hidden aura in dynamic layout)
-        if group.grid and not ShouldHideFromDynamicGrid(group, frame, viewerType) then
+
+        if willOccupyGrid then
             group.grid[row] = group.grid[row] or {}
             group.grid[row][col] = cdID
         end
@@ -713,6 +754,8 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
             -- Existing member - update row/col from savedPositions (authoritative)
             -- This is important when converting a placeholder to real frame
             -- because placeholder's member.row/col may have become stale
+            -- (yield if another live member holds the target cell)
+            row, col = ResolveTargetCell(row, col)
             local oldRow, oldCol = member.row, member.col
             if row ~= oldRow or col ~= oldCol then
                 -- Clear old grid position
@@ -970,7 +1013,12 @@ local function AssignFrameToFree(cdID, frame, x, y, iconSize, viewerType, viewer
     if ns.CDMGroups.HookFrameClearAllPointsFree then
         ns.CDMGroups.HookFrameClearAllPointsFree(frame)
     end
-    
+
+    -- Apply per-icon Stack Priority strata/level (installs its own hooks)
+    if ns.CDMGroups.ApplyFreeIconStrata then
+        ns.CDMGroups.ApplyFreeIconStrata(cdID, frame)
+    end
+
     -- Apply enhancements
     if not state.specChangeDetected and ns.CDMEnhance and ns.CDMEnhance.EnhanceFrame then
         ns.CDMEnhance.EnhanceFrame(frame, cdID, viewerType, viewerName)
@@ -2367,7 +2415,19 @@ local function Reconcile()
                     freeData.frame:ClearAllPoints()
                     freeData.frame:SetPoint("CENTER", UIParent, "CENTER", freeData.x, freeData.y)
                     freeData.frame:SetParent(UIParent)
-                    freeData.frame:SetFrameStrata("MEDIUM")
+                    -- Honor the per-icon Stack Priority strata/level (defaults
+                    -- MEDIUM / unmanaged). Resolved LIVE from settings; the
+                    -- level re-assert matters because the SetParent above
+                    -- recalculates frame levels without firing any hook.
+                    local stackStrata, stackLevel
+                    if ns.CDMGroups.GetFreeIconStackPriority then
+                        stackStrata, stackLevel = ns.CDMGroups.GetFreeIconStackPriority(freeData.frame, cdID)
+                    end
+                    freeData.frame:SetFrameStrata(stackStrata or "MEDIUM")
+                    if stackLevel and freeData.frame.GetFrameLevel
+                       and freeData.frame:GetFrameLevel() ~= stackLevel then
+                        freeData.frame:SetFrameLevel(stackLevel)
+                    end
                     freeData.frame:SetScale(1)
                     if not (freeData.frame._arcIsArcAura or freeData.frame._arcAuraID) then freeData.frame:SetAlpha(1) end
                     freeData.frame:Show()
@@ -3894,5 +3954,3 @@ end
 
 -- Auto-initialize
 Initialize()
-
-print("|cff00FFFF[ArcUI FrameController]|r Loaded. Use /arcuifc for commands.")

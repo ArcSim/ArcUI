@@ -108,6 +108,19 @@ end
 function CL.Apply(frame, cfg)
   if not frame then return end
 
+  -- Arc AURA icons (12.1 container-driven): labels are rendered by
+  -- ns.AuraIcons on the ENGINE BUTTON (active-only). Holder-side labels
+  -- would float over the ghost whenever the aura is missing (the holder is
+  -- always shown), so this runtime must never touch these frames. Hide any
+  -- strays from before this guard existed.
+  if frame._arcIsAuraIcon then
+    for i = 1, 3 do
+      local sk = FRAME_KEYS[i]
+      if frame[sk] then frame[sk]:Hide() end
+    end
+    return
+  end
+
   local labelCfg = cfg and cfg.customLabel
   local labelCount = (labelCfg and labelCfg.labelCount) or 1
   local anyHasText = false
@@ -223,6 +236,7 @@ end
 
 function CL.UpdateVisibility(frame)
   if not frame then return end
+  if frame._arcIsAuraIcon then return end   -- aura-icon holders: never labeled here
   if not frame._arcCLHasText then return end
 
   -- PARENT ALPHA: Labels use SetIgnoreParentAlpha(true) so they can drive

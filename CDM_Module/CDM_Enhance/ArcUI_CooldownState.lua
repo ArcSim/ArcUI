@@ -265,8 +265,11 @@ local function ApplyChargeConditionalText(frame, cfg, isChargeSpell, isRechargin
     -- Restore charge text unconditionally — RECHARGING means 1+ charges available,
     -- text must show regardless of frame alpha (cdAlpha dim does not mean text hidden).
     -- SetIgnoreParentAlpha(false) lets CDM's container alpha manage it naturally.
+    -- FORCE HIDE exception: while Show Icon is off the frame renders at alpha 0 and
+    -- the text lives on its float — un-floating it here (every dispatch for charge
+    -- spells) would keep erasing the charge count Force Hide promises to keep.
     if chargeCfg and chargeCfg.enabled ~= false and frame._arcChargeText then
-      if frame._arcChargeText.SetIgnoreParentAlpha then
+      if frame._arcChargeText.SetIgnoreParentAlpha and not frame._arcForceHideActive then
         frame._arcChargeText:SetIgnoreParentAlpha(false)
       end
       frame._arcChargeText:SetAlpha(1)
@@ -367,6 +370,84 @@ local function DispatchAfterShadowUpdate(frame)
   end
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- POSTGCD RE-PUSH (Arc's experiment, CDM twin of the arc-icon version): when
+-- a shadow feed runs while a GCD is up, the filtered (ignoreGCD) reads can be
+-- transiently wrong — the client may have re-bucketed a real remaining
+-- cooldown under the GCD. Accept the filtered result now and schedule ONE
+-- settled re-feed for the moment the GCD ends: it refreshes the state shadow
+-- (+ visuals dispatch) AND re-pushes the visible widget the way the GCDFilter
+-- hook would (No-GCD frames only; aura/item/override-owned frames excluded).
+-- Chained GCDs re-arm until a clean window. One timer per frame per GCD
+-- window, zero idle cost.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function PostGCDRefresh(frame)
+  frame._arcPostGCDQueued = nil
+  if not frame._arcEnhanced then return end
+  local cfg = frame._arcCfg
+  if not cfg then return end
+  -- Settled state re-feed + visuals
+  if ns.CooldownState.FeedShadow then
+    ns.CooldownState.FeedShadow(frame, cfg)
+  end
+  -- STATE FLAGS FROM LIVE IsShown(): the dispatch below deliberately skips
+  -- refreshing _arcLastShadowShown while _arcLastIsOnGCD is set — and at high
+  -- APM the NEXT cast's GCD is already running at this re-feed moment, so the
+  -- cached flags stayed stale and the CDM desat lagged the arc icon's (which
+  -- reads IsShown live). This re-feed IS the settled read: write the flags
+  -- from the freshly-fed shadows directly, then dispatch.
+  local shadowCD     = frame._arcCDMShadowCooldown
+  local chargeShadow = frame._arcCDMChargeShadow
+  frame._arcLastShadowShown = shadowCD    and shadowCD:IsShown()    or false
+  frame._arcLastChargeShown = chargeShadow and chargeShadow:IsShown() or false
+  DispatchAfterShadowUpdate(frame)
+  -- Visible widget: re-push the stripped read (mirrors the GCDFilter hook's
+  -- own-push body and its skip conditions).
+  if frame._arcNoGCDSwipeEnabled and frame.Cooldown
+     and not frame._arcDurOvActive and frame.wasSetFromAura ~= true
+     and frame._arcViewerType ~= "aura" then
+    local ci = frame.cooldownInfo
+    if ci and not ci.equipSlot then
+      local spellID = ci.overrideSpellID or ci.spellID
+      if spellID then
+        local durObj
+        if frame._arcIsChargeSpellCached and C_Spell.GetSpellChargeDuration then
+          durObj = C_Spell.GetSpellChargeDuration(spellID, true)
+        end
+        if not durObj and C_Spell.GetSpellCooldownDuration then
+          durObj = C_Spell.GetSpellCooldownDuration(spellID, true)
+        end
+        if durObj then
+          frame._arcBypassCDHook = true
+          frame.Cooldown:SetCooldownFromDurationObject(durObj)
+          frame._arcBypassCDHook = false
+          if frame._arcPreserveDurationText and ns.CooldownState.PreserveDurationText then
+            ns.CooldownState.PreserveDurationText(frame)
+          end
+        end
+      end
+    end
+  end
+end
+
+local function SchedulePostGCDRepush(frame)
+  if frame._arcPostGCDQueued then return end
+  frame._arcPostGCDQueued = true
+  -- Delay = the GCD's actual remaining time (61304's record carries plain
+  -- numbers in normal play), with a fixed fallback when unreadable.
+  local delay = 0.3
+  local cd = C_Spell.GetSpellCooldown(61304)
+  if cd then
+    local s, d = cd.startTime, cd.duration
+    if not (issecretvalue and (issecretvalue(s) or issecretvalue(d)))
+       and type(s) == "number" and type(d) == "number" and d > 0 then
+      local rem = (s + d) - GetTime()
+      if rem > 0 and rem < 2 then delay = rem + 0.05 end
+    end
+  end
+  C_Timer.After(delay, function() PostGCDRefresh(frame) end)
+end
+
 local function EnsureShadowCooldown(frame)
   if not frame._arcCDMShadowCooldown then
     frame._arcCDMShadowCooldown = CreateInvisibleCooldown(frame)
@@ -434,6 +515,16 @@ local function EnsureShadowCooldown(frame)
       if not spellID then return end
 
       if ev == "SPELL_UPDATE_COOLDOWN" then
+        -- CDM DIET (DesatLab-proven 2026-08-11): the blanket a3==133 match fed
+        -- this frame on EVERY cast's GCD notify, and each feed could consume a
+        -- transiently-collapsed ignoreGCD read that cleared a running shadow
+        -- ~30ms after every correct desat write (the log showed desat 1 ->
+        -- ready 0 flips on every cast). Same rule as the arc-icon zip patch:
+        -- GCD notifies only reach frames that RENDER the GCD (charge spells,
+        -- or No-GCD filtering off). Own-spell + bulk updates still cover
+        -- every real cooldown change; POSTGCD corrects the rest.
+        local gcdEventRelevant = (a3 == 133)
+          and (frame._arcIsChargeSpellCached == true or frame._arcNoGCDSwipeEnabled ~= true)
         local matches = (a1 == nil)
                      or (a1 == cachedSpell)
                      or (a1 == overrideSpell)
@@ -441,13 +532,31 @@ local function EnsureShadowCooldown(frame)
                      or (a2 == cachedSpell)
                      or (a2 == overrideSpell)
                      or (a2 == baseSpell)
-                     or (a3 == 133)
+                     or gcdEventRelevant
         if not matches then return end
         -- cat=133: GCD event. If CDM already resolved real CD as done, clear
         -- shadow directly so it expires now rather than waiting for OnCooldownDone.
-        if a3 == 133 and frame.isOnGCD == true and frame.isOnActualCooldown == false then
+        -- SECRECY: isOnGCD/isOnActualCooldown can be SECRET booleans in
+        -- restricted contexts (proven by a live error on the GCDFilter's read
+        -- of the same fields) - comparing a secret throws. Read through an
+        -- issecretvalue gate; when secret, this fast-path simply doesn't run.
+        local fOnGCD, fOnActual = frame.isOnGCD, frame.isOnActualCooldown
+        if issecretvalue and (issecretvalue(fOnGCD) or issecretvalue(fOnActual)) then
+          fOnGCD, fOnActual = nil, nil
+        end
+        if a3 == 133 and fOnGCD == true and fOnActual == false then
           local shadow = frame._arcCDMShadowCooldown
           if shadow and shadow:IsShown() then
+            -- Non-charge frames (DesatLab-proven): this claim fires during
+            -- the tail re-bucketing transient too — instant clears here
+            -- reverted every desat write within ~30ms. Schedule the settled
+            -- POSTGCD re-feed instead: a genuine CDR-completion resolves at
+            -- the GCD boundary; a transient never blips. Charge frames keep
+            -- the instant clear (their recharge model has no GCD race).
+            if not frame._arcIsChargeSpellCached then
+              SchedulePostGCDRepush(frame)
+              return
+            end
             frame._arcFeedingShadow = (frame._arcFeedingShadow or 0) + 1
             CooldownFrame_Clear(shadow)
             frame._arcFeedingShadow = frame._arcFeedingShadow - 1
@@ -460,6 +569,26 @@ local function EnsureShadowCooldown(frame)
         end
       elseif ev == "UNIT_SPELLCAST_SUCCEEDED" then
         if a3 ~= cachedSpell and a3 ~= overrideSpell and a3 ~= baseSpell then return end
+        -- IGNORE HARD ICD discriminator: sample the PRE-cast shadow state before
+        -- the feed below refreshes it. For a 2-charge spell the inference is exact
+        -- (player casts are non-secret everywhere):
+        --   cast from FULL (neither shadow shown)      -> 1 charge left -> ICD, not zero
+        --   cast from RECHARGING (charge shadow only)  -> 0 charges     -> true depletion
+        -- The flag makes ReadCooldownState keep DEPLETED (desat, no charge glow) for
+        -- a genuine zero instead of remapping it to RECHARGING. Cleared there when
+        -- the both-shown window ends. 3+ charge spells stay ambiguous mid-band, so
+        -- the flag is only ever set for maxCharges == 2 (all known hard-ICD spells).
+        if frame._arcIgnoreHardICD and frame._arcIsChargeSpellCached
+           and frame._arcMaxChargesCached == 2 then
+          local sCD = frame._arcCDMShadowCooldown
+          local sCh = frame._arcCDMChargeShadow
+          local wasOnCD      = sCD and sCD:IsShown() or false
+          local wasRecharging = sCh and sCh:IsShown() or false
+          if not wasOnCD then
+            frame._arcICDCastToZero = wasRecharging or nil
+          end
+          -- cast observed while both already shown (latency edge): keep prior flag
+        end
       end
 
       local cfg = frame._arcCfg
@@ -478,9 +607,20 @@ local function EnsureShadowCooldown(frame)
     if frame.OnSpellUpdateCooldownEvent and not frame._arcOnCDEventHooked then
       frame._arcOnCDEventHooked = true
       hooksecurefunc(frame, "OnSpellUpdateCooldownEvent", function(self)
-        if self.isOnGCD ~= true then return end
+        -- SECRECY: isOnGCD can be a SECRET boolean in restricted contexts -
+        -- comparing a secret throws. Gate the read; secret = skip fast-path.
+        local sOnGCD = self.isOnGCD
+        if issecretvalue and issecretvalue(sOnGCD) then return end
+        if sOnGCD ~= true then return end
         local shadow = self._arcCDMShadowCooldown
         if not shadow or not shadow:IsShown() then return end
+        -- Non-charge frames (DesatLab-proven): CDM's GCD claim also fires
+        -- during the tail transient — clearing on it was the second desat-
+        -- revert vector. Boundary-correct via POSTGCD instead of trusting it.
+        if not self._arcIsChargeSpellCached then
+          SchedulePostGCDRepush(self)
+          return
+        end
         self._arcFeedingShadow = (self._arcFeedingShadow or 0) + 1
         CooldownFrame_Clear(shadow)
         self._arcFeedingShadow = self._arcFeedingShadow - 1
@@ -643,6 +783,7 @@ FeedShadowCooldown = function(frame, spellID)
   -- _arcIsChargeSpellCached is true, so it must be set before EnsureShadow runs.
   frame._arcLastIsOnGCD         = (isOnGCD == true)
   frame._arcIsChargeSpellCached = isChargeSpell
+  frame._arcMaxChargesCached    = chargesInfo and chargesInfo.maxCharges or nil
 
   local shadowCD, chargeShadow = EnsureShadowCooldown(frame)
 
@@ -670,6 +811,14 @@ FeedShadowCooldown = function(frame, spellID)
   end
 
   frame._arcFeedingShadow = frame._arcFeedingShadow - 1
+
+  -- POSTGCD: this feed ran while a GCD was up — the filtered reads may be
+  -- transiently wrong (tail re-bucket). Schedule ONE settled re-feed for the
+  -- moment the GCD ends (see SchedulePostGCDRepush above). Mirrors the
+  -- arc-icon trigger: non-charge frames only.
+  if isOnGCD and not isChargeSpell then
+    SchedulePostGCDRepush(frame)
+  end
 end
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -701,11 +850,17 @@ local function ReadCooldownState(frame, spellID)
   -- recharge, 16s hard ICD per cast): some charge spells start a REAL spell
   -- cooldown alongside the recharge, making main+charge both shown — which this
   -- model otherwise reads as DEPLETED (full desat) while a charge is in hand.
-  -- With the toggle on, that combination reads RECHARGING instead. Trade-off
-  -- (documented in the option): true 0-charge depletion ALSO reads RECHARGING,
-  -- because the two cases are indistinguishable without comparing durations
-  -- (secret in instances). Pure IsShown logic — secret-safe everywhere.
-  if frame._arcIgnoreHardICD and isChargeSpell and isOnCooldown and isRecharging then
+  -- With the toggle on, that combination reads RECHARGING instead — UNLESS the
+  -- cast-history discriminator (see the SUCCEEDED handler) proved the last cast
+  -- spent the final charge (_arcICDCastToZero): a genuine zero keeps DEPLETED so
+  -- desaturation and charge glows stay truthful. With no history (login/reload
+  -- mid-cooldown) the old remap applies until the first observed cast. Pure
+  -- IsShown logic + non-secret player cast events — secret-safe everywhere.
+  if not (isOnCooldown and isRecharging) then
+    frame._arcICDCastToZero = nil  -- ambiguous window over; next cast re-derives
+  end
+  if frame._arcIgnoreHardICD and isChargeSpell and isOnCooldown and isRecharging
+     and not frame._arcICDCastToZero then
     isOnCooldown = false
   end
   return isOnCooldown, isRecharging, isChargeSpell, isOnGCD
@@ -922,10 +1077,23 @@ local function ApplyCooldownDesat(frame, iconTex, stateVisuals, hasActiveAuraDis
     frame._arcBypassDesatHook = false
     ApplyBorderDesaturation(frame, 0)
   else
-    frame._arcForceDesatValue = nil
+    -- OWN THE ICON DESAT (was: release to CDM's native desat via
+    -- _arcForceDesatValue = nil). DesatLab proof (2026-08-11): CDM's own
+    -- cooldownDesaturated state goes SECRET on enhanced frames (a tainted
+    -- CDM run stores a secret into its own state), so Blizzard's
+    -- SetDesaturated writes become secret-valued and never render — the CDM
+    -- icon stayed bright while the arc icon desatted. Drive the icon desat
+    -- from OUR non-secret shadow state instead, mirroring the IAO branch:
+    -- ON-CD / DEPLETED (main shadow shown) desaturates; RECHARGING with a
+    -- charge in hand (main hidden) stays colored. _arcForceDesatValue lets
+    -- the enforcement hook re-assert over Blizzard's plain/secret writes.
     local shadowCD = frame._arcCDMShadowCooldown
-    local borderDesat = (shadowCD and shadowCD:IsShown()) and 1 or 0
-    ApplyBorderDesaturation(frame, borderDesat)
+    local desatVal = (shadowCD and shadowCD:IsShown()) and 1 or 0
+    frame._arcForceDesatValue = desatVal
+    frame._arcBypassDesatHook = true
+    SetDesat(iconTex, desatVal)
+    frame._arcBypassDesatHook = false
+    ApplyBorderDesaturation(frame, desatVal)
   end
 end
 

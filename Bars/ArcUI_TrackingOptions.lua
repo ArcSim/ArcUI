@@ -20,6 +20,14 @@ local showOnlyCurrentSpec = true
 local catalogConfigFilter = "all"  -- "all", "configured", "notconfigured"
 local selectedCatalogEntry = nil
 
+-- Add Aura by Spell ID (custom, non-CDM — 12.1 engine lane) input state.
+-- The green "+" tile in the catalog grid toggles customAuraAddMode, which
+-- reveals the type + spell-ID inputs; entering an ID adds a CATALOG ENTRY
+-- (selected like any CDM aura) — creation happens via the shared buttons.
+local pendingCustomAuraID = ""
+local pendingCustomAuraType = "buff"   -- "buff" | "debuff"
+local customAuraAddMode = false
+
 -- Track which bars are expanded (collapsed by default)
 local expandedBars = {}  -- expandedBars["buff_1"] = true means bar 1 is expanded
 local expandedResources = {}  -- expandedResources["resource_1"] = true means resource bar 1 is expanded
@@ -277,9 +285,12 @@ end
 -- Helper to get selected entry info
 local function GetSelectedCatalogEntry()
   if not selectedCatalogEntry then return nil end
-  
 
-  
+  -- Custom aura entry ("custom_<spellID>" key)
+  if type(selectedCatalogEntry) == "string" and selectedCatalogEntry:find("^custom_") then
+    return ns.Catalog and ns.Catalog.GetCustomEntry and ns.Catalog.GetCustomEntry(selectedCatalogEntry)
+  end
+
   -- It's a CDM cooldownID (numeric or stringified number)
   local cooldownID = tonumber(selectedCatalogEntry) or selectedCatalogEntry
   return ns.Catalog and ns.Catalog.GetEntry and ns.Catalog.GetEntry(cooldownID)
@@ -468,6 +479,75 @@ local function CreateCatalogIconEntry(index)
     width = 0.25,
     hidden = function()
       return GetCatalogEntryByIndex(index) == nil
+    end
+  }
+end
+
+-- ===================================================================
+-- CUSTOM AURA TILES (non-CDM auras added by spell ID — 12.1 only)
+-- Rendered in the same grid, after the CDM tiles; selecting one flows
+-- into the same Create Duration Bar / Create Texture buttons.
+-- ===================================================================
+local MAX_CUSTOM_TILES = 20
+
+local function GetCustomEntryByIndex(index)
+  if not (ns.Catalog and ns.Catalog.GetCustomEntries) then return nil end
+  return ns.Catalog.GetCustomEntries()[index]
+end
+
+local function CreateCustomCatalogTileEntry(index)
+  return {
+    type = "execute",
+    name = " ",
+    desc = function()
+      local entry = GetCustomEntryByIndex(index)
+      if not entry then return "" end
+      local desc = "|cffffd700" .. entry.name .. "|r  |cff3fc9f2(Custom)|r"
+      desc = desc .. "\nSpell ID: " .. entry.spellID
+      desc = desc .. "\nType: " .. (entry.trackType == "debuff" and "Debuff (on target)" or "Buff (on you)")
+      local spellDesc = C_Spell.GetSpellDescription(entry.spellID)
+      if spellDesc and spellDesc ~= "" then
+        desc = desc .. "\n\n|cff00ff00" .. spellDesc .. "|r"
+      end
+      local existingBars = ns.Catalog.FindCustomAuraBars and ns.Catalog.FindCustomAuraBars(entry.spellID) or {}
+      if #existingBars > 0 then
+        local barsList = {}
+        for _, barInfo in ipairs(existingBars) do
+          table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+        end
+        desc = desc .. "\n\n|cff00ccffAlready in ArcUI:|r\n" .. table.concat(barsList, "\n")
+      else
+        desc = desc .. "\n\n|cff888888Click to select|r"
+      end
+      desc = desc .. "\n|cff888888Ctrl+Click to remove from the catalog (bars are kept)|r"
+      return desc
+    end,
+    func = function()
+      local entry = GetCustomEntryByIndex(index)
+      if not entry then return end
+      if IsControlKeyDown() then
+        if ns.Catalog.RemoveCustomEntry then ns.Catalog.RemoveCustomEntry(entry.key) end
+        if selectedCatalogEntry == entry.key then selectedCatalogEntry = nil end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        return
+      end
+      if selectedCatalogEntry == entry.key then
+        selectedCatalogEntry = nil
+      else
+        selectedCatalogEntry = entry.key
+      end
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+    image = function()
+      local entry = GetCustomEntryByIndex(index)
+      return entry and entry.icon or nil
+    end,
+    imageWidth = 36,
+    imageHeight = 36,
+    order = 7.05 + (index * 0.001),
+    width = 0.25,
+    hidden = function()
+      return GetCustomEntryByIndex(index) == nil
     end
   }
 end
@@ -967,6 +1047,34 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
           if not cfg or not cfg.tracking then return true end
+          return not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0
+        end
+      },
+      cdmMirror = {
+        type = "toggle",
+        name = "CDM Timer Mirror",
+        desc = "Drives this duration bar by mirroring the Cooldown Manager entry's own bar timer. Use for internal timers that normal aura tracking cannot see (for example Crusading Strikes' weapon swing timer).\n\nRequires the entry to be displayed as a BAR in the Cooldown Manager and visible. Fill direction is always drain.",
+        get = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          return cfg and cfg.tracking and cfg.tracking.cdmMirror or false
+        end,
+        set = function(info, value)
+          local cfg = ns.API.GetBarConfig(barNum)
+          if cfg then
+            cfg.tracking.cdmMirror = value or nil
+            if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNum) end
+          end
+        end,
+        order = 4.765,
+        width = 1.1,
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          -- 12.1-only lane (combat-first: on live the normal engine handles
+          -- everything this can, so the option would be a no-op there)
+          if not (ns.API and ns.API.IS_121) then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking then return true end
+          if not cfg.tracking.useDurationBar then return true end
           return not cfg.tracking.cooldownID or cfg.tracking.cooldownID <= 0
         end
       },
@@ -2034,7 +2142,71 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         order = 4,
         width = 0.9
       },
-      
+
+      -- ═══════════════════════════════════════════════════════════════════
+      -- ADD AURA BY SPELL ID (custom, NOT in the CD Manager — 12.1 only)
+      -- The green "+" tile sits at the end of the aura grid (same look as
+      -- the Icon Catalog's Add tile). Clicking it reveals the type +
+      -- spell-ID inputs; entering an ID adds a catalog entry and selects
+      -- it, so the shared Create buttons below do the actual creation.
+      -- ═══════════════════════════════════════════════════════════════════
+      catalogAddTile = {
+        type = "execute",
+        name = "|cff3fc9f2Add|r",
+        desc = "|cffffd700Add Aura by Spell ID|r\nTrack an aura that is not in the CD Manager.\n\nClick to enter the Spell ID.",
+        image = "Interface\\AddOns\\ArcUI\\Textures\\add_tile.tga",
+        imageWidth = 32,
+        imageHeight = 32,
+        order = 7.08,
+        width = 0.25,
+        hidden = function()
+          return not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable())
+        end,
+        func = function()
+          customAuraAddMode = not customAuraAddMode
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+      },
+      customAuraAddType = {
+        type = "select",
+        name = "Aura Type",
+        desc = "Buff = tracks the aura on YOU.\nDebuff = tracks the aura on your TARGET.",
+        order = 7.081,
+        width = 0.9,
+        values = { buff = "Buff (on you)", debuff = "Debuff (on target)" },
+        get = function() return pendingCustomAuraType end,
+        set = function(_, v) pendingCustomAuraType = v end,
+        hidden = function()
+          return not customAuraAddMode
+            or not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable())
+        end,
+      },
+      customAuraAddID = {
+        type = "input",
+        name = "Aura Spell ID",
+        desc = "Enter the buff/debuff Spell ID and press Enter.\nIf the buff has a different ID than the cast, use the buff's own ID.",
+        order = 7.082,
+        width = 0.9,
+        get = function() return pendingCustomAuraID end,
+        set = function(_, val)
+          val = val:gsub("[^%d]", "")
+          local spellID = tonumber(val)
+          pendingCustomAuraID = ""
+          if not spellID or spellID <= 0 then return end
+          local key, err = ns.Catalog.AddCustomEntry(spellID, pendingCustomAuraType)
+          if not key then
+            print("|cff00ccffArc UI|r: " .. tostring(err))
+            return
+          end
+          selectedCatalogEntry = key
+          customAuraAddMode = false
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        hidden = function()
+          return not customAuraAddMode
+            or not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable())
+        end,
+      },
       -- ═══════════════════════════════════════════════════════════════════
       -- AURA ICON GRID
       -- ═══════════════════════════════════════════════════════════════════
@@ -2077,8 +2249,8 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if not selectedCatalogEntry then return "" end
           local entry = GetSelectedCatalogEntry()
           if entry then
-            local prefix = ""
-            return string.format("%s|T%d:20:20:0:0|t %s", prefix, entry.icon, entry.name)
+            local suffix = entry.isCustomAura and " |cff3fc9f2(Custom)|r" or ""
+            return string.format("|T%d:20:20:0:0|t %s%s", entry.icon, entry.name, suffix)
           end
           return "Selected Aura"
         end,
@@ -2091,10 +2263,28 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if not selectedCatalogEntry then return "" end
           local entry = GetSelectedCatalogEntry()
           if not entry then return "" end
-          
-          
+
+          -- Custom aura entry (non-CDM, engine-driven)
+          if entry.isCustomAura then
+            local existingBars = ns.Catalog.FindCustomAuraBars and
+                                 ns.Catalog.FindCustomAuraBars(entry.spellID) or {}
+            local barsText = ""
+            if #existingBars > 0 then
+              local barsList = {}
+              for _, barInfo in ipairs(existingBars) do
+                table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+              end
+              barsText = "\n|cff00ff00ArcUI Bars:|r " .. table.concat(barsList, ", ")
+            end
+            return string.format(
+              "|cffffd700Spell ID:|r %d    |cffffd700Type:|r %s    |cff3fc9f2Custom|r%s\n|cff00ff00Can create:|r Stack Bar, Duration Bar, or Texture",
+              entry.spellID or 0,
+              entry.trackType == "debuff" and "Debuff (on target)" or "Buff (on you)",
+              barsText)
+          end
+
           -- CDM entries
-          local existingBars = ns.Catalog.FindAllArcUIBarsByCooldownID and 
+          local existingBars = ns.Catalog.FindAllArcUIBarsByCooldownID and
                                ns.Catalog.FindAllArcUIBarsByCooldownID(selectedCatalogEntry) or {}
           local barsText = ""
           if #existingBars > 0 then
@@ -2122,11 +2312,29 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
       createStackBarBtn = {
         type = "execute",
         name = "Create Stack Bar",
-        desc = "Create a bar that fills based on stack count.\nYou will need to configure Type and Max Stacks after creation.",
+        desc = function()
+          local entry = GetSelectedCatalogEntry()
+          if entry and entry.isCustomAura then
+            return "Create a bar that fills based on stack count.\nSet Max Stacks after creation to activate it."
+          end
+          return "Create a bar that fills based on stack count.\nYou will need to configure Type and Max Stacks after creation."
+        end,
         func = function()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
-          
+
+          -- Custom aura entry: engine-driven stack bar, no CDM source
+          if entry and entry.isCustomAura then
+            local success, result = ns.Catalog.CreateCustomAuraBar(entry.spellID, entry.trackType, false)
+            if success then
+              print(string.format("|cff00ccffArc UI|r: Created custom stack bar #%d — |cffFF6600set Max Stacks to activate it|r", result))
+            else
+              print("|cff00ccffArc UI|r: " .. tostring(result))
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            return
+          end
+
                     -- CDM entries
           -- Use bar source if available (Tracked Bars), otherwise use icon source (Tracked Buffs)
           local sourceType = (entry and entry.isTrackedBar) and "bar" or "icon"
@@ -2149,8 +2357,8 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         disabled = function()
           if not selectedCatalogEntry then return true end
           local entry = GetSelectedCatalogEntry()
-          -- Enable if in Tracked Buffs OR Tracked Bars
-          return not entry or (not entry.isTrackedBuff and not entry.isTrackedBar)
+          -- Enable for customs, and for CDM entries in Tracked Buffs OR Tracked Bars
+          return not entry or (not entry.isCustomAura and not entry.isTrackedBuff and not entry.isTrackedBar)
         end
       },
       createDurationBarBtn = {
@@ -2171,6 +2379,11 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           end
           local entry = GetSelectedCatalogEntry()
 
+          -- Custom aura entry
+          if entry and entry.isCustomAura then
+            return "Create a duration bar that depletes as the aura expires."
+          end
+
           -- Enable for any CDM entry
           if entry and (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed) then
             return "Create a bar that depletes as the buff expires.\nYou will need to configure Type and Max Duration after creation."
@@ -2181,11 +2394,19 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         func = function()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
-          
 
-          
+          -- Custom aura entry: engine-driven duration bar, no CDM source
+          if entry and entry.isCustomAura then
+            local success, result = ns.Catalog.CreateCustomAuraBar(entry.spellID, entry.trackType)
+            if success then
+              print(string.format("|cff00ccffArc UI|r: Created custom aura bar #%d — |cffFF6600configure Max Duration or leave Auto|r", result))
+            else
+              print("|cff00ccffArc UI|r: " .. tostring(result))
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            return
+          end
 
-          
           -- Check if we can actually create a duration bar (CDM entries)
           if not entry or not (entry.isDisplayedAsBar or entry.isDisplayedAsBuff or entry.isDisplayed) then
             print("|cff00ccffArc UI|r: |cffff6b6bAura must be tracked in CD Manager.|r")
@@ -2221,11 +2442,32 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
       createTextureBtn = {
         type = "execute",
         name = "Create Texture",
-        desc = "Create an Aura Texture for the selected aura. Configure its look in the Textures tab.",
+        desc = function()
+          local entry = GetSelectedCatalogEntry()
+          if entry and entry.isCustomAura then
+            return "Create an Aura Texture for this aura.\nUse the Progress/Drain display mode; static mode cannot hide when the aura is missing."
+          end
+          return "Create an Aura Texture for the selected aura. Configure its look in the Textures tab."
+        end,
         func = function()
           if not selectedCatalogEntry then return end
           local entry = GetSelectedCatalogEntry()
           if not entry then return end
+
+          -- Custom aura entry: engine-driven texture, no CDM source
+          if entry.isCustomAura then
+            local ok, result = ns.Catalog.CreateCustomAuraTexture(entry.spellID, entry.trackType)
+            if ok then
+              print(string.format("|cff00ccffArc UI|r: Created texture #%d — configure it in Buffs/Debuffs > Textures (use Progress mode).", result))
+              local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
+              if acd and acd.SelectGroup then acd:SelectGroup("ArcUI", "auras", "textures") end
+            else
+              print("|cff00ccffArc UI|r: " .. tostring(result))
+            end
+            LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+            return
+          end
+
           if not (ns.API and ns.API.InitializeNewTexture and ns.API.SelectBuffForTexture) then return end
           local num = ns.API.InitializeNewTexture()
           if not num then
@@ -2255,7 +2497,7 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
         disabled = function()
           if not selectedCatalogEntry then return true end
           local entry = GetSelectedCatalogEntry()
-          return not entry or not entry.cooldownID
+          return not entry or not (entry.cooldownID or entry.isCustomAura)
         end
       },
 
@@ -2349,6 +2591,11 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
   -- Add pre-created catalog icon entries (slots 1-50)
   for i = 1, MAX_CATALOG_ICONS do
     args["catalogIcon" .. i] = CreateCatalogIconEntry(i)
+  end
+
+  -- Custom aura tiles (non-CDM, added by spell ID) render after the CDM tiles
+  for i = 1, MAX_CUSTOM_TILES do
+    args["customTile" .. i] = CreateCustomCatalogTileEntry(i)
   end
 
   -- Active texture rows (slots 1-30) for the shared catalog.

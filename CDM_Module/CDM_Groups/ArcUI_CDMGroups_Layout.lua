@@ -314,6 +314,23 @@ local function SetupFrameInContainer(frame, container, slotW, slotH, cooldownID)
     frame:SetSize(effectiveW, effectiveH)
     frame._cdmgSettingSize = false
     
+    -- ARC AURA ICONS: this function just reparented/re-strated/resized the
+    -- holder, which invalidates the icon's whole visual stack — the engine
+    -- button ladder (button/swipe/TextOverlay levels ride the holder's
+    -- CURRENT level), the drawn button border, and the glow pack geometry
+    -- (identity-keyed on WxH). Re-run ApplySettings deferred so borders and
+    -- per-icon options survive group assignment. (The 3.7.x "icons lost
+    -- their borders inside groups" bug.)
+    if frame._arcIsAuraIcon and not frame._arcSlotApplyQueued
+       and ns.AuraIcons and ns.AuraIcons.ApplySettings then
+        frame._arcSlotApplyQueued = true
+        local arcID = frame.cooldownID
+        C_Timer.After(0, function()
+            frame._arcSlotApplyQueued = nil
+            if arcID then ns.AuraIcons.ApplySettings(arcID) end
+        end)
+    end
+
     -- Disable any CDMEnhance overlay stealing mouse events
     -- CDMGroups-managed frames should NEVER have overlay mouse enabled
     if frame._arcOverlay then

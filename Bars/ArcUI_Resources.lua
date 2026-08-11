@@ -7059,9 +7059,8 @@ end
 -- ===================================================================
 -- POWER UPDATE THROTTLE
 -- UNIT_POWER_FREQUENT can fire at up to frame-rate while a resource regenerates.
--- Coalesce to 10Hz in combat / 4Hz out of combat (matching SenseiClassResourceBar's
--- rates); the native StatusBar interpolation smooths the gaps so it still looks
--- 60fps. Leading + trailing edge so the first and final values are always exact.
+-- Coalesce to 10Hz (in AND out of combat — see the interval comment below).
+-- Leading + trailing edge so the first and final values are always exact.
 -- Stays event-driven, so it costs ZERO CPU when power is static (no constant poll,
 -- unlike a competing addon's OnUpdate approach).
 -- ===================================================================
@@ -7124,7 +7123,13 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     -- their own events; UpdateBarValue self-falls-back to the full rebuild when a
     -- bar's frames don't exist yet or it's hidden.
     powerPending[arg2] = true
-    local interval = InCombatLockdown() and 0.1 or 0.25
+    -- 10Hz in AND out of combat. The old 4Hz idle rate assumed native SetValue
+    -- interpolation would smooth the gaps, but Smoothing is off by default —
+    -- default-config energy bars visibly stepped in ~2.5-energy chunks out of
+    -- combat ("energy bar is choppy when out of combat" report). The throttle
+    -- only limits work while power events are ALREADY firing (regen), so this
+    -- costs nothing at rest; 10Hz ~= per-point granularity for energy regen.
+    local interval = 0.1
     local sinceLast = GetTime() - powerLast
     if sinceLast >= interval then
       ApplyPowerUpdates()                                     -- leading edge

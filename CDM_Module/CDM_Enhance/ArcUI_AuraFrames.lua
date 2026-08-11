@@ -298,6 +298,10 @@ end
 
 function AF.ShowAuraActiveGlow(frame, auraActiveCfg)
   if not frame or not auraActiveCfg or not ns.Glows then return end
+  -- Arc aura icon holders: their missing-glow is the AuraIcons OCCLUSION
+  -- glow (pinned BELOW the engine button). A glow started here would ride
+  -- the holder's glow anchor ABOVE the button and never be covered.
+  if frame._arcIsAuraIcon then return end
 
   local glowType  = auraActiveCfg.glowType or "button"
   local r, g, b   = 1, 0.85, 0.1
@@ -311,6 +315,9 @@ function AF.ShowAuraActiveGlow(frame, auraActiveCfg)
   local speed      = auraActiveCfg.glowSpeed      or 0.25
   local lines      = auraActiveCfg.glowLines      or 8
   local thickness  = auraActiveCfg.glowThickness  or 2
+  -- 0 = automatic: leave it nil and LCG derives length from the icon size
+  local length     = tonumber(auraActiveCfg.glowLength)
+  if length and length <= 0 then length = nil end
   local particles  = auraActiveCfg.glowParticles  or 4
   local strata     = auraActiveCfg.glowFrameStrata
   local frameLevel = auraActiveCfg.glowFrameLevel
@@ -330,6 +337,7 @@ function AF.ShowAuraActiveGlow(frame, auraActiveCfg)
     frequency = speed,
     lines     = lines,
     thickness = thickness,
+    length    = length,
     particles = particles,
     xOffset   = glowOffset + (auraActiveCfg.glowXOffset or 0),
     yOffset   = glowOffset + (auraActiveCfg.glowYOffset or 0),

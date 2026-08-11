@@ -159,23 +159,90 @@ local function OnSetSize(self, w, h)
     end
 end
 
+-- Resolve a free icon's Stack Priority (per-icon strata/frameLevel) LIVE from
+-- settings — never cached on the frame. Early-login resolves can see an
+-- incomplete spec store; a frame-cached value taken then would be stale
+-- forever (the "loads as MEDIUM" bug), while a live read self-heals as soon
+-- as the settings cache is correct. GetIconSettings is cache-backed, so this
+-- is a table lookup in the hot paths, not a rebuild.
+local function GetFreeIconStackPriority(frame, cdIDOverride)
+    local cdID = cdIDOverride or frame.cooldownID or frame._arcAuraID
+    local cfg = cdID and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings
+        and ns.CDMEnhance.GetIconSettings(cdID)
+    local fp = cfg and cfg.freePosition
+    if not fp then return nil, nil end
+    return fp.strata, tonumber(fp.frameLevel)
+end
+
+-- Children that PIN a strata don't follow a later parent strata change: glow
+-- frames capture the parent's strata when the glow STARTS (ns.Glows), keybind
+-- containers when they refresh. After a free icon's strata actually changes,
+-- restart/refresh them so the whole icon stack moves together — otherwise the
+-- icon drops to LOW while its active glow keeps drawing at the old MEDIUM
+-- (the "still looks wrong until I click it in the panel" symptom).
+local function ResyncPinnedChildren(frame)
+    if ns.Glows and ns.Glows.ResizeAll then ns.Glows.ResizeAll(frame) end
+    if ns.Keybinds and ns.Keybinds.QueueRefresh then ns.Keybinds.QueueRefresh() end
+end
+ns.CDMGroups.ResyncStrataChildren = ResyncPinnedChildren
+
 local function OnSetFrameStrata(self, strata)
     if self._cdmgSettingStrata then return end
-    
+
     local parent = self:GetParent()
     -- Check if in container OR if it's a free icon
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
-    
+
     if not isInContainer and not isFreeIcon then return end
-    
-    -- Determine expected strata: container's configured strata, or MEDIUM for free icons
-    local expectedStrata = (isInContainer and parent._cdmgFrameStrata) or "MEDIUM"
-    
+
+    -- Determine expected strata: container's configured strata, the free icon's
+    -- own Stack Priority strata (per-icon option), or MEDIUM as the default
+    local freeStrata, freeLevel
+    if isFreeIcon and not isInContainer then
+        freeStrata, freeLevel = GetFreeIconStackPriority(self)
+    end
+    local expectedStrata = (isInContainer and parent._cdmgFrameStrata)
+        or freeStrata
+        or "MEDIUM"
+
     if strata ~= expectedStrata then
         self._cdmgSettingStrata = true
         self:SetFrameStrata(expectedStrata)
         self._cdmgSettingStrata = false
+    end
+
+    -- Piggyback level enforcement: SetParent recalculates frame levels WITHOUT
+    -- calling SetFrameLevel (no hook fires), so the strata writes that follow
+    -- every reposition sweep are our chance to re-assert the configured level.
+    if freeLevel and self:GetFrameLevel() ~= freeLevel then
+        self._cdmgSettingLevel = true
+        self:SetFrameLevel(freeLevel)
+        self._cdmgSettingLevel = false
+    end
+
+    -- Change detection (any writer): if this write ended up ACTUALLY changing
+    -- the icon's strata, re-sync strata-pinned children (glows, keybind text).
+    if isFreeIcon then
+        local now = self:GetFrameStrata()
+        if self._cdmgLastSeenStrata ~= now then
+            self._cdmgLastSeenStrata = now
+            ResyncPinnedChildren(self)
+        end
+    end
+end
+
+-- Fight frame-level changes on free icons that have a Stack Priority level set.
+-- Resolves live (see GetFreeIconStackPriority); icons without a configured
+-- level are never fought.
+local function OnSetFrameLevel(self, level)
+    if self._cdmgSettingLevel then return end
+    if not self._cdmgIsFreeIcon then return end
+    local _, expected = GetFreeIconStackPriority(self)
+    if expected and level ~= expected then
+        self._cdmgSettingLevel = true
+        self:SetFrameLevel(expected)
+        self._cdmgSettingLevel = false
     end
 end
 
@@ -251,6 +318,7 @@ local TrackedClearAllPoints  = Track and Track("Maintain.ClearAllPoints",  OnCle
 local TrackedSetScale        = Track and Track("Maintain.SetScale",        OnSetScale) or OnSetScale
 local TrackedSetSize         = Track and Track("Maintain.SetSize",         OnSetSize) or OnSetSize
 local TrackedSetFrameStrata  = Track and Track("Maintain.SetFrameStrata",  OnSetFrameStrata) or OnSetFrameStrata
+local TrackedSetFrameLevel   = Track and Track("Maintain.SetFrameLevel",   OnSetFrameLevel) or OnSetFrameLevel
 local TrackedSetParent       = Track and Track("Maintain.SetParent",       OnSetParent) or OnSetParent
 local TrackedClearAllPointsF = Track and Track("Maintain.ClearAllPointsF", OnClearAllPoints_Free) or OnClearAllPoints_Free
 local TrackedSetShown        = Track and Track("Maintain.SetShown",        OnSetShown_Managed) or OnSetShown_Managed
@@ -286,6 +354,13 @@ local function HookFrameStrata(frame)
     if frame._cdmgStrataHooked then return end
     hooksecurefunc(frame, "SetFrameStrata", TrackedSetFrameStrata)
     frame._cdmgStrataHooked = true
+end
+
+-- Hook SetFrameLevel - force level back to the free icon's Stack Priority level
+local function HookFrameLevel(frame)
+    if frame._cdmgLevelHooked then return end
+    hooksecurefunc(frame, "SetFrameLevel", TrackedSetFrameLevel)
+    frame._cdmgLevelHooked = true
 end
 
 -- Hook SetParent - fight CDM trying to reparent free icons
@@ -372,83 +447,44 @@ local function FindFrameInViewers(cdID)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- SHARED HELPER: Setup a frame as a free icon
--- Used by both reassignment handling and savedPositions restoration
--- Returns true if setup succeeded, false otherwise
+-- FREE ICON STACK PRIORITY (per-icon strata/frameLevel for stacked free icons)
+-- Installs the fight-back hooks and applies the CURRENT setting to the frame.
+-- The hooks resolve live from settings on every write (GetFreeIconStackPriority),
+-- so this apply is only the "right now" push — there is no frame-cached state
+-- to go stale. No freePosition config = default MEDIUM, level never fought —
+-- identical to pre-feature behavior.
 -- ═══════════════════════════════════════════════════════════════════════════
-local function SetupFreeIconFrame(cdID, frame, x, y, iconSize, viewerType, viewerName, existingData)
-    if not frame or not cdID then return false end
-    
-    -- Setup frame properties
-    frame:SetParent(UIParent)
-    frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "CENTER", x, y)
-    frame:SetFrameStrata("MEDIUM")
-    frame:SetScale(1)
-    frame:SetSize(iconSize, iconSize)
-    
-    -- Only show if not hidden due to hideWhenUnequipped setting
-    if not frame._arcHiddenUnequipped then
-        frame:Show()
-    end
-    
-    -- Create or update freeIcons entry
-    if existingData then
-        -- Update existing entry
-        existingData.frame = frame
-        existingData.viewerType = viewerType
-        existingData.originalViewerName = viewerName
-    else
-        -- Create new entry
-        ns.CDMGroups.freeIcons[cdID] = {
-            frame = frame,
-            entry = Registry.byAddress[tostring(frame)],
-            x = x,
-            y = y,
-            iconSize = iconSize,
-            viewerType = viewerType,
-            originalViewerName = viewerName,
-        }
-    end
-    
-    -- Install hooks
-    frame._cdmgIsFreeIcon = true
-    frame._cdmgFreeTargetSize = iconSize
-    frame._arcAllowHide = nil  -- Re-enable visibility guard
-    HookFrameScale(frame)
-    HookFrameSize(frame, iconSize)
-    HookFrameParent(frame)
+local function ApplyFreeIconStrata(cdID, frame)
+    if not frame then return end
+    -- Self-contained: install the strata/level fight-back hooks here (idempotent),
+    -- because the various free-icon setup sites install differing hook subsets.
     HookFrameStrata(frame)
-    HookFrameClearAllPointsFree(frame)
-    HookFrameSetShown(frame)
-    HookFrameHide(frame)
-    
-    -- Update registry
-    local entry = Registry.byAddress[tostring(frame)]
-    if entry then
-        entry.manipulated = true
-        entry.manipulationType = "free"
+    HookFrameLevel(frame)
+    local strata, level = GetFreeIconStackPriority(frame, cdID)
+    local changed = false
+    if strata and frame:GetFrameStrata() ~= strata then
+        frame._cdmgSettingStrata = true
+        frame:SetFrameStrata(strata)
+        frame._cdmgSettingStrata = false
+        changed = true
     end
-    
-    -- Set recovery protection
-    frame._arcRecoveryProtection = GetTime() + 0.5
-    
-    -- Re-enhance if this is a reassignment (existingData means we're updating)
-    if existingData and ns.CDMEnhance and ns.CDMEnhance.EnhanceFrame then
-        ns.CDMEnhance.EnhanceFrame(frame, cdID, viewerType)
+    if level and frame:GetFrameLevel() ~= level then
+        frame._cdmgSettingLevel = true
+        frame:SetFrameLevel(level)
+        frame._cdmgSettingLevel = false
     end
-    
-    -- Setup drag if in edit mode
-    if ns.CDMGroups.dragModeEnabled and ns.CDMGroups.SetupFreeIconDrag then
-        ns.CDMGroups.SetupFreeIconDrag(cdID)
+    -- Guarded writes bypass the hooks (shared guard), so re-sync strata-pinned
+    -- children (glows, keybind text) here when the strata actually changed.
+    if changed then
+        frame._cdmgLastSeenStrata = frame:GetFrameStrata()
+        ResyncPinnedChildren(frame)
     end
-    
-    return true
 end
+ns.CDMGroups.ApplyFreeIconStrata = ApplyFreeIconStrata
+ns.CDMGroups.GetFreeIconStackPriority = GetFreeIconStackPriority
 
 -- Export helpers
 ns.CDMGroups.FindFrameInViewers = FindFrameInViewers
-ns.CDMGroups.SetupFreeIconFrame = SetupFreeIconFrame
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

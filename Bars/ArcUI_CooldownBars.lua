@@ -71,7 +71,14 @@ local function SafeToString(val)
   return "<" .. t .. ">"
 end
 
+-- OFF BY DEFAULT AND FREE WHEN OFF. This had no gate at all: 62 call sites,
+-- several on per-refresh paths, each doing a tostring + a date() + a table
+-- insert (plus an O(n) table.remove once the ring filled) for every player,
+-- forever, with nobody ever reading it. Turn it on with
+-- /run ArcUI_NS.CooldownBars.debug = true  when a report needs it.
+ns.CooldownBars.debug = false
 local function Log(msg)
+  if not ns.CooldownBars.debug then return end
   local safeMsg = SafeToString(msg)
   table.insert(ns.CooldownBars.debugLog, date("%H:%M:%S") .. " " .. safeMsg)
   if #ns.CooldownBars.debugLog > ns.CooldownBars.maxLogLines then
@@ -2631,6 +2638,29 @@ UpdateCooldownBar = function(barData)
 
   -- Visibility check - shadow Cooldown frame IsShown() is non-secret
   local isReady = IsCooldownReadyForBar(barData, spellID, isGCDTracker)
+
+  -- GCD-RACE DEBOUNCE: cooldown reads taken during GCD event bursts can report
+  -- a transient phantom state (isActive=true / isOnGCD=false for a spell that
+  -- is not on a real cooldown - the same race EllesmereUI documents). Under
+  -- high haste this flickered low-CD bars on/off while spamming. Never flip
+  -- the bar's ready state on a single read: require two consecutive agreeing
+  -- reads. Real transitions confirm within the same SPELL_UPDATE_COOLDOWN
+  -- burst (several events per cast), so the added latency is one update call;
+  -- phantom reads never repeat, so they never confirm. GCD-tracker bars are
+  -- exempt - they intentionally flip every GCD.
+  if not isGCDTracker then
+    if barData._shownReadyState == nil or isReady == barData._shownReadyState then
+      barData._shownReadyState = isReady
+      barData._pendingReadyState = nil
+    elseif barData._pendingReadyState == isReady then
+      barData._shownReadyState = isReady   -- second consecutive read agrees: accept
+      barData._pendingReadyState = nil
+    else
+      barData._pendingReadyState = isReady -- first sighting: hold previous state
+      isReady = barData._shownReadyState
+    end
+  end
+
   local shouldShow = true
   local isPreviewMode = false
   local hideWhenFadeAlpha = 1.0
@@ -2899,23 +2929,43 @@ UpdateCooldownBar = function(barData)
   end
 end
 
+-- A charge bar that can't render (no slots, or the spell has no charge info on
+-- this spec/talent build) must not linger on screen as an empty black frame —
+-- the early-outs below run BEFORE the hiddenBySpec/hideWhen visibility logic,
+-- so without this the scaffold stays in whatever shown state it was left in.
+-- Options panel open keeps it visible for preview/editing.
+local function HideUnrenderableChargeBar(barData)
+  if IsOptionsPanelOpen() then return end
+  barData.frame:Hide()
+  if barData.stackTextFrame then barData.stackTextFrame:Hide() end
+  if barData.timerTextFrame then barData.timerTextFrame:Hide() end
+end
+
 UpdateChargeBar = function(barData)
   if not barData or not barData.spellID then return end
-  if not barData.chargeSlots or #barData.chargeSlots == 0 then return end
-  
+  if not barData.chargeSlots or #barData.chargeSlots == 0 then
+    HideUnrenderableChargeBar(barData)
+    return
+  end
+
   -- Note: hiddenBySpec is checked later with preview mode logic
-  
+
   local spellID = barData.spellID
   local maxCharges = barData.maxCharges
-  
+
   -- Event-based: Only fetch chargeInfo when SPELL_UPDATE_CHARGES fires
   if barData.needsChargeRefresh then
     barData.cachedChargeInfo = C_Spell.GetSpellCharges(spellID)
     barData.needsChargeRefresh = false
   end
-  
+
   local chargeInfo = barData.cachedChargeInfo
-  if not chargeInfo then return end
+  if not chargeInfo then
+    -- Spell not known on this spec/talent build (e.g. Healing Stream Totem
+    -- untalented on Elemental): hide instead of leaving a black box.
+    HideUnrenderableChargeBar(barData)
+    return
+  end
   local secretCurrentCharges = chargeInfo.currentCharges
   
   -- Update charge detectors
@@ -4374,11 +4424,12 @@ function ns.CooldownBars.UpdateBarVisibilityForSpec()
         end
       end
       
-      -- Trigger update which handles preview mode logic
+      -- Trigger update which handles preview mode logic. Call unconditionally:
+      -- UpdateChargeBar itself hides bars that can't render (no slots / spell
+      -- unavailable on this spec), so the old slots-only guard would strand an
+      -- unavailable bar on screen as an empty black frame.
       barData.needsChargeRefresh = true
-      if barData.chargeSlots and #barData.chargeSlots > 0 then
-        UpdateChargeBar(barData)
-      end
+      UpdateChargeBar(barData)
     end
   end
   

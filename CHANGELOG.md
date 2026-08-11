@@ -1,3 +1,48 @@
+## 3.7.10
+
+### New Features
+
+- **Aura Icons — track any buff or debuff by spell ID** — Give it a spell ID and you get an icon for that aura, whether or not the Cooldown Manager knows about it. They keep working in raids and Mythic+, where addons are no longer allowed to read your auras: a dimmed ghost while the aura is missing, the real icon while it is on you.
+- **Spell-ID Aura Groups** — Aura icons get their own group type that flows and compacts like any other Arc group, with its own border, title, drag mode, visibility conditions and per-spec profiles.
+- **Aura alert sounds** — Play a sound the moment an aura lands, refreshes or drops. The game plays these itself, so they still fire in content where aura tracking is hidden from addons.
+- **Cooldown Manager aura alerts** — Sounds and spoken callouts for buffs and debuffs tracked by the Cooldown Manager, with separate triggers for gaining it, losing it, and stacks going up.
+- **Refresh-window glows** — Aura icons can glow during the pandemic window, so you know exactly when reapplying is worth it.
+- **Aura bars and textures by spell ID** — The Aura Catalog has a new green Add tile: enter a spell ID and it joins the catalog, so the same buttons build a duration bar, a stack bar or a texture for auras the Cooldown Manager never sees.
+- **Ping Keys and the Ping Feed** — Call your cooldowns out to your group with one key and no macros, and read everyone's pings in a window you can lay out yourself.
+- **New Add window for Arc icons** — One place to add items, trinkets, spell cooldowns, aura icons and custom timers, with a drag-and-drop zone.
+- **One Icon Catalog** — The Arc Icons and Custom Icons tabs are gone: every icon, its settings, load conditions, the timer editor, auto-tracking and bulk management now live together in the Icon Catalog.
+- **Guided tours** — The What's New window can now walk you to exactly where the new features live.
+- **Stack Priority for free icons** — Free-positioned icons get a Stack Strata and Stack Level control in Icon Positioning, so you decide exactly which icon draws on top when icons overlap. The whole icon moves together — glows, text and keybinds follow.
+
+### Improvements
+
+- **Aura Textures work again on 12.1** — Progress and Drain textures are driven by the game engine now, so the art still drains during combat and inside instances.
+- **Bulk management for Arc icons** — Clear all spells, all aura icons or everything at once, and force a refresh of Arc frames.
+- **Layout safety warning** — Loading a profile while layouts are linked can overwrite the shared layout on every character. The first time you do something risky, ArcUI explains it once.
+- **Smoother resource bars** — Energy and other fast-regenerating bars moved in visible chunks out of combat. They now update ten times a second while regenerating, and still cost nothing at rest.
+- **One line at login** — ArcUI now prints a single load message instead of a stream of module chatter.
+- **Fewer cooldown updates per keypress** — Icons only react to cooldown events that actually concern them, cutting the work done on every cast of any ability.
+
+### Bug Fixes
+
+- **Replacement spells show their real cooldown** — Spells that get swapped out by a talent or a proc (Stormstrike becoming Windstrike under Ascendance, Flame Shock becoming Voltaic Blaze) were read from the original spell, so those icons looked like they were never on cooldown. They now follow whichever form is live, and the icon art follows it too.
+- **High-haste cooldown flicker fixed** — Cooldown icons no longer blink ready for a split second mid-cooldown when you press other abilities, which got worse the more haste and cooldown reduction you had. Any cooldown read taken while a global cooldown is running now re-checks itself the moment that global ends, on both Arc icons and Cooldown Manager icons.
+- **Cooldown Manager icons gray out on cooldown again** — Managed icons could stay full-color while on cooldown even though Arc icons of the same spell grayed out correctly. ArcUI now drives the gray-out itself instead of relying on the game's, which silently stops working on styled icons.
+- **Totem icons no longer stick as active** — A totem icon could keep showing as active after the totem was gone, most visibly on Earthbind.
+- **Charge numbers no longer vanish on faded groups** — A group at partial opacity hid its charge text completely until you opened the CD Manager panel.
+- **On-use trinkets no longer go missing at login** — A trinket whose data had not loaded yet was treated as passive and hidden by the On-Use filter until you toggled auto-track off and on.
+- **Layouts no longer look like they reset on every relog** — A phantom spec entry created early at login made ArcUI read and write the wrong spec's layout depending on timing.
+- **Cooldown Reminder fires for buff-consumption cooldowns** — Spells whose cooldown only starts when the buff is spent never armed their ready reminder.
+- **Bars and textures survive a combat reload** — Reloading mid-fight or inside a dungeon could leave a duration bar's fill frozen and an aura texture's art static for the rest of the session, because they only set themselves up if the aura happened to be active at the right moment. They now set up as soon as they know which aura they track.
+- **Aura texture art shows its real colour** — Progress and Drain art could come up with the dimmed "missing" colour baked in instead of the active one.
+- **Duration text settings apply on 12.1 bars** — Decimals, abbreviation and colour-by-time were being ignored on engine-driven bars.
+- **Bar fill no longer bleeds over the border**, and tick marks come back on bars that hide when inactive.
+- **Unit frames stay put** — Addons anchored to Arc icon groups no longer drift when the group is rebuilt.
+- **Charge bars hide for spells your build doesn't know** — A charge bar for an untalented spell (like Healing Stream Totem on Elemental) stayed on screen as an empty black frame instead of hiding.
+- **The Utility group keeps its column count** — Column settings could creep back to their default after a reload or relog.
+- **Trinkets keep their slot** — A trinket icon could get bumped out of its saved position by another icon claiming the same cell during login or a spec change.
+- **Cooldown Reminder panel grays out while the module is off** — so it is clear those settings will not do anything until you enable it.
+
 ## 3.7.9
 
 ### New Features

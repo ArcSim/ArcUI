@@ -759,6 +759,14 @@ function Engine:_EvaluateRecord(rec, source)
         rec._readyPulseFired = false
     end
 
+    -- DEFERRED-CD GUARD: remember that this watch session has actually SEEN a
+    -- cooldown running (any non-READY state — ON_COOLDOWN/DEPLETED/RECHARGING).
+    -- Off-GCD spells like Nature's Swiftness don't start their cooldown until
+    -- the buff is CONSUMED, so right after the cast the shadows read READY.
+    if state ~= "READY" then
+        rec._sawUnavailable = true
+    end
+
     if nowAvailable and wasUnavailable and not rec._readyPulseFired then
         rec._readyPulseFired = true
         if rec.isItem then
@@ -776,8 +784,15 @@ function Engine:_EvaluateRecord(rec, source)
         end
     end
 
-    -- Stop watching when fully ready.
-    if state == "READY" then
+    -- Stop watching when fully ready — but ONLY once this session has seen a
+    -- cooldown actually run (_sawUnavailable). Stopping unconditionally ended
+    -- the watch for deferred-CD spells (Nature's Swiftness: cast → READY reads
+    -- because the CD starts at buff CONSUMPTION) before the real cooldown ever
+    -- began — its later start was then ignored (no watchToken) and the ready
+    -- reminder never fired (bug report). Keeping the watch alive until a
+    -- cooldown is observed costs one cheap shadow re-feed per relevant event
+    -- and self-resolves on the next recast.
+    if state == "READY" and rec._sawUnavailable then
         self:_StopWatching(rec, "ready")
     end
 end
@@ -903,10 +918,25 @@ function Engine:OnCooldownUpdate(event, arg1, arg2, arg3, arg4)
             isGCDEvent = (arg4 == Constants.SpellCooldownConsts.GLOBAL_RECOVERY_CATEGORY)
         end
         for _, rec in pairs(self.records) do
-            if not rec.isItem and rec.watchToken then
+            if not rec.isItem then
                 local isOurSpell = (arg1 == rec.spellID) or (arg2 == rec.spellID)
-                if isOurSpell or isBulkNil or isGCDEvent then
-                    self:_EvaluateRecord(rec, "SPELL_UPDATE_COOLDOWN")
+                if rec.watchToken then
+                    if isOurSpell or isBulkNil or isGCDEvent then
+                        self:_EvaluateRecord(rec, "SPELL_UPDATE_COOLDOWN")
+                    end
+                elseif isOurSpell then
+                    -- SPELL-SIDE ADOPT (mirror of OnItemCooldownUpdate): our
+                    -- spell's cooldown changed while we were NOT watching.
+                    -- Deferred-CD spells land here — Nature's Swiftness starts
+                    -- its CD when the buff is CONSUMED, not at cast, so the CD
+                    -- can begin with no cast event anywhere near it (or after
+                    -- a reload while the buff was up). Without adopting, this
+                    -- event was skipped and the eventual ready transition was
+                    -- never observed = reminder never fired. _AdoptInFlight-
+                    -- Cooldown is a no-op when the spell reads fully ready,
+                    -- and this branch only runs on OUR spell's precise events
+                    -- (never bulk/GCD), so idle records cost nothing.
+                    self:_AdoptInFlightCooldown(rec)
                 end
             end
         end
@@ -1007,6 +1037,7 @@ function Engine:_StartWatching(rec)
     rec.bindStartTime     = GetTime()
     rec._lastShadowState  = nil
     rec._readyPulseFired  = false
+    rec._sawUnavailable   = false  -- deferred-CD guard: set once a cooldown is observed
 
     -- Feed shadows immediately so the initial IsShown() state is correct.
     self:_FeedRecordShadows(rec)
@@ -1053,6 +1084,7 @@ function Engine:_AdoptInFlightCooldown(rec)
     rec.bindStartTime     = GetTime()
     rec._lastShadowState  = _ClassifyShadowState(mainShown, chargeShown)
     rec._readyPulseFired  = false
+    rec._sawUnavailable   = true  -- adopted MID-cooldown: it is unavailable by definition
 
     Log:Write("INFO", rec.spellID, "Adopted in-flight cooldown -> watching ("
         .. rec._lastShadowState .. ")")

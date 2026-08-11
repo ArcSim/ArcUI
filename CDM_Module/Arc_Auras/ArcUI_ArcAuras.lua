@@ -70,6 +70,7 @@ local ID_PREFIX = {
     SPELL = "arc_spell_",
     TIMER = "arc_timer_",
     TOTEM = "arc_totem_",
+    AURA = "arc_aura_",     -- 12.1 AuraContainer-driven buff/debuff icons
 }
 
 -- Frame Strata/Level Constants - Standardized to match CDM icons
@@ -298,7 +299,6 @@ GetDB = function()
                 end
                 
                 db.migrationDone = true
-                print("|cff00ccffArcUI|r: Migrated Arc Auras to character-specific storage")
             end
             
             -- ALWAYS wipe profile data regardless of whether we copied.
@@ -307,7 +307,6 @@ GetDB = function()
             wipe(profileData.trackedItems)
             if profileData.positions then wipe(profileData.positions) end
             profileData.enabled = false
-            print("|cff00ccffArcUI|r: Cleared profile Arc Auras data (now per-character)")
         end
     end
     
@@ -374,6 +373,9 @@ function ArcAuras.ParseArcID(arcID)
         -- Totem IDs are "arc_totem_<slot>" — the trailing number is the totem slot.
         local slot = tonumber(arcID:sub(#ID_PREFIX.TOTEM + 1))
         return "totem", slot
+    elseif arcID:find("^" .. ID_PREFIX.AURA) then
+        local spellID = tonumber(arcID:sub(#ID_PREFIX.AURA + 1))
+        return "aura", spellID
     end
 
     return nil
@@ -433,6 +435,18 @@ local function IsItemPassive(itemID)
     -- Secret-safe: a secret value is truthy even if "empty"
     -- For passive items, GetItemSpell returns nil (non-secret)
     if spellName then return false end
+    -- GetItemSpell ALSO returns nil for items whose data isn't CACHED yet
+    -- (login / loading screens / spec swaps): an equipped on-use trinket was
+    -- misread as passive and hidden by the "Only On-Use Trinkets" filter until
+    -- the user toggled auto-track off/on (bug report). If the data simply isn't
+    -- loaded, assume ON-USE (show it), request the data, and flag the
+    -- GET_ITEM_INFO_RECEIVED handler to re-run the visibility pass once it
+    -- arrives — a genuinely passive trinket gets hidden then.
+    if C_Item and C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(itemID) then
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        ArcAuras._uncachedItemSeen = true
+        return false
+    end
     return true
 end
 
@@ -1166,14 +1180,19 @@ function ArcAuras.CreateFrame(arcID, config)
             end
         end
 
+        -- Aura icons (12.1) register as viewerType "aura": that is the
+        -- classification every catalog/panel path keys on (member.viewerType,
+        -- enhancedFrames.viewerType, _arcViewerType) — registering them as
+        -- "cooldown" put them on the wrong side of the Icon Catalog.
+        local extViewerType = (config.type == "aura") and "aura" or "cooldown"
         if ns.CDMGroups and ns.CDMGroups.RegisterExternalFrame then
-            ns.CDMGroups.RegisterExternalFrame(arcID, frame, "cooldown", "Essential")
+            ns.CDMGroups.RegisterExternalFrame(arcID, frame, extViewerType, "Essential")
         else
             -- CDMGroups Integration not loaded yet, defer
             C_Timer.After(1.0, function()
                 if ArcAuras.frames[arcID] then
                     if ns.CDMGroups and ns.CDMGroups.RegisterExternalFrame then
-                        ns.CDMGroups.RegisterExternalFrame(arcID, frame, "cooldown", "Essential")
+                        ns.CDMGroups.RegisterExternalFrame(arcID, frame, extViewerType, "Essential")
                     end
                 end
             end)
@@ -1400,6 +1419,20 @@ function ArcAuras.UpdateFrameIcon(frame, config)
         local timerConfig = db and db.customTimers and db.customTimers[frame._arcAuraID]
         if timerConfig and timerConfig.icon then
             icon = timerConfig.icon
+        else
+            local spellInfo = C_Spell.GetSpellInfo(config.spellID)
+            if spellInfo then
+                icon = spellInfo.iconID or spellInfo.originalIconID
+            end
+        end
+        frame._currentItemName = config.name or (C_Spell.GetSpellInfo(config.spellID) or {}).name
+        frame._currentItemID = nil
+    elseif config.type == "aura" and config.spellID then
+        -- Aura icon (12.1): user override from auraIcons def, else spell icon.
+        local db = GetDB()
+        local auraDef = db and db.auraIcons and db.auraIcons[frame._arcAuraID]
+        if auraDef and auraDef.iconOverride then
+            icon = auraDef.iconOverride
         else
             local spellInfo = C_Spell.GetSpellInfo(config.spellID)
             if spellInfo then
@@ -1941,6 +1974,15 @@ end
 local function UpdateArcItemFrame(frame, arcID)
     if not (frame and frame:IsShown()) then return end
     if frame._arcIsSpellCooldown then return end
+    -- Aura icons (12.1) have their own state applier: readyState belongs to
+    -- the ENGINE BUTTON, cooldownState to the ghost holder — the item-frame
+    -- alpha/desat semantics here would write the wrong bucket to the holder.
+    if frame._arcIsAuraIcon then
+        if ns.AuraIcons and ns.AuraIcons.ApplySettings then
+            ns.AuraIcons.ApplySettings(arcID)
+        end
+        return
+    end
     do
             local config = frame._arcConfig
             if config then
@@ -4522,6 +4564,15 @@ function ArcAuras.ApplyInitialStateVisuals(arcID, frame)
     end
     if not frame then return end
     
+    -- Aura icons (12.1): route to their own applier (button = active bucket,
+    -- holder = missing bucket)
+    if frame._arcIsAuraIcon then
+        if ns.AuraIcons and ns.AuraIcons.ApplySettings then
+            ns.AuraIcons.ApplySettings(arcID)
+        end
+        return
+    end
+
     -- SKIP spell cooldown frames - their state is managed by ArcAurasCooldown engine
     -- via DesatCooldown hooks and FeedCooldown. CDMEnhance settings are applied there.
     if frame._arcIsSpellCooldown then
@@ -4658,11 +4709,13 @@ end
 -- Refresh settings for a single Arc Aura frame
 -- Called by CDMEnhance when settings change (via options panel)
 function ArcAuras.RefreshFrameSettings(arcID)
+    -- Invalidate the settings cache even when no frame currently exists
+    -- (granted temporaries edited from the options panel while inactive):
+    -- the frame recreated later must read fresh settings, not a stale entry.
+    InvalidateSettingsCache(arcID)
+
     local frame = ArcAuras.frames[arcID]
     if not frame then return end
-    
-    -- Invalidate caches
-    InvalidateSettingsCache(arcID)
     frame._cachedStateVisuals = nil  -- Force refresh of state visuals
     frame._arcStackStyleApplied = false  -- Re-apply stack text style
     
@@ -5020,6 +5073,18 @@ local _arcAurasOnEvent = function(self, event, arg1)
                     -- catch up to the now-loaded item data.
                     ArcAuras.UpdateArcItemFrame(frame, arcID)
                 end
+            end
+            -- Re-run the VISIBILITY pass if a passive-check ran on an uncached
+            -- item earlier (IsItemPassive sets the flag): a trinket hidden — or
+            -- never created — by that misread can only come back via a fresh
+            -- pass. Debounced; this event bursts at login.
+            if ArcAuras._uncachedItemSeen and not ArcAuras._itemVisRefreshPending then
+                ArcAuras._itemVisRefreshPending = true
+                C_Timer.After(0.5, function()
+                    ArcAuras._itemVisRefreshPending = false
+                    ArcAuras._uncachedItemSeen = false
+                    if ArcAuras.RefreshVisibility then ArcAuras.RefreshVisibility() end
+                end)
             end
         end
     elseif event == "BAG_UPDATE_DELAYED" then
@@ -5434,13 +5499,31 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
         -- — it always uses a stable placeholder + "Totem Slot N" label.
         name = "Totem Slot " .. id .. " |cff888888(Totem)|r"
         icon = 310731  -- totem glyph placeholder (matches ArcAurasTotems.PLACEHOLDER_ICON)
+    elseif arcType == "aura" and id then
+        -- 12.1 aura icon — name/icon from the auraIcons def (override included)
+        spellID = id
+        local db = GetDB()
+        local auraDef = db and db.auraIcons and db.auraIcons[cdID]
+        if auraDef then
+            name = auraDef.name
+            icon = auraDef.iconOverride or auraDef.icon
+        else
+            local info = C_Spell.GetSpellInfo(spellID)
+            if info then
+                name = info.name
+                icon = info.iconID or info.originalIconID
+            end
+        end
+        name = (name or ("Aura " .. spellID)) .. " |cff888888(Aura)|r"
     end
 
     -- Fallback to frame data if available
     if frame then
         if frame._currentItemName and frame._currentItemName ~= "" then
-            -- Don't clobber the timer/totem suffix
-            if arcType ~= "timer" and arcType ~= "totem" then name = frame._currentItemName end
+            -- Don't clobber the timer/totem/aura suffix
+            if arcType ~= "timer" and arcType ~= "totem" and arcType ~= "aura" then
+                name = frame._currentItemName
+            end
         end
         -- Skip the live frame icon for totems (secret) and guard every type
         -- against a secret texture value — comparing a secret number throws.
@@ -5460,7 +5543,8 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
         name = name or "Unknown",
         icon = icon or 134400,
         hasCustomPos = true,
-        viewerName = "EssentialCooldownViewer",
+        -- aura icons categorize as AURAS in the Icon Catalog (aura option set)
+        viewerName = arcType == "aura" and "BuffIconCooldownViewer" or "EssentialCooldownViewer",
         isArcAura = true,
         arcType = arcType,
         isCustomTimer = arcType == "timer" or nil,

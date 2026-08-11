@@ -595,25 +595,10 @@ local function WriteAuraBarToSlot(db, slot, importedBar)
     if target then
         target.cooldownID = savedCooldownID
         target.spellID = savedSpellID
-        
+
         -- Write the saved alts array
         target.alternateCooldownIDs = savedAlts
     end
-    
-    -- Debug output for verification
-    local cdID = db.bars[slot].tracking.cooldownID or 0
-    local altCount = db.bars[slot].tracking.alternateCooldownIDs and #db.bars[slot].tracking.alternateCooldownIDs or 0
-    local name = db.bars[slot].tracking.buffName or "?"
-    
-    local altList = ""
-    if altCount > 0 then
-        local ids = {}
-        for i = 1, altCount do
-            ids[i] = tostring(db.bars[slot].tracking.alternateCooldownIDs[i])
-        end
-        altList = " alts=[" .. table.concat(ids, ",") .. "]"
-    end
-    print(string.format("|cff00ccffArc UI Import|r: Slot %d '%s' → cdID=%d%s", slot, name, cdID, altList))
 end
 
 local function ImportBars(data, mode, castbarOpts)

@@ -428,7 +428,9 @@ function Totems.RebuildAll()
     end
 
     local n = NumSlots()
-    local group = EnsureTotemGroup()
+    -- sd.noGroup: user chose free placement — never create/join the Totems
+    -- group (slots spawn as free icons at screen center instead)
+    local group = (not sd.noGroup) and EnsureTotemGroup() or nil
     local cols = (group and group.gridCols) or 4
 
     -- Destroy frames for slots that no longer exist or were toggled off.
@@ -483,10 +485,22 @@ function Totems.SetSlotEnabled(slot, enabled)
         if enabled == false then
             Totems.DestroySlotFrame(slot)
         elseif not Totems.frames[MakeID(slot)] then
-            local group = EnsureTotemGroup()
+            local group = (not sd.noGroup) and EnsureTotemGroup() or nil
             CreateAndPlaceSlot(slot, group, (group and group.gridCols) or 4)
         end
     end
+end
+
+-- Group placement choice (popup "Add Totems" flow): true = the classic
+-- centered "Totems" group (default), false = free-placed slot icons.
+function Totems.SetUseGroup(useGroup)
+    local sd = GetSpecData(true); if not sd then return end
+    sd.noGroup = (not useGroup) and true or nil
+end
+
+function Totems.GetUseGroup()
+    local sd = GetSpecData(false)
+    return not (sd and sd.noGroup)
 end
 
 -- Public: number of totem slots the current class has (0 = feature N/A).

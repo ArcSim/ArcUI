@@ -258,6 +258,60 @@ local function OnEvent(self, event, ...)
     end
 end
 
+-- ===================================================================
+-- ENGINE STATUS DUMP — the "why is nothing happening" panel.
+-- Every gate + every record's live state, written into the log window.
+-- Runs automatically at the start of every trace and from the Status
+-- button, so "is the module on / is the record armed / what do the
+-- shadows say" is always part of the paste. No chat scripts.
+-- ===================================================================
+local function DumpEngineStatus()
+    local CR  = ns and ns.CooldownReminder
+    local E   = CR and CR.Engine
+    local db  = ns and ns.API and ns.API.GetDB and ns.API.GetDB()
+    db = db and db.cooldownReminder
+
+    Log("STATUS", "=== ENGINE STATUS ===")
+    if not E then Log("STATUS", "Engine MISSING (ns.CooldownReminder.Engine is nil)") return end
+    if not db then Log("STATUS", "DB MISSING (charDB.cooldownReminder is nil)") return end
+
+    local _, instanceType = GetInstanceInfo()
+    Log("STATUS", string.format(
+        "GATES: db.enabled=%s  init=%s  engine._enabled=%s  pulsesEnabled=%s  zone=%s",
+        tostring(db.enabled), tostring(E._initTime ~= nil),
+        tostring(E._enabled), tostring(E._pulsesEnabled), tostring(instanceType)))
+    Log("STATUS", string.format(
+        "ZONE CFG: world=%s  dungeons=%s  raids=%s  arena=%s",
+        tostring(db.enabledInWorld), tostring(db.enabledInDungeons),
+        tostring(db.enabledInRaids), tostring(db.enabledInArena)))
+
+    local n = 0
+    if E.records then
+        for id, rec in pairs(E.records) do
+            n = n + 1
+            local cdShown = rec.cdWidget and rec.cdWidget:IsShown() or false
+            local chShown = rec.chargeWidget and rec.chargeWidget:IsShown() or false
+            local trig = "none"
+            local ok, arr = pcall(function()
+                return E._GetTriggerArray and E:_GetTriggerArray(rec) or nil
+            end)
+            if ok and arr then
+                local t = {}
+                for i = 1, #arr do t[#t + 1] = tostring(arr[i].type) end
+                trig = table.concat(t, ",")
+            end
+            Log("STATUS", string.format(
+                "REC %s%s '%s'  %s  last=%s sawCD=%s  cdShown=%s chargeShown=%s  triggers=%s",
+                rec.isItem and "item:" or "", tostring(id), tostring(rec.spellName),
+                rec.watchToken and "WATCHING" or "idle",
+                tostring(rec._lastShadowState), tostring(rec._sawUnavailable),
+                tostring(cdShown), tostring(chShown), trig))
+        end
+    end
+    Log("STATUS", "=== " .. n .. " record(s) ===")
+end
+CRD.DumpEngineStatus = DumpEngineStatus
+
 local function StartTrackingSpell(spellID)
     trackedMode     = "spell"
     trackedSpellID  = spellID
@@ -266,6 +320,7 @@ local function StartTrackingSpell(spellID)
     trackedUseSpell = nil
     startTime = GetTime()
     wipe(logLines)
+    DumpEngineStatus()
 
     local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID) or tostring(spellID)
     local ch   = C_Spell.GetSpellCharges and (function()
@@ -383,6 +438,7 @@ local function StartTrackingItem(itemID)
     trackedUseSpell = tonumber(useSpell) or nil
     startTime = GetTime()
     wipe(logLines)
+    DumpEngineStatus()
 
     local itemName = GetItemInfo(itemID) or ("item:" .. tostring(itemID))
     local slotTag = trackedItemSlot
@@ -616,6 +672,15 @@ local function EnsureFrame()
     clearBtn:SetText("Clear")
     clearBtn:SetScript("OnClick", function()
         wipe(logLines)
+        CRD.Refresh()
+    end)
+
+    local statusBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    statusBtn:SetSize(70, 22)
+    statusBtn:SetPoint("RIGHT", clearBtn, "LEFT", -4, 0)
+    statusBtn:SetText("Status")
+    statusBtn:SetScript("OnClick", function()
+        DumpEngineStatus()
         CRD.Refresh()
     end)
 

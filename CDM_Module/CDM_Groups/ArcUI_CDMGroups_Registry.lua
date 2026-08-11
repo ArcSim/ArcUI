@@ -10,8 +10,6 @@ local addonName, ns = ...
 -- Ensure ns.CDMGroups exists (this file loads before CDMGroups.lua)
 ns.CDMGroups = ns.CDMGroups or {}
 
-print("|cff00FF00[ArcUI]|r CDMGroups_Registry.lua loading...")
-
 -- Dependencies
 local Shared = ns.CDMShared
 if not Shared then

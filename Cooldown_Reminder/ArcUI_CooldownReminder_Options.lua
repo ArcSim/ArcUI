@@ -1142,6 +1142,13 @@ function ns.GetCooldownReminderOptionsTable()
 
     local args = {}
 
+    -- Master gate: while the module is off the engine drops every event,
+    -- so gray out the entire panel except the enable toggle itself.
+    local function ModuleDisabled()
+        local d = GetDB()
+        return not (d and d.enabled)
+    end
+
     -- ── TOP: Enable + master controls ──────────────────────────────
     args.enabledToggle = {
         type = "toggle", name = "Enable Cooldown Reminder",
@@ -1153,6 +1160,11 @@ function ns.GetCooldownReminderOptionsTable()
             d.enabled = v
             if CR.ApplySettings then CR.ApplySettings() end
         end,
+    }
+    args.moduleOffNote = {
+        type = "description", order = 1.5, fontSize = "medium",
+        name = "|cffff5555Cooldown Reminder is disabled. No reminders will fire and the settings below are inactive until you enable it above.|r",
+        hidden = function() return not ModuleDisabled() end,
     }
     args.testAlert = {
         type = "execute", name = "Test Alert",
@@ -1359,7 +1371,7 @@ function ns.GetCooldownReminderOptionsTable()
     -- ── APPEARANCE & AUDIO TAB (nested under tracked group) ---------
     -- Returned as sibling tab via childGroups="tab" on parent
 
-    return {
+    local root = {
         type        = "group",
         name        = "Cooldown Reminder",
         childGroups = "tab",
@@ -1947,4 +1959,29 @@ function ns.GetCooldownReminderOptionsTable()
             },
         },
     }
+
+    -- Gray out every control (both tabs, all nesting levels) while the
+    -- module is off. Controls with their own disabled logic keep it,
+    -- composed with the master gate. The enable toggle and its warning
+    -- note stay live so the module can be turned back on.
+    local function ApplyModuleGate(argsTbl)
+        for key, opt in pairs(argsTbl) do
+            if type(opt) == "table" and key ~= "enabledToggle" and key ~= "moduleOffNote" then
+                if opt.type == "group" then
+                    if opt.args then ApplyModuleGate(opt.args) end
+                elseif opt.type ~= "description" and opt.type ~= "header" then
+                    local own = opt.disabled
+                    if type(own) == "function" then
+                        opt.disabled = function(info) return ModuleDisabled() or own(info) end
+                    elseif own ~= true then
+                        opt.disabled = ModuleDisabled
+                    end
+                end
+            end
+        end
+    end
+    ApplyModuleGate(root.args.tracked.args)
+    ApplyModuleGate(root.args.appearance.args)
+
+    return root
 end

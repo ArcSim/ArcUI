@@ -685,27 +685,18 @@ local function RunMigrations(db)
     return -- Already up to date
   end
   
-  print("|cff00ff00[ArcUI CDM]|r Running settings migration v" .. currentVersion .. " → v" .. SETTINGS_VERSION)
-  
   -- Migrate all per-icon settings
   if db.iconSettings then
-    local migratedCount = 0
     for cdID, cfg in pairs(db.iconSettings) do
       MigrateSettingsTable(cfg)
-      migratedCount = migratedCount + 1
-    end
-    if migratedCount > 0 then
-      print("|cff00ff00[ArcUI CDM]|r Migrated " .. migratedCount .. " icon settings")
     end
   end
-  
+
   -- Migrate global aura settings
   if db.globalAuraSettings then
     MigrateSettingsTable(db.globalAuraSettings)
     -- Migration v3: Clear ignoreAuraOverride from auras (only valid for cooldowns)
-    if ClearAuraIgnoreOverride(db.globalAuraSettings) then
-      print("|cff00ff00[ArcUI CDM]|r Cleared ignoreAuraOverride from global aura defaults")
-    end
+    ClearAuraIgnoreOverride(db.globalAuraSettings)
   end
   
   -- Migrate global cooldown settings
@@ -717,13 +708,11 @@ local function RunMigrations(db)
   
   -- Mark migrations complete
   db.settingsVersion = SETTINGS_VERSION
-  print("|cff00ff00[ArcUI CDM]|r Settings migration complete")
-  
+
   -- Schedule a scan after migration to refresh all icons with new settings
   -- Use C_Timer.After to ensure CDM system is ready
   C_Timer.After(1.0, function()
     if not InCombatLockdown() then
-      print("|cff00ff00[ArcUI CDM]|r Refreshing icons after migration...")
       if ns.API and ns.API.ScanAllCDMIcons then
         ns.API.ScanAllCDMIcons()
       end
@@ -832,8 +821,6 @@ local function GetDB()
           enabled = false,  -- Disable range indicator overlay
         },
       }
-      
-      print("|cff00ff00[ArcUI CDM]|r Applied recommended defaults for new installation")
     end
     
     -- Mark as processed so we don't overwrite user changes on subsequent loads
@@ -866,7 +853,6 @@ local function GetDB()
               profileIconSettings[cdID] = CopyTable(settings)
             end
           end
-          print("|cff00ff00[ArcUI CDM]|r Migrated per-icon settings to profile storage")
           didMigrate = true
         end
       end
@@ -885,9 +871,6 @@ local function GetDB()
                 end
               end
             end
-          end
-          if didMigrate then
-            print("|cff00ff00[ArcUI CDM]|r Migrated group settings to character storage")
           end
           didMigrate = true
         end
@@ -2481,10 +2464,16 @@ ns.CDMEnhance.ApplyBorderDesaturationFromDuration = ApplyBorderDesaturationFromD
 -- ═══════════════════════════════════════════════════════════════════
 local function ApplyForceHideText(frame, hide)
   if not frame then return end
-  local groupHidden = frame._arcGroupHidden
-  if not groupHidden then
-    local parent = frame:GetParent()
-    groupHidden = parent and parent._arcGroupHidden or false
+  -- Group-hidden veto: only a TRULY hidden group (container alpha ~0) suppresses
+  -- the text float. _arcGroupHidden is set for ANY container alpha < 1, but at a
+  -- partial fade (group opacity / fade conditions) the force-hidden FRAME still
+  -- renders at alpha 0 — un-floated text would vanish entirely instead of fading
+  -- with the group, which is the "charge text gone until I open the CDM panel" bug.
+  local groupHidden = false
+  local parent = frame:GetParent()
+  if frame._arcGroupHidden or (parent and parent._arcGroupHidden) then
+    local a = (parent and parent.GetAlpha and parent:GetAlpha()) or 0
+    groupHidden = a <= 0.01
   end
   local on = (hide == true) and not groupHidden
   -- Toggle IgnoreParentAlpha ONLY — do NOT force SetAlpha. The widget's own alpha
@@ -8726,6 +8715,18 @@ function ns.CDMEnhance.GetAuraIcons()
   -- CRITICAL: Verify frame.cooldownID matches cdID to avoid stale references
   for cdID, frameData in pairs(enhancedFrames) do
     if frameData.viewerType == "aura" and not result[cdID] then
+      -- Arc AURA icons (arc_aura_*): name/icon come from the auraIcons def
+      -- via CreateCatalogEntry — the generic path below does a spell-name
+      -- lookup on frame.spellID, which is nil on aura HOLDERS, and named
+      -- every arc aura entry "Unknown" (this sweep runs before the
+      -- groups/freeIcons sweeps, which then skipped the already-set ID).
+      if Shared.IsArcAuraID and Shared.IsArcAuraID(cdID) then
+        if ns.ArcAuras and ns.ArcAuras.ParseArcID and ns.ArcAuras.ParseArcID(cdID) == "aura"
+           and ns.ArcAuras.CreateCatalogEntry then
+          local arcEntry = ns.ArcAuras.CreateCatalogEntry(cdID, frameData.frame)
+          if arcEntry then result[cdID] = arcEntry end
+        end
+      else
       -- Skip BuffBarCooldownViewer
       local viewerName = frameData.viewerName or ""
       if viewerName ~= "BuffBarCooldownViewer" then
@@ -8762,15 +8763,24 @@ function ns.CDMEnhance.GetAuraIcons()
           }
         end
       end
+      end   -- closes the arc-aura else branch
     end
   end
-  
+
   -- ALSO check CDMGroups containers - icons parented there won't be in CDM viewers
   if ns.CDMGroups and ns.CDMGroups.groups then
     for groupName, group in pairs(ns.CDMGroups.groups) do
       if group.members then
         for cdID, member in pairs(group.members) do
           if not result[cdID] and member.frame and member.frame.cooldownID == cdID then
+            -- Arc AURA icons (arc_aura_*) belong on the AURAS side
+            if Shared.IsArcAuraID and Shared.IsArcAuraID(cdID) then
+              if ns.ArcAuras and ns.ArcAuras.ParseArcID and ns.ArcAuras.ParseArcID(cdID) == "aura"
+                 and ns.ArcAuras.CreateCatalogEntry then
+                local arcEntry = ns.ArcAuras.CreateCatalogEntry(cdID, member.frame)
+                if arcEntry then result[cdID] = arcEntry end
+              end
+            else
             -- Only include aura icons (BuffIcon), not cooldowns
             local viewerType = member.viewerType
             local viewerName = member.originalViewerName
@@ -8827,16 +8837,25 @@ function ns.CDMEnhance.GetAuraIcons()
                 }
               end
             end
+            end   -- closes the arc-aura else branch
           end
         end
       end
     end
   end
-  
+
   -- ALSO check CDMGroups.freeIcons - these are managed by CDMGroups but free-positioned
   if ns.CDMGroups and ns.CDMGroups.freeIcons then
     for cdID, data in pairs(ns.CDMGroups.freeIcons) do
       if not result[cdID] and data.frame and data.frame.cooldownID == cdID then
+        -- Arc AURA icons (arc_aura_*) belong on the AURAS side
+        if Shared.IsArcAuraID and Shared.IsArcAuraID(cdID) then
+          if ns.ArcAuras and ns.ArcAuras.ParseArcID and ns.ArcAuras.ParseArcID(cdID) == "aura"
+             and ns.ArcAuras.CreateCatalogEntry then
+            local arcEntry = ns.ArcAuras.CreateCatalogEntry(cdID, data.frame)
+            if arcEntry then result[cdID] = arcEntry end
+          end
+        else
         local viewerType = data.viewerType
         local viewerName = data.originalViewerName
         
@@ -8890,10 +8909,11 @@ function ns.CDMEnhance.GetAuraIcons()
             }
           end
         end
+        end   -- closes the arc-aura else branch
       end
     end
   end
-  
+
   return result
 end
 
@@ -8951,11 +8971,15 @@ function ns.CDMEnhance.GetCooldownIcons()
       if group.members then
         for cdID, member in pairs(group.members) do
           if not result[cdID] and member.frame and member.frame.cooldownID == cdID then
-            -- Handle Arc Auras (string IDs) - item-based cooldowns
+            -- Handle Arc Auras (string IDs) - item-based cooldowns.
+            -- Arc AURA icons (arc_aura_*) categorize as AURAS -> GetAuraIcons.
             if Shared.IsArcAuraID and Shared.IsArcAuraID(cdID) then
-              local arcEntry = CreateArcAuraEntry(cdID, member.frame)
-              if arcEntry then
-                result[cdID] = arcEntry
+              local arcKind = ns.ArcAuras and ns.ArcAuras.ParseArcID and ns.ArcAuras.ParseArcID(cdID)
+              if arcKind ~= "aura" then
+                local arcEntry = CreateArcAuraEntry(cdID, member.frame)
+                if arcEntry then
+                  result[cdID] = arcEntry
+                end
               end
             else
               -- Only include cooldown icons (Essential/Utility), not auras
@@ -9012,11 +9036,15 @@ function ns.CDMEnhance.GetCooldownIcons()
   if ns.CDMGroups and ns.CDMGroups.freeIcons then
     for cdID, data in pairs(ns.CDMGroups.freeIcons) do
       if not result[cdID] and data.frame and data.frame.cooldownID == cdID then
-        -- Handle Arc Auras (string IDs) - item-based cooldowns
+        -- Handle Arc Auras (string IDs) - item-based cooldowns.
+        -- Arc AURA icons (arc_aura_*) categorize as AURAS -> GetAuraIcons.
         if Shared.IsArcAuraID and Shared.IsArcAuraID(cdID) then
-          local arcEntry = CreateArcAuraEntry(cdID, data.frame)
-          if arcEntry then
-            result[cdID] = arcEntry
+          local arcKind = ns.ArcAuras and ns.ArcAuras.ParseArcID and ns.ArcAuras.ParseArcID(cdID)
+          if arcKind ~= "aura" then
+            local arcEntry = CreateArcAuraEntry(cdID, data.frame)
+            if arcEntry then
+              result[cdID] = arcEntry
+            end
           end
         else
           local viewerType = data.viewerType
@@ -9049,7 +9077,7 @@ function ns.CDMEnhance.GetCooldownIcons()
             local name = displaySpellID and C_Spell.GetSpellName(displaySpellID) or "Unknown"
             -- Use helper to get icon texture (reads from frame first, isAura=false for cooldowns)
             local icon = GetIconTextureFromFrame(frame, false, spellID, displaySpellID, displaySpellID)
-            
+
             result[cdID] = {
               cooldownID = cdID,
               spellID = spellID,
@@ -9064,7 +9092,27 @@ function ns.CDMEnhance.GetCooldownIcons()
       end
     end
   end
-  
+
+  -- ALSO list configured Arc spell icons whose frame doesn't currently exist.
+  -- RefreshSpecVisibility DESTROYS the frame when the spell isn't known or
+  -- granted right now (temporary CD-granted spells like Zenith Stomp / Void
+  -- Volley out of combat), which made their per-icon settings unreachable
+  -- unless "Show in all specs" was on. Settings are keyed by arcID and apply
+  -- when the frame comes back, so the entry stays editable while it's away.
+  -- CreateCatalogEntry derives name/icon from the config; frame is optional.
+  if ns.ArcAuras and ns.ArcAuras.CreateCatalogEntry
+     and ns.ArcAurasCooldown and ns.ArcAurasCooldown.GetTrackedSpells then
+    for arcID in pairs(ns.ArcAurasCooldown.GetTrackedSpells()) do
+      if not result[arcID] then
+        local entry = ns.ArcAuras.CreateCatalogEntry(arcID, nil)
+        if entry then
+          entry.name = entry.name .. " |cff888888(inactive)|r"
+          result[arcID] = entry
+        end
+      end
+    end
+  end
+
   return result
 end
 
@@ -9336,6 +9384,36 @@ function ns.CDMEnhance.SetIconPosition(cdID, x, y)
         freeData.frame:SetPoint("CENTER", UIParent, "CENTER", x or 0, y or 0)
       end
     end
+  end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FREE ICON STACK PRIORITY (strata + frame level for stacked free icons)
+-- Stored in iconSettings[cdID].freePosition (sparse: absent = default MEDIUM,
+-- level unmanaged). Positional data deliberately NOT kept in savedPositions —
+-- the type="free" entries are rewritten wholesale by many writers and would
+-- drop the fields on every drag.
+-- ═══════════════════════════════════════════════════════════════════════════
+function ns.CDMEnhance.GetIconStrata(cdID)
+  local cfg = ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(cdID)
+  local fp = cfg and cfg.freePosition
+  return (fp and fp.strata) or "MEDIUM", fp and fp.frameLevel or nil
+end
+
+function ns.CDMEnhance.SetIconStrata(cdID, strata, level)
+  local s = ns.CDMEnhance.GetOrCreateIconSettings(cdID)
+  if not s then return end
+  if strata == "MEDIUM" then strata = nil end  -- default: store sparse
+  level = tonumber(level)
+  if strata or level then
+    s.freePosition = { strata = strata, frameLevel = level }
+  else
+    s.freePosition = nil
+  end
+  ns.CDMEnhance.InvalidateCache()
+  local freeData = ns.CDMGroups and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]
+  if freeData and freeData.frame and ns.CDMGroups.ApplyFreeIconStrata then
+    ns.CDMGroups.ApplyFreeIconStrata(cdID, freeData.frame)
   end
 end
 
@@ -10295,6 +10373,16 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
       RefreshCachedEnabledState()
       -- Invalidate cache to ensure fresh settings on load
       InvalidateEffectiveSettingsCache()
+      -- Re-apply free-icon Stack Priority now that settings are guaranteed
+      -- fresh: frames set up earlier in the load may have resolved against a
+      -- not-yet-ready spec store and stayed on the default MEDIUM strata.
+      if ns.CDMGroups and ns.CDMGroups.freeIcons and ns.CDMGroups.ApplyFreeIconStrata then
+        for freeCdID, freeData in pairs(ns.CDMGroups.freeIcons) do
+          if freeData.frame then
+            ns.CDMGroups.ApplyFreeIconStrata(freeCdID, freeData.frame)
+          end
+        end
+      end
       if not InCombatLockdown() then
         -- Force CDM to create all frames before we scan
         ns.CDMEnhance.ForceCDMFrameCreation()

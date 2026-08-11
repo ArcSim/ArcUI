@@ -37,6 +37,9 @@ local collapsedSections = {
   keybinds = true,
   iconAppearance = true,
   position = true,
+  arcLoadConditions = true,
+  arcIconSettings = true,
+  arcTimerSettings = true,
   activeState = true,      -- For auras
   inactiveState = true,    -- For auras
   readyState = true,       -- For cooldowns
@@ -94,6 +97,7 @@ local SECTION_FIELDS = {
     "cooldownStateVisuals.readyState.glowSpeed",
     "cooldownStateVisuals.readyState.glowLines",
     "cooldownStateVisuals.readyState.glowThickness",
+    "cooldownStateVisuals.readyState.glowLength",
     "cooldownStateVisuals.readyState.glowParticles",
     "cooldownStateVisuals.readyState.glowXOffset",
     "cooldownStateVisuals.readyState.glowYOffset",
@@ -120,11 +124,12 @@ local SECTION_FIELDS = {
     "auraActiveState.glowSpeed",
     "auraActiveState.glowLines",
     "auraActiveState.glowThickness",
+    "auraActiveState.glowLength",
     "auraActiveState.glowParticles",
     "auraActiveState.glowFrameStrata",
     "auraActiveState.glowFrameLevel",
   },
-  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "auraActiveState.desaturateWhenInactive", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
+  auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowLength", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "auraActiveState.desaturateWhenInactive", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
   rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
   procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled", "procGlow.xOffset", "procGlow.yOffset", "procGlow.strata", "procGlow.frameLevel" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
@@ -134,6 +139,8 @@ local SECTION_FIELDS = {
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
   alertEvents = { "alertEvents" },
+  -- arc aura icons: engine-native alert sounds (purple "customized" dot)
+  auraAlerts = { "auraAlerts.gainedSound", "auraAlerts.stacksSound", "auraAlerts.removedSound", "auraAlerts.gainedTTS", "auraAlerts.removedTTS" },
   spellUsability = { "spellUsability.enabled", "spellUsability.useNormalColor", "spellUsability.normalColor", "spellUsability.normalDesaturate", "spellUsability.useOnCooldownColor", "spellUsability.onCooldownColor", "spellUsability.onCooldownDesaturate", "spellUsability.notEnoughResourceAlpha", "spellUsability.notEnoughResourceColor", "spellUsability.notEnoughResourceDesaturate", "spellUsability.notUsableAlpha", "spellUsability.notUsableColor", "spellUsability.notUsableDesaturate", "spellUsability.usableGlow", "spellUsability.usableGlowCombatOnly", "spellUsability.usableGlowType", "spellUsability.usableGlowColor", "spellUsability.usableGlowScale", "spellUsability.usableGlowSpeed", "spellUsability.usableGlowLines", "spellUsability.usableGlowThickness", "spellUsability.usableGlowParticles", "spellUsability.usableGlowXOffset", "spellUsability.usableGlowYOffset", "spellUsability.usableGlowFrameStrata", "spellUsability.usableGlowFrameLevel" },
 }
 
@@ -513,6 +520,42 @@ local function HideIfNoAuraSelection()
   return not next(selectedAuraIcons) and selectedAuraIcon == nil
 end
 
+-- True when the current AURA selection is exclusively Arc aura icons
+-- (arc_aura_*, the 12.1 container-driven icons). Sections whose runtime
+-- does not apply to those icons (Proc Glow, Custom Label) hide on this.
+local function IsCurrentAuraSelectionAllArcAura()
+  if editAllUnifiedMode then return false end
+  local function isArcAura(cdID)
+    return type(cdID) == "string" and cdID:match("^arc_aura_") ~= nil
+  end
+  if next(selectedAuraIcons) then
+    for cdID in pairs(selectedAuraIcons) do
+      if not isArcAura(cdID) then return false end
+    end
+    return true
+  end
+  if selectedAuraIcon then
+    return isArcAura(selectedAuraIcon)
+  end
+  return false
+end
+
+-- Single-selected arc icon of any kind except totem (nil otherwise) — used
+-- by the Custom Icon input's arc routing and the Arc Icon Settings section.
+local function GetSingleSelectedArcIcon()
+  if editAllUnifiedMode then return nil end
+  if next(selectedAuraIcons) or next(selectedCooldownIcons) then return nil end
+  local id = selectedAuraIcon or selectedCooldownIcon
+  if type(id) == "string" and id:match("^arc_") and not id:match("^arc_totem_") then
+    return id
+  end
+  return nil
+end
+
+-- What the Custom Icon number means for arc icons ("spell"|"item"|"icon") —
+-- spell IDs and texture FileDataIDs overlap numerically; the user declares.
+local arcIconIDType = "spell"
+
 local function HideAuraIconAppearance()
   return HideIfNoAuraSelection() or collapsedSections.iconAppearance
 end
@@ -572,13 +615,64 @@ local function HideAuraInactiveState()
   return HideIfNoAuraSelection() or collapsedSections.inactiveState
 end
 
+-- Glow When Missing subsection. Arc aura icons support it in OCCLUSION mode
+-- (glow rendered under the live button, covered while the aura is up), which
+-- only works for border-hugging styles — the type dropdown narrows to those
+-- for arc selections and the Preview toggle hides (the glow is simply live
+-- whenever the aura is missing).
+local function HideAuraInactiveGlow()
+  return HideAuraInactiveState()
+end
+
 local function HideAuraProcGlow()
-  return HideIfNoAuraSelection() or collapsedSections.procGlow
+  -- Arc aura icons (container-driven) have no proc signal — section hidden
+  return HideIfNoAuraSelection() or IsCurrentAuraSelectionAllArcAura()
+      or collapsedSections.procGlow
 end
 
 local function HideAuraAlertEvents()
   return HideIfNoAuraSelection() or collapsedSections.alertEvents
 end
+
+-- ── SOUND ALERTS: one dropdown per edge = None / Text to Speech / a sound.
+-- Text to Speech is only offered where a Lua signal actually exists: CDM aura
+-- frames expose gain AND drop (ns.FrameActive), while 12.1 engine aura icons
+-- expose neither — their sounds are played by the game itself — so speech
+-- there can only ride the player's own cast of the spell.
+local ALERT_TTS = "__tts__"
+
+local function AlertTTSAllowed(edge)
+  if not IsCurrentAuraSelectionAllArcAura() then return true end  -- CDM: both edges
+  if edge ~= "gained" then return false end                       -- arc: no drop signal
+  local id = GetSingleSelectedArcIcon and GetSingleSelectedArcIcon()
+  local def = id and ns.AuraIcons and ns.AuraIcons.Get and ns.AuraIcons.Get(id)
+  return (def and ns.AuraIconSounds and ns.AuraIconSounds.CanSelfTriggerDef
+      and ns.AuraIconSounds.CanSelfTriggerDef(def)) and true or false
+end
+
+local function AlertSoundNames()
+  local lsm = LibStub and LibStub("LibSharedMedia-3.0", true)
+  return (lsm and lsm:HashTable("sound")) or {}
+end
+
+local function AlertChoiceValues(edge)
+  local out = { None = "None" }
+  if AlertTTSAllowed(edge) then out[ALERT_TTS] = "|cff66ccffText to Speech|r" end
+  for k, v in pairs(AlertSoundNames()) do out[k] = v end
+  return out
+end
+
+-- explicit order: None, Text to Speech, then the sounds alphabetically
+local function AlertChoiceSorting(edge)
+  local names = {}
+  for k in pairs(AlertSoundNames()) do names[#names + 1] = k end
+  table.sort(names)
+  local out = { "None" }
+  if AlertTTSAllowed(edge) then out[#out + 1] = ALERT_TTS end
+  for _, n in ipairs(names) do out[#out + 1] = n end
+  return out
+end
+
 
 local function HideAuraPosition()
   return HideIfNoAuraSelection() or collapsedSections.position
@@ -1054,6 +1148,19 @@ end
 -- Apply aura active state glow TOGGLE settings with immediate refresh (TYPE-SPECIFIC to auras)
 -- Clears glow signature to force restart with new settings
 -- NOTE: This is for aura active state glow - NOT shared with cooldowns (they have their own ready state glow)
+-- Arc AURA icons: their button glows (active/pandemic/swap packs) are owned
+-- by AuraIcons — the CDM refresh paths below never touch them, so glow
+-- setting edits must re-apply them explicitly or the toggle does nothing
+-- until an unrelated cascade runs.
+local function RefreshArcAuraIconGlows()
+  if not (ns.AuraIcons and ns.AuraIcons.ApplySettings) then return end
+  for _, cdID in ipairs(GetAuraIconsToUpdate()) do
+    if type(cdID) == "string" and cdID:match("^arc_aura_") then
+      ns.AuraIcons.ApplySettings(cdID)
+    end
+  end
+end
+
 local function ApplyAuraReadyStateGlowSetting(setter)
   if ns.ArcAurasCooldown and ns.ArcAurasCooldown.StopAllReadyGlows then
     ns.ArcAurasCooldown.StopAllReadyGlows()
@@ -1063,6 +1170,7 @@ local function ApplyAuraReadyStateGlowSetting(setter)
   if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
     ns.ArcAurasCooldown.RefreshAllSpellVisuals()
   end
+  RefreshArcAuraIconGlows()
 end
 
 -- Apply aura active state glow SLIDER settings (TYPE-SPECIFIC to auras)
@@ -1076,6 +1184,7 @@ local function ApplyAuraReadyStateGlowSliderSetting(setter)
   if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshAllSpellVisuals then
     ns.ArcAurasCooldown.RefreshAllSpellVisuals()
   end
+  RefreshArcAuraIconGlows()
 end
 
 -- Helper: Re-evaluate glow-when-missing on all affected aura frames
@@ -1091,16 +1200,23 @@ local function RefreshAuraMissingGlow()
     end
   end
   for _, cdID in ipairs(icons) do
-    local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
-    if data and data.frame then
-      local cfg = ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
-      local aaCfg = cfg and cfg.auraActiveState
-      if aaCfg then
-        local hasAura = ns.API and ns.API.HasAuraInstanceID and ns.API.HasAuraInstanceID(data.frame.auraInstanceID)
-        if ns.CDMEnhance.ShouldShowAuraActiveGlow(aaCfg, data.frame, hasAura) then
-          ns.CDMEnhance.ShowAuraActiveGlow(data.frame, aaCfg)
-        else
-          ns.CDMEnhance.HideAuraActiveGlow(data.frame)
+    if type(cdID) == "string" and cdID:match("^arc_aura_") then
+      -- arc aura icons: the occlusion missing-glow is owned by AuraIcons
+      if ns.AuraIcons and ns.AuraIcons.ApplySettings then
+        ns.AuraIcons.ApplySettings(cdID)
+      end
+    else
+      local data = ns.CDMEnhance.GetEnhancedFrameData and ns.CDMEnhance.GetEnhancedFrameData(cdID)
+      if data and data.frame then
+        local cfg = ns.CDMEnhance.GetEffectiveIconSettings and ns.CDMEnhance.GetEffectiveIconSettings(cdID)
+        local aaCfg = cfg and cfg.auraActiveState
+        if aaCfg then
+          local hasAura = ns.API and ns.API.HasAuraInstanceID and ns.API.HasAuraInstanceID(data.frame.auraInstanceID)
+          if ns.CDMEnhance.ShouldShowAuraActiveGlow(aaCfg, data.frame, hasAura) then
+            ns.CDMEnhance.ShowAuraActiveGlow(data.frame, aaCfg)
+          else
+            ns.CDMEnhance.HideAuraActiveGlow(data.frame)
+          end
         end
       end
     end
@@ -1842,6 +1958,7 @@ ns.OptionsHelpers = {
   ApplyAuraSetting        = ApplyAuraSetting,
   ApplySharedCooldownSetting = ApplySharedCooldownSetting,
   HideIfNoAuraSelection   = HideIfNoAuraSelection,
+  IsCurrentAuraSelectionAllArcAura = IsCurrentAuraSelectionAllArcAura,
   HideIfNoCooldownSelection = HideIfNoCooldownSelection,
   IsEditingMixedTypes     = IsEditingMixedTypes,
   IsCurrentCooldownSelectionAllTotem = IsCurrentCooldownSelectionAllTotem,
@@ -1962,6 +2079,10 @@ local function GetUnifiedFilterValues()
     ["auras"] = "|cff00ccffAuras|r",
     ["cooldowns"] = "|cff00ff00Cooldowns|r",
     ["freeposition"] = "|cffff00ffFree Position|r",
+    ["arc"] = "|cffffcc00Arc Icons|r",
+    ["arcspell"] = "|cff88ccffArc Spells|r",
+    ["arctimer"] = "|cffffcc00Custom Timers|r",
+    ["autotrack"] = "|cff88ff88Auto-Track Slots|r",
   }
   
   if ns.CDMGroups and ns.CDMGroups.groups then
@@ -2013,6 +2134,39 @@ RebuildUnifiedIconCache = function()
     for cdID, data in pairs(auras) do
       table.insert(cachedUnifiedIcons, createCacheEntry(data, true))
     end
+  elseif unifiedFilterMode == "arc" then
+    -- every Arc-created icon regardless of kind (items/trinkets/spells/
+    -- timers/totems/aura icons) — arc_ prefixed IDs from both maps
+    for cdID, data in pairs(auras) do
+      if type(cdID) == "string" and cdID:match("^arc_") then
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, true))
+      end
+    end
+    for cdID, data in pairs(cooldowns) do
+      if type(cdID) == "string" and cdID:match("^arc_") then
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
+      end
+    end
+  elseif unifiedFilterMode == "arcspell" then
+    for cdID, data in pairs(cooldowns) do
+      if type(cdID) == "string" and cdID:match("^arc_spell_") then
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
+      end
+    end
+  elseif unifiedFilterMode == "arctimer" then
+    for cdID, data in pairs(cooldowns) do
+      if type(cdID) == "string" and cdID:match("^arc_timer_") then
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
+      end
+    end
+  elseif unifiedFilterMode == "autotrack" then
+    -- the auto-tracked equipped-slot icons (arc trinkets); the filter also
+    -- surfaces the auto-track configuration controls below the grid
+    for cdID, data in pairs(cooldowns) do
+      if type(cdID) == "string" and cdID:match("^arc_trinket_") then
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
+      end
+    end
   elseif unifiedFilterMode == "freeposition" then
     if ns.CDMGroups and ns.CDMGroups.freeIcons then
       for cdID in pairs(ns.CDMGroups.freeIcons) do
@@ -2063,6 +2217,19 @@ local function GetUnifiedIconCount()
     RebuildUnifiedIconCache()
   end
   return #cachedUnifiedIcons
+end
+
+-- Single-selected arc TIMER in the catalog (nil otherwise) — consumed by
+-- the Custom Icons editor's catalog bridge (its entries are mounted into
+-- the catalog and read their target through this).
+ns.CDMEnhanceOptions = ns.CDMEnhanceOptions or {}
+function ns.CDMEnhanceOptions.GetSingleSelectedArcTimer()
+  if editAllUnifiedMode then return nil end
+  if next(selectedAuraIcons) or next(selectedCooldownIcons) then return nil end
+  if selectedAuraIcon then return nil end
+  local id = selectedCooldownIcon
+  if type(id) == "string" and id:match("^arc_timer_") then return id end
+  return nil
 end
 
 local function GetUnifiedSelectionCount()
@@ -3215,14 +3382,29 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "input",
       dialogControl = "ArcUI_EditBox",
       name = "Custom Icon",
-      desc = "Override the icon texture with a spell ID or texture file ID.\n\nEnter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nLeave empty to use the default CDM icon.",
+      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty / 0 to use the default icon.",
       get = function()
+        -- arc icons: show the arc override, not customIconID
+        local arcID = GetSingleSelectedArcIcon()
+        if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.GetArcConfigByID then
+          local cfg = ns.ArcAurasOptions.GetArcConfigByID(arcID)
+          if cfg then
+            if cfg.iconOverrideID then return tostring(cfg.iconOverrideID) end
+            if arcID:match("^arc_timer_") and cfg.iconID then return tostring(cfg.iconID) end
+          end
+          return ""
+        end
         local c = GetAuraCfg()
         if c and c.customIconID then return tostring(c.customIconID) end
         return ""
       end,
       set = function(_, v)
-        local id = tonumber(v)
+        local id = tonumber((v or ""):gsub("[^%d]", ""))
+        local arcID = GetSingleSelectedArcIcon()
+        if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.ApplyArcIconOverride then
+          ns.ArcAurasOptions.ApplyArcIconOverride(arcID, id, arcIconIDType)
+          return
+        end
         ApplyAuraSetting(function(c) c.customIconID = id end)
         if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
           ns.CDMEnhance.RefreshIconType("aura")
@@ -3230,6 +3412,20 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.537, width = 0.85,
       hidden = HideAuraIconAppearance,
+    },
+    customIconIDType = {
+      type = "select",
+      name = "ID Type",
+      desc = "What the Custom Icon number refers to:\n\n|cffffd700Spell ID|r — uses that spell's icon.\n|cffffd700Item ID|r — uses that item's icon.\n|cffffd700Icon ID|r — a texture FileDataID used directly (the 'Icon ID' shown in tooltips; works for ANY texture).",
+      values = { spell = "Spell ID", item = "Item ID", icon = "Icon ID (texture)" },
+      sorting = { "spell", "item", "icon" },
+      get = function() return arcIconIDType end,
+      set = function(_, v) arcIconIDType = v end,
+      order = 107.5375, width = 0.75,
+      hidden = function()
+        if HideAuraIconAppearance() then return true end
+        return GetSingleSelectedArcIcon() == nil
+      end,
     },
     showDebuffBorder = {
       type = "toggle", name = "Debuff Border",
@@ -3421,6 +3617,65 @@ function ns.GetCDMAuraIconsOptionsTable()
         local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
         if not cdID then return true end
         return false
+      end,
+    },
+    iconStackStrata = {
+      type = "select",
+      name = "Stack Strata",
+      desc = "Frame strata for this free icon. Icons on a higher strata always draw above icons on a lower one - combine with Stack Level to control which icon is on top when free icons overlap.",
+      values = {
+        BACKGROUND = "Background", LOW = "Low", MEDIUM = "Medium (Default)",
+        HIGH = "High", DIALOG = "Dialog",
+      },
+      sorting = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+      get = function()
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID or not ns.CDMEnhance.GetIconStrata then return "MEDIUM" end
+        return (ns.CDMEnhance.GetIconStrata(cdID))
+      end,
+      set = function(_, v)
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID or not ns.CDMEnhance.SetIconStrata then return end
+        local _, level = ns.CDMEnhance.GetIconStrata(cdID)
+        ns.CDMEnhance.SetIconStrata(cdID, v, level)
+      end,
+      order = 107.806,
+      width = 0.9,
+      hidden = function()
+        if HideAuraPosition() then return true end
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID then return true end
+        return ns.CDMEnhance.GetIconPositionMode(cdID) ~= "free"
+      end,
+    },
+    iconStackLevel = {
+      type = "input",
+      dialogControl = "ArcUI_EditBox",
+      name = "Stack Level",
+      desc = "Fine stacking order within the same strata (1-9999, higher draws on top). Leave empty for automatic. Use gaps of at least 10 between stacked icons (e.g. 5 and 15): each icon's own text and glow ride a few levels above its base, so a gap of 1 lets the lower icon's pieces poke through the upper icon.",
+      get = function()
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID or not ns.CDMEnhance.GetIconStrata then return "" end
+        local _, level = ns.CDMEnhance.GetIconStrata(cdID)
+        return level and tostring(level) or ""
+      end,
+      set = function(_, v)
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID or not ns.CDMEnhance.SetIconStrata then return end
+        v = (v or ""):match("^%s*(.-)%s*$")
+        local level = tonumber(v)
+        if v ~= "" and not level then return end
+        if level then level = math.max(1, math.min(9999, math.floor(level))) end
+        local strata = ns.CDMEnhance.GetIconStrata(cdID)
+        ns.CDMEnhance.SetIconStrata(cdID, strata, level)
+      end,
+      order = 107.807,
+      width = 0.6,
+      hidden = function()
+        if HideAuraPosition() then return true end
+        local cdID = selectedAuraIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("aura"))
+        if not cdID then return true end
+        return ns.CDMEnhance.GetIconPositionMode(cdID) ~= "free"
       end,
     },
     -- ACTIVE STATE SECTION (when buff/debuff is applied)
@@ -3695,6 +3950,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8405, width = 0.8,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
@@ -3809,6 +4065,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.844, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         return false  -- Scale works for all glow types
@@ -3840,6 +4097,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Proc/ants/ach_proc don't use speed (fixed frame rate)
         local gt = c.cooldownStateVisuals.readyState.glowType
+        if IsCurrentAuraSelectionAllArcAura() and gt ~= "pixel" then return true end   -- packs: speed only drives Pixel
         return gt == "proc" or gt == "ants" or gt == "ach_proc"
       end,
     },
@@ -3874,13 +4132,14 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "range",
       name = "Thickness",
       desc = "Thickness of glow lines",
-      min = 1, max = 10, step = 1,
+      min = 1, max = 20, step = 1,
       get = function()
         local c = GetAuraCfg()
-        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
-          return c.cooldownStateVisuals.readyState.glowThickness or 2
-        end
-        return 2
+        local v = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+          and c.cooldownStateVisuals.readyState.glowThickness
+        if v then return v end
+        -- arc aura icons render via the pack engine, whose tuned default is 3
+        return IsCurrentAuraSelectionAllArcAura() and 3 or 2
       end,
       set = function(_, v)
         ApplyAuraReadyStateGlowSliderSetting(function(c)
@@ -3890,6 +4149,33 @@ function ns.GetCDMAuraIconsOptionsTable()
         end)
       end,
       order = 107.847, width = 0.55,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
+        return c.cooldownStateVisuals.readyState.glowType ~= "pixel"
+      end,
+    },
+    activeStateGlowLength = {
+      type = "range",
+      name = "Line Length",
+      desc = "Length of each glow line in pixels. 0 = automatic (11px, the tuned default).",
+      min = 0, max = 40, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
+          return c.cooldownStateVisuals.readyState.glowLength or 0
+        end
+        return 0
+      end,
+      set = function(_, v)
+        ApplyAuraReadyStateGlowSliderSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.glowLength = (v > 0) and v or nil
+        end)
+      end,
+      order = 107.8475, width = 0.7,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         local c = GetAuraCfg()
@@ -3919,6 +4205,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.848, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         return c.cooldownStateVisuals.readyState.glowType ~= "autocast"
@@ -3946,6 +4233,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.849, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Only button and default types don't support offset
@@ -3974,6 +4262,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8495, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Only button and default types don't support offset
@@ -4009,6 +4298,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8496, width = 0.85,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
@@ -4037,6 +4327,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8497, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
@@ -4045,20 +4336,34 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "select",
       name = "Show Glow",
       desc = "When to show the glow while the aura is active.\n\n|cffffd700Always|r — Glow the whole time the aura is up.\n\n|cffffd700Threshold %|r — Glow when remaining duration drops below a % of total. Simple but breaks for auras extended by talents (e.g. 30% of a talent-extended Moonfire fires too early).\n\n|cffffd700Threshold Seconds|r — Glow when remaining duration drops below a fixed number of seconds. Immune to talent extension — use this for Moonfire, Sunfire, etc.\n\n|cffffd700CDM Pandemic Timing|r — Glow exactly when CDM enters the pandemic window. Uses Blizzard's internal pandemic calculation, guaranteed correct.",
-      values = {
-        always   = "Always",
-        percent  = "Threshold %",
-        seconds  = "Threshold Seconds",
-        pandemic = "CDM Pandemic Timing",
-      },
-      sorting = { "always", "percent", "seconds", "pandemic" },
+      values = function()
+        -- arc aura icons: remaining duration is SECRET on container-driven
+        -- icons — threshold timings cannot work; the engine's pandemic
+        -- window (AddPandemicRegion) and always-on are the two real modes
+        if IsCurrentAuraSelectionAllArcAura() then
+          return { always = "Always", pandemic = "CDM Pandemic Timing" }
+        end
+        return {
+          always   = "Always",
+          percent  = "Threshold %",
+          seconds  = "Threshold Seconds",
+          pandemic = "CDM Pandemic Timing",
+        }
+      end,
+      sorting = function()
+        if IsCurrentAuraSelectionAllArcAura() then
+          return { "always", "pandemic" }
+        end
+        return { "always", "percent", "seconds", "pandemic" }
+      end,
       get = function()
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not rs then return "always" end
         if rs.glowFollowPandemic then return "pandemic" end
-        if rs.glowThresholdSeconds then return "seconds" end
-        if (rs.glowThreshold or 1.0) < 1.0 then return "percent" end
+        local isArc = IsCurrentAuraSelectionAllArcAura()
+        if rs.glowThresholdSeconds then return isArc and "always" or "seconds" end
+        if (rs.glowThreshold or 1.0) < 1.0 then return isArc and "always" or "percent" end
         return "always"
       end,
       set = function(_, v)
@@ -4086,6 +4391,98 @@ function ns.GetCDMAuraIconsOptionsTable()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
     },
+    -- Arc aura icons only: "glow changes at the pandemic window" — the
+    -- kill-mask combo: the active glow runs the whole time the aura is up,
+    -- and Blizzard's own pandemic timing swaps it for a second style/color
+    -- exactly during the refresh window. Timing mode "Always" only.
+    activeStateGlowPandemicSwap = {
+      type = "toggle", name = "Change Glow In Pandemic Window",
+      desc = "While the aura is active, swap the glow to a different style/color exactly during the pandemic (refresh) window. The switch is driven by Blizzard's own pandemic timing — guaranteed correct, works in combat and instances.",
+      get = function()
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        return rs and rs.pandemicSwap or false
+      end,
+      set = function(_, v)
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.pandemicSwap = v or nil
+        end)
+      end,
+      order = 107.84062, width = 1.6,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if not IsCurrentAuraSelectionAllArcAura() then return true end
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow) then return true end
+        return rs.glowFollowPandemic and true or false
+      end,
+    },
+    activeStateGlowPandemicSwapStyle = {
+      type = "select", name = "Window Glow Style",
+      desc = "Glow style used during the pandemic window. Defaults to the same style as the active glow.",
+      values = {
+        ["pixel"] = "Pixel Glow",
+        ["autocast"] = "AutoCast Sparkles",
+        ["proc"] = "Blizzard Proc",
+        ["ach_proc"] = "Proc Loop",
+        ["button"] = "Pulse",
+        ["ants"] = "Spin",
+        ["cdm_flash"] = "Pulse (Flash)",
+      },
+      sorting = { "pixel", "autocast", "proc", "ach_proc", "button", "ants", "cdm_flash" },
+      get = function()
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        return rs and (rs.pandemicSwapType or rs.glowType) or "pixel"
+      end,
+      set = function(_, v)
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.pandemicSwapType = v
+        end)
+      end,
+      order = 107.84064, width = 0.95,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if not IsCurrentAuraSelectionAllArcAura() then return true end
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow and rs.pandemicSwap) then return true end
+        return rs.glowFollowPandemic and true or false
+      end,
+    },
+    activeStateGlowPandemicSwapColor = {
+      type = "color", name = "Window Glow Color",
+      desc = "Glow color used during the pandemic window",
+      hasAlpha = false,
+      get = function()
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        local col = rs and rs.pandemicSwapColor
+        if col then return col.r or 1, col.g or 0.2, col.b or 0.2 end
+        return 1, 0.2, 0.2
+      end,
+      set = function(_, r, g, b)
+        ApplyAuraReadyStateGlowSetting(function(c)
+          if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
+          if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
+          c.cooldownStateVisuals.readyState.pandemicSwapColor = { r = r, g = g, b = b }
+        end)
+      end,
+      order = 107.84066, width = 0.95,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if not IsCurrentAuraSelectionAllArcAura() then return true end
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow and rs.pandemicSwap) then return true end
+        return rs.glowFollowPandemic and true or false
+      end,
+    },
     activeStateGlowThreshold = {
       type = "range",
       name = "Threshold %",
@@ -4109,6 +4506,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8407, width = 0.75,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not (rs and rs.glow) then return true end
@@ -4135,6 +4533,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8408, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not (rs and rs.glow) then return true end
@@ -4339,7 +4738,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         end
       end,
       order = 107.961, width = 1.0,
-      hidden = HideAuraInactiveState,
+      hidden = HideAuraInactiveGlow,
     },
     inactiveGlowPreview = {
       type = "toggle",
@@ -4353,7 +4752,10 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9611, width = 0.5,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
+        -- arc aura icons: the occlusion glow is live whenever the aura is
+        -- missing — a preview toggle is redundant
+        if IsCurrentAuraSelectionAllArcAura() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4379,7 +4781,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.962, width = 0.8,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4400,7 +4802,11 @@ function ns.GetCDMAuraIconsOptionsTable()
       sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
       get = function()
         local c = GetAuraCfg()
-        if c and c.auraActiveState then return c.auraActiveState.glowType or "button" end
+        local v = c and c.auraActiveState and c.auraActiveState.glowType
+        if v then return v end
+        -- arc aura icons default to pixel (the proven occluder) — mirror the
+        -- AuraIcons runtime default so the dropdown shows what actually runs
+        if IsCurrentAuraSelectionAllArcAura() then return "pixel" end
         return "button"
       end,
       set = function(_, v)
@@ -4411,7 +4817,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.963, width = 0.9,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4437,7 +4843,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.964, width = 0.5,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4460,7 +4866,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.965, width = 0.6,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4483,7 +4889,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.966, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         return false  -- Scale works for all glow types
@@ -4507,7 +4913,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.967, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         local gt = c.auraActiveState.glowType
@@ -4532,7 +4938,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.968, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         return c.auraActiveState.glowType ~= "pixel"
@@ -4542,7 +4948,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "range",
       name = "Thickness",
       desc = "Thickness of glow lines",
-      min = 1, max = 10, step = 1,
+      min = 1, max = 20, step = 1,
       get = function()
         local c = GetAuraCfg()
         if c and c.auraActiveState then return c.auraActiveState.glowThickness or 2 end
@@ -4556,7 +4962,31 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.969, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
+        local c = GetAuraCfg()
+        if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
+        return c.auraActiveState.glowType ~= "pixel"
+      end,
+    },
+    inactiveGlowLength = {
+      type = "range",
+      name = "Line Length",
+      desc = "How long each glow line is. 0 sizes them to the icon automatically.",
+      min = 0, max = 64, step = 1,
+      get = function()
+        local c = GetAuraCfg()
+        if c and c.auraActiveState then return c.auraActiveState.glowLength or 0 end
+        return 0
+      end,
+      set = function(_, v)
+        ApplyAuraMissingGlowSliderSetting(function(c)
+          if not c.auraActiveState then c.auraActiveState = {} end
+          c.auraActiveState.glowLength = (v > 0) and v or nil
+        end)
+      end,
+      order = 107.9695, width = 0.6,
+      hidden = function()
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         return c.auraActiveState.glowType ~= "pixel"
@@ -4580,7 +5010,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9695, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         return c.auraActiveState.glowType ~= "autocast"
@@ -4613,7 +5043,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9696, width = 0.85,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4640,7 +5070,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9697, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
@@ -4661,7 +5091,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9698, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         local gt = c.auraActiveState.glowType or "button"
@@ -4684,7 +5114,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 107.9699, width = 0.55,
       hidden = function()
-        if HideAuraInactiveState() then return true end
+        if HideAuraInactiveGlow() then return true end
         local c = GetAuraCfg()
         if not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing) then return true end
         local gt = c.auraActiveState.glowType or "button"
@@ -4744,7 +5174,9 @@ function ns.GetCDMAuraIconsOptionsTable()
       set = function(_, v) collapsedSections.procGlow = not v end,
       order = 109,
       width = "full",
-      hidden = HideIfNoAuraSelection,
+      hidden = function()
+        return HideIfNoAuraSelection() or IsCurrentAuraSelectionAllArcAura()
+      end,
     },
     procGlowEnabled = {
       type = "toggle", name = "Show Glow",
@@ -4867,7 +5299,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
     },
     procGlowThickness = {
-      type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+      type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
       desc = "Thickness of glow lines",
       get = function() local c = GetAuraCfg(); return c and c.procGlow and c.procGlow.thickness or 2 end,
       set = function(_, v) ApplyAuraGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.thickness = v end) end,
@@ -4957,8 +5389,8 @@ function ns.GetCDMAuraIconsOptionsTable()
     -- ═══════════════════════════════════════════════════════════════════
     alertEventsHeader = {
       type = "toggle",
-      name = "|cff666666Alert Events|r",
-      desc = "Alert Events for auras - Coming Soon!",
+      name = function() return GetAuraHeaderName("auraAlerts", "Sound Alerts") end,
+      desc = "Click to expand/collapse. Purple dot indicates per-icon customizations.\n\nPlay a sound or speak a line when this aura appears or drops.",
       dialogControl = "CollapsibleHeader",
       get = function() return not collapsedSections.alertEvents end,
       set = function(_, v) collapsedSections.alertEvents = not v end,
@@ -4966,14 +5398,140 @@ function ns.GetCDMAuraIconsOptionsTable()
       width = "full",
       hidden = HideIfNoAuraSelection,
     },
-    alertEventsComingSoon = {
+    arcAlertNote = {
       type = "description",
-      name = "\n|cff888888Alert Events for auras are |cffFFCC00Coming Soon|r!|r\n\n|cff666666This feature will allow you to trigger sounds, glows, or visual changes when:\n• Buff is applied\n• Buff enters pandemic window (30% remaining)\n• Buff expires|r\n",
-      order = 109.61,
+      name = "|cff888888The game's own aura system plays these, so they work everywhere — including raids and Mythic+.|r",
+      order = 109.62,
       width = "full",
-      hidden = HideAuraAlertEvents,
+      fontSize = "small",
+      hidden = function()
+        return HideAuraAlertEvents() or not IsCurrentAuraSelectionAllArcAura()
+      end,
     },
-    
+    -- Each edge is ONE dropdown: None / Text to Speech / a sound. Picking
+    -- Text to Speech reveals the line to speak. One control per row so the
+    -- section never reflows oddly at narrow panel widths.
+    alertGained = {
+      type = "select",
+      name = "When Gained",
+      desc = "What happens when this aura appears on you (or on your target, for debuff icons).",
+      order = 109.63,
+      width = "full",
+      values = function() return AlertChoiceValues("gained") end,
+      sorting = function() return AlertChoiceSorting("gained") end,
+      hidden = HideAuraAlertEvents,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.gainedSound) or "None"
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          c.auraAlerts.gainedSound = (v ~= "None") and v or nil
+        end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+        local reg = LibStub("AceConfigRegistry-3.0", true)
+        if reg then reg:NotifyChange("ArcUI") end
+      end,
+    },
+    alertGainedTTS = {
+      type = "input",
+      name = "Say When Gained",
+      desc = function()
+        if IsCurrentAuraSelectionAllArcAura() then
+          return "Spoken when you cast this spell yourself.\n\n|cff888888The game never tells addons that an aura landed, so speech can only ride your own cast. Pick a sound instead for procs or buffs cast on you by someone else.|r"
+        end
+        return "Spoken when this aura appears."
+      end,
+      order = 109.635,
+      width = "full",
+      hidden = function()
+        if HideAuraAlertEvents() then return true end
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.gainedSound) ~= ALERT_TTS
+      end,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.gainedTTS) or ""
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          c.auraAlerts.gainedTTS = (v ~= "") and v or nil
+        end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+      end,
+    },
+    alertStacks = {
+      type = "select",
+      name = "When Stacks Increase",
+      desc = "Sound played each time this aura gains a stack.",
+      order = 109.64,
+      width = "full",
+      values = function() return AlertChoiceValues("stacks") end,
+      sorting = function() return AlertChoiceSorting("stacks") end,
+      -- engine-only trigger: CDM application counts are secret
+      hidden = function()
+        return HideAuraAlertEvents() or not IsCurrentAuraSelectionAllArcAura()
+      end,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.stacksSound) or "None"
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          c.auraAlerts.stacksSound = (v ~= "None") and v or nil
+        end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+      end,
+    },
+    alertRemoved = {
+      type = "select",
+      name = "When It Drops",
+      desc = "What happens when this aura is removed or expires.",
+      order = 109.65,
+      width = "full",
+      values = function() return AlertChoiceValues("removed") end,
+      sorting = function() return AlertChoiceSorting("removed") end,
+      hidden = HideAuraAlertEvents,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.removedSound) or "None"
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          c.auraAlerts.removedSound = (v ~= "None") and v or nil
+        end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+        local reg = LibStub("AceConfigRegistry-3.0", true)
+        if reg then reg:NotifyChange("ArcUI") end
+      end,
+    },
+    alertRemovedTTS = {
+      type = "input",
+      name = "Say When It Drops",
+      desc = "Spoken when this aura is removed or expires.",
+      order = 109.655,
+      width = "full",
+      hidden = function()
+        if HideAuraAlertEvents() then return true end
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.removedSound) ~= ALERT_TTS
+      end,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.removedTTS) or ""
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          c.auraAlerts.removedTTS = (v ~= "") and v or nil
+        end)
+      end,
+    },
+
     -- ═══════════════════════════════════════════════════════════════════
     -- BORDER SECTION
     -- ═══════════════════════════════════════════════════════════════════
@@ -5001,7 +5559,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 112, width = 0.7, hidden = HideAuraBorder,
     },
     borderThickness = {
-      type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+      type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
       get = function() local c = GetAuraCfg(); return c and c.border and c.border.thickness or 1 end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.border then c.border = {} end; c.border.thickness = v end) end,
       order = 113, width = 0.6, hidden = HideAuraBorder,
@@ -5086,21 +5644,25 @@ function ns.GetCDMAuraIconsOptionsTable()
       desc = "Flash when cooldown finishes",
       get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.showBling ~= false end, function() local c = GetAuraCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.showBling ~= false end) end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.showBling = v end) end,
-      order = 120.2, width = 0.7, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipeExceptBling,
+      -- arc aura icons: the engine hides the button the instant the aura
+      -- expires — a finish flash can never be seen
+      order = 120.2, width = 0.7, hidden = function() return HideAuraCooldownSwipe() or IsCurrentAuraSelectionAllArcAura() end, disabled = DisableAuraCooldownSwipeExceptBling,
     },
     noGCDSwipe = {
       type = "toggle", name = "No GCD",
       desc = "Hide GCD swipes (cooldowns 1.5s or less). Only shows the swipe animation for actual spell cooldowns.",
       get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.noGCDSwipe end, function() local c = GetAuraCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.noGCDSwipe or false end) end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.noGCDSwipe = v end) end,
-      order = 120.3, width = 0.5, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipeExceptNoGCD,
+      -- arc aura icons: aura-duration swipes have no GCD concept
+      order = 120.3, width = 0.5, hidden = function() return HideAuraCooldownSwipe() or IsCurrentAuraSelectionAllArcAura() end, disabled = DisableAuraCooldownSwipeExceptNoGCD,
     },
     swipeWaitForNoCharges = {
       type = "toggle", name = "Wait for No Charges",
       desc = "For charge spells: Hides the full cooldown animation during recharge. Only shows the cooldown when ALL charges are consumed.",
       get = function() return GetAuraBoolSetting(function(c) return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges end, function() local c = GetAuraCfg(); return c and c.cooldownSwipe and c.cooldownSwipe.swipeWaitForNoCharges or false end) end,
       set = function(_, v) ApplyAuraSetting(function(c) if not c.cooldownSwipe then c.cooldownSwipe = {} end; c.cooldownSwipe.swipeWaitForNoCharges = v end) end,
-      order = 120.4, width = 0.55, hidden = HideAuraCooldownSwipe, disabled = DisableAuraCooldownSwipe,
+      -- arc aura icons: no charges on aura-duration swipes
+      order = 120.4, width = 0.55, hidden = function() return HideAuraCooldownSwipe() or IsCurrentAuraSelectionAllArcAura() end, disabled = DisableAuraCooldownSwipe,
     },
     edgeWaitForNoCharges = {
       type = "toggle", name = "Edge Wait",
@@ -6710,14 +7272,29 @@ function ns.GetCDMCooldownIconsOptionsTable()
       type = "input",
       dialogControl = "ArcUI_EditBox",
       name = "Custom Icon",
-      desc = "Override the icon texture with a spell ID or texture file ID.\n\nEnter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nLeave empty to use the default CDM icon.",
+      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty / 0 to use the default icon.",
       get = function()
+        -- arc icons: show the arc override, not customIconID
+        local arcID = GetSingleSelectedArcIcon()
+        if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.GetArcConfigByID then
+          local cfg = ns.ArcAurasOptions.GetArcConfigByID(arcID)
+          if cfg then
+            if cfg.iconOverrideID then return tostring(cfg.iconOverrideID) end
+            if arcID:match("^arc_timer_") and cfg.iconID then return tostring(cfg.iconID) end
+          end
+          return ""
+        end
         local c = GetCooldownCfg()
         if c and c.customIconID then return tostring(c.customIconID) end
         return ""
       end,
       set = function(_, v)
-        local id = tonumber(v)
+        local id = tonumber((v or ""):gsub("[^%d]", ""))
+        local arcID = GetSingleSelectedArcIcon()
+        if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.ApplyArcIconOverride then
+          ns.ArcAurasOptions.ApplyArcIconOverride(arcID, id, arcIconIDType)
+          return
+        end
         ApplySharedCooldownSetting(function(c) c.customIconID = id end)
         if ns.CDMEnhance and ns.CDMEnhance.RefreshIconType then
           ns.CDMEnhance.RefreshIconType("cooldown")
@@ -6727,6 +7304,20 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if HideIfNoCooldownSelection() then return true end
         return collapsedSections.iconAppearance
+      end,
+    },
+    customIconIDType = {
+      type = "select",
+      name = "ID Type",
+      desc = "What the Custom Icon number refers to:\n\n|cffffd700Spell ID|r — uses that spell's icon.\n|cffffd700Item ID|r — uses that item's icon.\n|cffffd700Icon ID|r — a texture FileDataID used directly (the 'Icon ID' shown in tooltips; works for ANY texture).",
+      values = { spell = "Spell ID", item = "Item ID", icon = "Icon ID (texture)" },
+      sorting = { "spell", "item", "icon" },
+      get = function() return arcIconIDType end,
+      set = function(_, v) arcIconIDType = v end,
+      order = 107.5375, width = 0.75,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.iconAppearance then return true end
+        return GetSingleSelectedArcIcon() == nil
       end,
     },
     showPandemicBorder = {
@@ -6914,6 +7505,65 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
         if not cdID then return true end
         return false
+      end,
+    },
+    iconStackStrata = {
+      type = "select",
+      name = "Stack Strata",
+      desc = "Frame strata for this free icon. Icons on a higher strata always draw above icons on a lower one - combine with Stack Level to control which icon is on top when free icons overlap.",
+      values = {
+        BACKGROUND = "Background", LOW = "Low", MEDIUM = "Medium (Default)",
+        HIGH = "High", DIALOG = "Dialog",
+      },
+      sorting = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+      get = function()
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID or not ns.CDMEnhance.GetIconStrata then return "MEDIUM" end
+        return (ns.CDMEnhance.GetIconStrata(cdID))
+      end,
+      set = function(_, v)
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID or not ns.CDMEnhance.SetIconStrata then return end
+        local _, level = ns.CDMEnhance.GetIconStrata(cdID)
+        ns.CDMEnhance.SetIconStrata(cdID, v, level)
+      end,
+      order = 107.806,
+      width = 0.9,
+      hidden = function()
+        if HideCooldownPosition() then return true end
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID then return true end
+        return ns.CDMEnhance.GetIconPositionMode(cdID) ~= "free"
+      end,
+    },
+    iconStackLevel = {
+      type = "input",
+      dialogControl = "ArcUI_EditBox",
+      name = "Stack Level",
+      desc = "Fine stacking order within the same strata (1-9999, higher draws on top). Leave empty for automatic. Use gaps of at least 10 between stacked icons (e.g. 5 and 15): each icon's own text and glow ride a few levels above its base, so a gap of 1 lets the lower icon's pieces poke through the upper icon.",
+      get = function()
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID or not ns.CDMEnhance.GetIconStrata then return "" end
+        local _, level = ns.CDMEnhance.GetIconStrata(cdID)
+        return level and tostring(level) or ""
+      end,
+      set = function(_, v)
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID or not ns.CDMEnhance.SetIconStrata then return end
+        v = (v or ""):match("^%s*(.-)%s*$")
+        local level = tonumber(v)
+        if v ~= "" and not level then return end
+        if level then level = math.max(1, math.min(9999, math.floor(level))) end
+        local strata = ns.CDMEnhance.GetIconStrata(cdID)
+        ns.CDMEnhance.SetIconStrata(cdID, strata, level)
+      end,
+      order = 107.807,
+      width = 0.6,
+      hidden = function()
+        if HideCooldownPosition() then return true end
+        local cdID = selectedCooldownIcon or (ns.CDMEnhance and ns.CDMEnhance.GetFirstIconOfType("cooldown"))
+        if not cdID then return true end
+        return ns.CDMEnhance.GetIconPositionMode(cdID) ~= "free"
       end,
     },
     -- ═══════════════════════════════════════════════════════════════════
@@ -7448,7 +8098,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       type = "range",
       name = "Thickness",
       desc = "Thickness of glow lines",
-      min = 1, max = 10, step = 1,
+      min = 1, max = 20, step = 1,
       get = function()
         local c = GetCooldownCfg()
         if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
@@ -8570,7 +9220,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         type = "range",
         name = "Thickness",
         desc = "Thickness of glow lines",
-        min = 1, max = 10, step = 1,
+        min = 1, max = 20, step = 1,
         get = function()
           local c = GetAuraActiveStateCfg()
           if c and c.auraActiveState then
@@ -8585,6 +9235,32 @@ function ns.GetCDMCooldownIconsOptionsTable()
           end)
         end,
         order = 107.978, width = 0.65,
+        hidden = function()
+          if HideCooldownAuraActiveState() then return true end
+          local c = GetAuraActiveStateCfg()
+          if not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing)) then return true end
+          return c.auraActiveState.glowType ~= "pixel"
+        end,
+      },
+      auraActiveStateGlowLength = {
+        type = "range",
+        name = "Line Length",
+        desc = "How long each glow line is. 0 sizes them to the icon automatically.",
+        min = 0, max = 64, step = 1,
+        get = function()
+          local c = GetAuraActiveStateCfg()
+          if c and c.auraActiveState then
+            return c.auraActiveState.glowLength or 0
+          end
+          return 0
+        end,
+        set = function(_, v)
+          ApplyCooldownAuraActiveGlowSliderSetting(function(c)
+            if not c.auraActiveState then c.auraActiveState = {} end
+            c.auraActiveState.glowLength = (v > 0) and v or nil
+          end)
+        end,
+        order = 107.9785, width = 0.65,
         hidden = function()
           if HideCooldownAuraActiveState() then return true end
           local c = GetAuraActiveStateCfg()
@@ -9005,7 +9681,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
     },
     procGlowThickness = {
-      type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+      type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
       desc = "Thickness of glow lines",
       get = function() local c = GetCooldownCfg(); return c and c.procGlow and c.procGlow.thickness or 2 end,
       set = function(_, v) ApplyCooldownGlowSetting(function(c) if not c.procGlow then c.procGlow = {} end; c.procGlow.thickness = v end) end,
@@ -9121,7 +9797,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       order = 112, width = 0.7, hidden = HideCooldownBorder,
     },
     borderThickness = {
-      type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+      type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
       get = function() local c = GetCooldownCfg(); return c and c.border and c.border.thickness or 1 end,
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.border then c.border = {} end; c.border.thickness = v end) end,
       order = 113, width = 0.6, hidden = HideCooldownBorder,
@@ -10981,7 +11657,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         end,
       },
       activeStateGlowThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         desc = "Thickness of glow lines",
         get = function()
           local g = GetAuraGlobalCfg()
@@ -12075,7 +12751,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         end,
       },
       glowThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         desc = "Thickness of glow lines",
         get = function() local g = GetAuraGlobalCfg(); return g.procGlow and g.procGlow.thickness or 2 end,
         set = function(_, v) ApplyAuraGlobalSetting("procGlow.thickness", v); RefreshGlobalAuras() end,
@@ -12180,7 +12856,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
         end,
       },
       borderThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         get = function() local g = GetAuraGlobalCfg(); return g.border and g.border.thickness or 1 end,
         set = function(_, v) ApplyAuraGlobalSetting("border.thickness", v); RefreshGlobalAuras() end,
         order = 56.3, width = 0.5,
@@ -12715,7 +13391,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         end,
       },
       readyStateGlowThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         desc = "Thickness of glow lines",
         get = function()
           local g = GetCooldownGlobalCfg()
@@ -13847,7 +14523,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         end,
       },
       glowThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         desc = "Thickness of glow lines",
         get = function() local g = GetCooldownGlobalCfg(); return g.procGlow and g.procGlow.thickness or 2 end,
         set = function(_, v) ApplyCooldownGlobalSetting("procGlow.thickness", v); RefreshGlobalCooldowns() end,
@@ -13952,7 +14628,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         end,
       },
       borderThickness = {
-        type = "range", name = "Thickness", min = 1, max = 10, step = 0.5,
+        type = "range", name = "Thickness", min = 1, max = 20, step = 0.5,
         get = function() local g = GetCooldownGlobalCfg(); return g.border and g.border.thickness or 1 end,
         set = function(_, v) ApplyCooldownGlobalSetting("border.thickness", v); RefreshGlobalCooldowns() end,
         order = 56.3, width = 0.5,
@@ -14385,7 +15061,10 @@ function ns.GetCDMIconsOptionsTable()
       type = "execute",
       name = "|cffff6666Reset Selected Icon(s)|r",
       desc = "Remove ALL per-icon customizations for the selected icon(s), returning them to default/global settings",
-      order = 99.5,
+      -- paired with Remove Arc Icon(s) on one action row directly under the
+      -- selection header (99.3 would land INSIDE the Load Conditions
+      -- section's order range and scatter the red buttons)
+      order = 99.25,
       width = 1.2,
       hidden = HideIfNoUnifiedSelection,
       confirm = true,
@@ -14418,6 +15097,543 @@ function ns.GetCDMIconsOptionsTable()
   -- Add catalog icons
   for i = 1, 50 do
     args["catalogIcon" .. i] = CreateUnifiedCatalogIconEntry(i)
+  end
+
+  -- "+" ADD TILE — the same Add Arc Icon popup as the Arc Icons tab
+  args.catalogAddTile = {
+    type = "execute",
+    name = "|cff3fc9f2Add|r",
+    desc = "|cffffd700Add a new Arc icon|r\nItem, trinkets, spell cooldown, aura icon, custom timer, or totem slots — plus a drag-and-drop zone.\n\nClick to open the Add window.",
+    image = "Interface\\AddOns\\ArcUI\\Textures\\add_tile.tga",
+    imageWidth = 32,
+    imageHeight = 32,
+    order = 61,
+    width = 0.25,
+    hidden = function()
+      return not (ns.ArcAurasOptions and ns.ArcAurasOptions.ShowAddPopup)
+    end,
+    func = function()
+      ns.ArcAurasOptions.ShowAddPopup()
+    end,
+  }
+
+  -- ─────────────────────────────────────────────────────────────────
+  -- FILTER-CONTEXT CONTROLS (the Icons-workspace direction): the
+  -- Auto-Track Slots filter surfaces the auto-track configuration; the
+  -- Arc Icons filter surfaces bulk management. Same operations as the
+  -- Arc Icons tab (shared through ns.ArcAurasOptions).
+  -- ─────────────────────────────────────────────────────────────────
+  local function HideUnlessAutoTrackFilter()
+    return unifiedFilterMode ~= "autotrack"
+  end
+  local function HideUnlessArcFilter()
+    return unifiedFilterMode ~= "arc"
+  end
+  args.autoTrackFilterMaster = {
+    type = "toggle",
+    name = "|TInterface\\Icons\\INV_Misc_Bag_10:16|t  Enable Auto-Track Equipped Trinkets",
+    desc = "Master toggle for auto-tracking equipped trinkets. The frames track the SLOT — icons update automatically when you swap gear.",
+    order = 62,
+    width = "full",
+    hidden = HideUnlessAutoTrackFilter,
+    get = function()
+      return ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
+        and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled()
+    end,
+    set = function(_, val)
+      if ns.ArcAuras and ns.ArcAuras.SetAutoTrackEquippedTrinkets then
+        ns.ArcAuras.SetAutoTrackEquippedTrinkets(val)
+        if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+          ns.ArcAurasOptions.InvalidateCache()
+        end
+        ns.CDMEnhanceOptions.InvalidateCache()
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end
+    end,
+  }
+  args.autoTrackFilterOnUse = {
+    type = "toggle",
+    name = "|TInterface\\Icons\\Spell_Nature_Lightning:16|t  Only Track On-Use Trinkets",
+    desc = "Passive trinkets (no on-use effect) are skipped when this is on.",
+    order = 62.1,
+    width = "full",
+    hidden = function()
+      if HideUnlessAutoTrackFilter() then return true end
+      return not (ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
+        and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled())
+    end,
+    get = function()
+      return ns.ArcAuras and ns.ArcAuras.IsOnlyOnUseTrinketsEnabled
+        and ns.ArcAuras.IsOnlyOnUseTrinketsEnabled()
+    end,
+    set = function(_, val)
+      if ns.ArcAuras and ns.ArcAuras.SetOnlyOnUseTrinkets then
+        ns.ArcAuras.SetOnlyOnUseTrinkets(val)
+        if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+          ns.ArcAurasOptions.InvalidateCache()
+        end
+        ns.CDMEnhanceOptions.InvalidateCache()
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end
+    end,
+  }
+  for _, slotID in ipairs({ 13, 14 }) do
+    args["autoTrackFilterSlot" .. slotID] = {
+      type = "toggle",
+      name = function()
+        local itemID = GetInventoryItemID("player", slotID)
+        local slotName = (slotID == 13) and "Trinket 1" or "Trinket 2"
+        if itemID then
+          local itemName = GetItemInfo(itemID)
+          local isOnUse = ns.ArcAuras and ns.ArcAuras.IsItemOnUse and ns.ArcAuras.IsItemOnUse(itemID)
+          local onUseStr = isOnUse and "|cff00ff00On-Use|r" or "|cff888888Passive|r"
+          return string.format("|T%s:18|t  |cffffd700%s:|r %s (%s)",
+            GetInventoryItemTexture("player", slotID) or 134400,
+            slotName, itemName or "Loading...", onUseStr)
+        end
+        return string.format("|cffffd700%s:|r |cff666666(Empty)|r", slotName)
+      end,
+      desc = "Toggle auto-tracking for this trinket slot.",
+      order = 62.2 + (slotID - 13) * 0.01,
+      width = "full",
+      hidden = function()
+        if HideUnlessAutoTrackFilter() then return true end
+        return not (ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
+          and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled())
+      end,
+      disabled = function()
+        -- grayed out: Only On-Use is on and this slot's trinket is passive
+        if ns.ArcAuras and ns.ArcAuras.IsOnlyOnUseTrinketsEnabled
+           and ns.ArcAuras.IsOnlyOnUseTrinketsEnabled() then
+          local itemID = GetInventoryItemID("player", slotID)
+          if itemID and ns.ArcAuras.IsItemPassive and ns.ArcAuras.IsItemPassive(itemID) then
+            return true
+          end
+        end
+        return false
+      end,
+      get = function()
+        return ns.ArcAuras and ns.ArcAuras.IsAutoTrackSlotEnabled
+          and ns.ArcAuras.IsAutoTrackSlotEnabled(slotID)
+      end,
+      set = function(_, val)
+        if ns.ArcAuras and ns.ArcAuras.SetAutoTrackSlotEnabled then
+          ns.ArcAuras.SetAutoTrackSlotEnabled(slotID, val)
+          if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+            ns.ArcAurasOptions.InvalidateCache()
+          end
+          ns.CDMEnhanceOptions.InvalidateCache()
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end
+      end,
+    }
+  end
+
+  -- rendered in the global-actions cluster (with Reset All Positions /
+  -- Reset All Options / Deselect at 395+), still gated on the Arc filter
+  args.arcMasterEnable = {
+    type = "toggle",
+    name = "Enable Arc Auras",
+    desc = "Master toggle for all Arc icon tracking (items, spells, timers, totems, aura icons).",
+    order = 396.7,
+    width = 1.0,
+    hidden = HideUnlessArcFilter,
+    get = function()
+      return ns.ArcAuras and ns.ArcAuras.IsEnabled and ns.ArcAuras.IsEnabled()
+    end,
+    set = function(_, val)
+      if not ns.ArcAuras then return end
+      if val then ns.ArcAuras.Enable() else ns.ArcAuras.Disable() end
+      if ns.AuraIcons and ns.AuraIcons.RefreshVisibility then
+        ns.AuraIcons.RefreshVisibility()
+      end
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
+  args.arcRefreshFrames = {
+    type = "execute",
+    name = "Refresh Arc Frames",
+    desc = "Show all Arc frames at their saved positions (fixes missing icons after a spec change).",
+    order = 396.8,
+    width = 1.0,
+    hidden = HideUnlessArcFilter,
+    func = function()
+      if ns.ArcAuras and ns.ArcAuras.ForceShowAllFrames then
+        local count = ns.ArcAuras.ForceShowAllFrames()
+        print("|cff00CCFF[Arc Auras]|r Showed " .. (count or 0) .. " frames")
+      end
+    end,
+  }
+  args.arcBulkHeader = {
+    type = "header",
+    name = "Bulk Management (Arc Icons)",
+    order = 397,
+    hidden = HideUnlessArcFilter,
+  }
+  local BULK_BUTTONS = {
+    { key = "trinket", label = "Clear Trinkets",     confirmMsg = "Remove all tracked trinkets?",  w = 0.9,  o = 397.1 },
+    { key = "item",    label = "Clear Custom Items", confirmMsg = "Remove all custom items?",      w = 1.1,  o = 397.2 },
+    { key = "spell",   label = "Clear Arc Spells",   confirmMsg = "Remove all tracked spells?",    w = 0.9,  o = 397.3 },
+    { key = "aura",    label = "Clear Arc Auras",    confirmMsg = "Remove all Arc aura icons?",    w = 0.9,  o = 397.4 },
+    { key = "all",     label = "Clear All",          confirmMsg = "Remove ALL tracked Arc icons?", w = 0.7,  o = 397.5 },
+  }
+  for _, b in ipairs(BULK_BUTTONS) do
+    args["arcBulk_" .. b.key] = {
+      type = "execute",
+      name = b.label,
+      desc = b.confirmMsg:gsub("%?", "."),
+      order = b.o,
+      width = b.w,
+      confirm = true,
+      confirmText = b.confirmMsg,
+      hidden = function()
+        if HideUnlessArcFilter() then return true end
+        if b.key == "aura" then
+          return not (ns.AuraIcons and ns.AuraIcons.IsAvailable())
+        end
+        return false
+      end,
+      func = function()
+        if ns.ArcAurasOptions and ns.ArcAurasOptions.ClearArcCategory then
+          ns.ArcAurasOptions.ClearArcCategory(b.key)
+        end
+      end,
+    }
+  end
+
+  -- ─────────────────────────────────────────────────────────────────
+  -- ARC SELECTION ACTIONS: remove + Load Conditions (Show on Specs /
+  -- Talent Conditions) directly in the Icon Catalog. Operations shared
+  -- with the Arc Icons tab via ns.ArcAurasOptions.
+  -- ─────────────────────────────────────────────────────────────────
+  local function GetArcSelectionList()
+    if editAllUnifiedMode then return nil end
+    local list, bad = {}, false
+    local function add(id)
+      if type(id) == "string" and id:match("^arc_") then
+        list[#list + 1] = id
+      else
+        bad = true
+      end
+    end
+    if next(selectedAuraIcons) then
+      for id in pairs(selectedAuraIcons) do add(id) end
+    elseif selectedAuraIcon then
+      add(selectedAuraIcon)
+    end
+    if next(selectedCooldownIcons) then
+      for id in pairs(selectedCooldownIcons) do add(id) end
+    elseif selectedCooldownIcon then
+      add(selectedCooldownIcon)
+    end
+    if bad or #list == 0 then return nil end
+    return list
+  end
+  local function GetSingleArcID()
+    local list = GetArcSelectionList()
+    if list and #list == 1 then return list[1] end
+    return nil
+  end
+  local function GetSingleArcConfig()
+    local id = GetSingleArcID()
+    if not id then return nil end
+    if not (ns.ArcAurasOptions and ns.ArcAurasOptions.GetArcConfigByID) then return nil end
+    return ns.ArcAurasOptions.GetArcConfigByID(id)
+  end
+  local function HideArcLoadConditions()   -- section header: selection only
+    return GetSingleArcConfig() == nil
+  end
+  local function HideArcLoadCondBody()     -- children: selection + collapse
+    return GetSingleArcConfig() == nil or collapsedSections.arcLoadConditions
+  end
+  args.arcRemoveSelected = {
+    type = "execute",
+    name = "|cffff6666Remove Arc Icon(s)|r",
+    desc = "Untrack the selected Arc icon(s) entirely (items, spells, timers, aura icons; totem slots are disabled).",
+    order = 99.2,
+    width = 1.0,
+    confirm = true,
+    confirmText = "Remove the selected Arc icon(s) from tracking?",
+    hidden = function() return GetArcSelectionList() == nil end,
+    func = function()
+      local list = GetArcSelectionList()
+      if list and ns.ArcAurasOptions and ns.ArcAurasOptions.RemoveArcIcons then
+        ns.ArcAurasOptions.RemoveArcIcons(list)
+        selectedAuraIcon = nil
+        selectedCooldownIcon = nil
+        wipe(selectedAuraIcons)
+        wipe(selectedCooldownIcons)
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end
+    end,
+  }
+  args.arcLoadCondHeader = {
+    type = "toggle",
+    name = "Load Conditions",
+    desc = "Click to expand/collapse.\n\nChoose when this Arc icon is shown: which specs, and which talents must be active.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not collapsedSections.arcLoadConditions end,
+    set = function(_, v) collapsedSections.arcLoadConditions = not v end,
+    order = 99.4,
+    width = "full",
+    hidden = HideArcLoadConditions,
+  }
+  for specNum = 1, 4 do
+    args["arcLoadCondSpec" .. specNum] = {
+      type = "toggle",
+      name = function()
+        local _, specName, _, specIcon = GetSpecializationInfo(specNum)
+        if specIcon and specName then
+          return string.format("|T%s:14:14:0:0|t %s", specIcon, specName)
+        end
+        return specName or ("Spec " .. specNum)
+      end,
+      desc = "Show this icon on this spec. All checked (or none set) = every spec.",
+      order = 99.5 + specNum * 0.01,
+      width = 0.85,
+      hidden = function()
+        if HideArcLoadCondBody() then return true end
+        return (GetNumSpecializations() or 4) < specNum
+      end,
+      get = function()
+        local cfg = GetSingleArcConfig()
+        if not cfg or not cfg.showOnSpecs or #cfg.showOnSpecs == 0 then return true end
+        for _, spec in ipairs(cfg.showOnSpecs) do
+          if spec == specNum then return true end
+        end
+        return false
+      end,
+      set = function(_, val)
+        local cfg = GetSingleArcConfig()
+        if cfg and ns.ArcAurasOptions.ApplyArcSpecToggle then
+          ns.ArcAurasOptions.ApplyArcSpecToggle(cfg, specNum, val)
+        end
+      end,
+    }
+  end
+  args.arcLoadCondAlwaysShow = {
+    type = "toggle",
+    name = "|cff00FF00Always Show|r (bypass spell-known check)",
+    desc = "Show this spell frame even when the game thinks you don't \"know\" the spell.\n\n|cff88ff88Use for:|r engineering enchants, profession abilities, cross-class spells — anything that says \"not in current spec\" but you can still use.\n\n|cff888888Spec filter and talent conditions still apply when set.|r",
+    order = 99.55,
+    width = 1.6,
+    hidden = function()
+      if HideArcLoadCondBody() then return true end
+      local id = GetSingleArcID()
+      return not (id and id:match("^arc_spell_"))
+    end,
+    get = function()
+      local cfg = GetSingleArcConfig()
+      return cfg and cfg.forceShow or false
+    end,
+    set = function(_, val)
+      local cfg = GetSingleArcConfig()
+      if not cfg then return end
+      cfg.forceShow = val or nil
+      if ns.ArcAurasOptions and ns.ArcAurasOptions.RefreshArcVisibility then
+        ns.ArcAurasOptions.RefreshArcVisibility()
+      end
+    end,
+  }
+  args.arcLoadCondTalentSummary = {
+    type = "description",
+    name = function()
+      local cfg = GetSingleArcConfig()
+      if not cfg then return "" end
+      if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+        return ns.TalentPicker.GetConditionSummary(cfg.talentConditions, cfg.talentConditionMode)
+      end
+      return "|cff888888No talent conditions|r"
+    end,
+    order = 99.6,
+    width = "full",
+    fontSize = "small",
+    hidden = HideArcLoadCondBody,
+  }
+  args.arcLoadCondTalentEdit = {
+    type = "execute",
+    name = "Edit Talent Conditions",
+    desc = "Open the talent picker to choose which talents must be active (or inactive) for this icon to show.",
+    order = 99.7,
+    width = 1.0,
+    hidden = HideArcLoadCondBody,
+    func = function()
+      local cfg = GetSingleArcConfig()
+      if not cfg or not ns.TalentPicker then return end
+      ns.TalentPicker.OpenPicker(cfg.talentConditions, cfg.talentConditionMode, function(conditions, matchMode)
+        cfg.talentConditions = conditions
+        cfg.talentConditionMode = matchMode
+        if ns.ArcAurasOptions.RefreshArcVisibility then
+          ns.ArcAurasOptions.RefreshArcVisibility()
+        end
+      end)
+    end,
+  }
+  args.arcLoadCondTalentClear = {
+    type = "execute",
+    name = "Clear",
+    desc = "Remove all talent conditions for this icon.",
+    order = 99.8,
+    width = 0.5,
+    hidden = function()
+      if HideArcLoadCondBody() then return true end
+      local cfg = GetSingleArcConfig()
+      return not cfg or not cfg.talentConditions or #cfg.talentConditions == 0
+    end,
+    func = function()
+      local cfg = GetSingleArcConfig()
+      if not cfg then return end
+      cfg.talentConditions = nil
+      cfg.talentConditionMode = nil
+      if ns.ArcAurasOptions.RefreshArcVisibility then
+        ns.ArcAurasOptions.RefreshArcVisibility()
+      end
+    end,
+  }
+
+  -- (Aura Group assignment lives in the GROUPS tab: create a Spell-ID Aura
+  -- Group with "+ Aura Group" and drag aura icons into it like any group.)
+
+  -- ── ARC ICON SETTINGS (enable / hide-unequipped / icon override) ──
+  local function IsSingleArcItemKind()
+    local id = GetSingleArcID()
+    return id and (id:match("^arc_trinket_") or id:match("^arc_item_")) and true or false
+  end
+  -- item/trinket-only now: the icon override merged into Icon Appearance's
+  -- Custom Icon input (arc-aware + ID Type selector)
+  local function HideArcSettings()
+    return not IsSingleArcItemKind()
+  end
+  local function HideArcSettingsBody()
+    return HideArcSettings() or collapsedSections.arcIconSettings
+  end
+  args.arcSettingsHeader = {
+    type = "toggle",
+    name = "Arc Icon Settings",
+    desc = "Click to expand/collapse.\n\nEnable/disable and hide-when-unequipped for this item icon.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not collapsedSections.arcIconSettings end,
+    set = function(_, v) collapsedSections.arcIconSettings = not v end,
+    order = 99.82,
+    width = "full",
+    hidden = HideArcSettings,
+  }
+  args.arcSettingsEnable = {
+    type = "toggle",
+    name = "Enabled",
+    desc = "Disable to keep the icon tracked but hidden.",
+    order = 99.84,
+    width = 0.6,
+    hidden = function()
+      return HideArcSettingsBody() or not IsSingleArcItemKind()
+    end,
+    get = function()
+      local cfg = GetSingleArcConfig()
+      return cfg and cfg.enabled ~= false
+    end,
+    set = function(_, val)
+      local id = GetSingleArcID()
+      if id and ns.ArcAuras and ns.ArcAuras.SetTrackedItemEnabled then
+        ns.ArcAuras.SetTrackedItemEnabled(id, val)
+        if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+          ns.ArcAurasOptions.InvalidateCache()
+        end
+        ns.CDMEnhanceOptions.InvalidateCache()
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end
+    end,
+  }
+  args.arcSettingsHideUnequipped = {
+    type = "toggle",
+    name = "Hide When Unequipped",
+    desc = "Hide this icon while the item isn't equipped (or in your bags for consumables).",
+    order = 99.85,
+    width = 1.1,
+    hidden = function()
+      return HideArcSettingsBody() or not IsSingleArcItemKind()
+    end,
+    get = function()
+      local id = GetSingleArcID()
+      return id and ns.ArcAuras and ns.ArcAuras.IsHideWhenUnequippedEnabled
+        and ns.ArcAuras.IsHideWhenUnequippedEnabled(id)
+    end,
+    set = function(_, val)
+      local id = GetSingleArcID()
+      if id and ns.ArcAuras and ns.ArcAuras.SetHideWhenUnequipped then
+        ns.ArcAuras.SetHideWhenUnequipped(id, val)
+        if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+          ns.ArcAurasOptions.InvalidateCache()
+        end
+        ns.CDMEnhanceOptions.InvalidateCache()
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end
+    end,
+  }
+  -- (icon override input lives in Icon Appearance's Custom Icon field,
+  -- arc-aware with the ID Type selector — no duplicate here)
+
+  -- ── CUSTOM TIMER EDITOR (mounted from the Custom Icons tab) ──
+  -- Every "editor*" entry of the Custom Icons options table is copied in
+  -- with orders compressed into 99.9x and hidden additionally gated on a
+  -- single arc timer selection. The entries target their timer through
+  -- GetSelectedTimer's catalog bridge (GetSingleSelectedArcTimer), so both
+  -- panels drive the SAME editor logic.
+  if ns.GetCustomIconsOptionsTable then
+    local ciTable = ns.GetCustomIconsOptionsTable()
+    local ciArgs = ciTable and ciTable.args
+    if ciArgs then
+      local function HideUnlessTimerSelected()
+        return ns.CDMEnhanceOptions.GetSingleSelectedArcTimer() == nil
+      end
+      -- NOT mounted: the editor's Icon and Spec & Talents sections — the
+      -- catalog already provides those ("Arc Icon Settings" icon override
+      -- and "Load Conditions" spec/talents work on timers through the same
+      -- config fields), so mounting them would duplicate the controls.
+      local CI_EXCLUDE = {
+        editorNoSelection = true,
+        -- redundant with the catalog's own selection header
+        editorSelectedHeader = true,
+        editorIconSubhead = true,
+        editorIconOverride = true,
+        editorIconResetBtn = true,
+        editorSpecTalentsSubhead = true,
+        editorSpecTalentsDesc = true,
+        editorTalentCondHeader = true,
+        editorTalentCondSummary = true,
+        editorTalentCondEdit = true,
+        editorTalentCondClear = true,
+      }
+      -- ONE wrapper section: "Custom Timer Settings" — the editor's own
+      -- sub-sections (Start Trigger/Stacks/End Trigger/Actions) nest under
+      -- it instead of sprawling at the catalog's top level
+      args.arcTimerSettingsHeader = {
+        type = "toggle",
+        name = "Custom Timer Settings",
+        desc = "Click to expand/collapse.\n\nThe timer's triggers, stacks, end events and actions.",
+        dialogControl = "CollapsibleHeader",
+        get = function() return not collapsedSections.arcTimerSettings end,
+        set = function(_, v) collapsedSections.arcTimerSettings = not v end,
+        order = 99.89,
+        width = "full",
+        hidden = HideUnlessTimerSelected,
+      }
+      for key, entry in pairs(ciArgs) do
+        if key:match("^editor") and not CI_EXCLUDE[key]
+           and not key:match("^editorShowOnSpec") then
+          local copy = {}
+          for k, v in pairs(entry) do copy[k] = v end
+          copy.order = 99.9 + (tonumber(entry.order) or 0) * 0.00001
+          local origHidden = entry.hidden
+          copy.hidden = function(info)
+            if HideUnlessTimerSelected() then return true end
+            if collapsedSections.arcTimerSettings then return true end
+            if type(origHidden) == "function" then return origHidden(info) end
+            return origHidden or false
+          end
+          args["ciMount_" .. key] = copy
+        end
+      end
+    end
   end
   
   -- Copy AURA per-icon options (order 100-199) - they use HideIfNoAuraSelection
@@ -14526,6 +15742,13 @@ end
 ns.CDMEnhanceOptions = ns.CDMEnhanceOptions or {}
 
 function ns.CDMEnhanceOptions.SelectIcon(cooldownID, isAura)
+  -- Arc AURA icons (arc_aura_*) ALWAYS live on the AURAS side of the Icon
+  -- Catalog — several legacy call sites (free-icon Edit buttons, icon
+  -- clicks, context menus) hardcode isAura=false for every arc_ ID, so the
+  -- authoritative routing lives HERE at the single chokepoint.
+  if type(cooldownID) == "string" and cooldownID:match("^arc_aura_") then
+    isAura = true
+  end
   -- Set the selected icon FIRST (before opening/navigating)
   if isAura then
     selectedAuraIcon = cooldownID

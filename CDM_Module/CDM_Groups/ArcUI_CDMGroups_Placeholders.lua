@@ -2074,9 +2074,8 @@ ClearWrongSpecPlaceholders = function()
                 group:Layout()
             end
         end
-        print("|cff00ccffArcUI|r: Cleared |cffff8800" .. removedCount .. "|r wrong-spec placeholder(s)")
     end
-    
+
     return removedCount
 end
 

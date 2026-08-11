@@ -196,8 +196,10 @@ end
 function ns.Sounds.SpeakText(text, voiceID)
   if not text or text == "" then return end
   if not C_VoiceChat or not C_VoiceChat.SpeakText then return end
-  -- voiceID 0 = default, Enum.TtsVoiceType.Standard = 0
-  C_VoiceChat.SpeakText(voiceID or 0, text, Enum.TtsVoiceType.Standard, 100, 100)
+  -- SpeakText(voiceID, text, rate, volume, overlap): rate 0 = normal speed,
+  -- overlap is a BOOL. (Was passing Enum.TtsVoiceType.Standard as the rate
+  -- and 100 as the overlap flag — Cooldown Reminder had it right.)
+  C_VoiceChat.SpeakText(voiceID or 0, text, 0, 100, false)
 end
 
 -- Get dropdown values for sound selection
@@ -1977,13 +1979,11 @@ local _C_GetAuraDurRem  = C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining
 local function SafeGetAuraData(unit, aiid)
   if aiid == nil or AurasSecret(unit) then return nil end
   _rawReadCount = _rawReadCount + 1
-  if IS_121 and _rawReadCount <= 3 then print(("|cffff0000[ArcSec TRIPWIRE]|r SafeGetAuraData raw read #%d on 12.1 unit=%s | %s"):format(_rawReadCount, tostring(unit), tostring(debugstack(2, 3, 0)))) end
   return _C_GetAuraData and _C_GetAuraData(unit, aiid)
 end
 local function SafeGetAuraDurationRemaining(unit, aiid)
   if aiid == nil or AurasSecret(unit) then return nil end
   _rawReadCount = _rawReadCount + 1
-  if IS_121 and _rawReadCount <= 3 then print(("|cffff0000[ArcSec TRIPWIRE]|r SafeGetAuraDurationRemaining raw read #%d on 12.1 unit=%s | %s"):format(_rawReadCount, tostring(unit), tostring(debugstack(2, 3, 0)))) end
   return _C_GetAuraDurRem and _C_GetAuraDurRem(unit, aiid)
 end
 
@@ -2495,6 +2495,27 @@ UpdateBarBuffInfo = function(barNumber)
     if currentSpec ~= barConfig.behavior.showOnSpec then return end
   end
   
+  -- CUSTOM AURA BAR (12.1, no CDM entry): the AuraContainer engine lane
+  -- drives fill + countdown from the raw spell ID — there is no CDM frame to
+  -- resolve, no aura-instance mapping, and aura presence cannot be read
+  -- (secret). The bar renders as an always-on frame whose engine fill
+  -- appears while the aura is active. All CDM machinery below is skipped.
+  if barConfig.tracking.customAura then
+    if ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable() then
+      if barConfig.tracking.useDurationBar then
+        if ns.Display and ns.Display.UpdateDurationBar then
+          ns.Display.UpdateDurationBar(barNumber, 0, 0, true, nil, nil,
+            barConfig.tracking.iconTextureID, barConfig.tracking.buffName)
+        end
+      elseif ns.Display and ns.Display.UpdateBar then
+        -- STACK bar: the engine ApplicationBar binding fills 0..maxStacks
+        ns.Display.UpdateBar(barNumber, 0, barConfig.tracking.maxStacks or 0, true, nil,
+          barConfig.tracking.iconTextureID, barConfig.tracking.buffName)
+      end
+    end
+    return
+  end
+
   local trackType = barConfig.tracking.trackType or "buff"
   local state = GetBarState(barNumber)
   local sourceType = barConfig.tracking.sourceType or "icon"

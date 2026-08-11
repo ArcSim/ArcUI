@@ -6505,7 +6505,6 @@ function ns.AppearanceOptions.GetOptionsTable()
         end,
         order = 33.72,
         width = 1.4,
-        disabled = function() return (ns.API and ns.API.IS_121) or false end,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
@@ -6515,14 +6514,16 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       durationColorCurveNote121 = {
         type = "description",
-        name = "|cffff8800Disabled on the 12.1 (Midnight) PTR: the bar fill can't be recolored by remaining time there (the duration is a protected value). This works normally on live servers.|r",
-        fontSize = "medium",
+        name = "|cff888888Seconds thresholds need Max Duration set to the aura's real length; percentages always match.|r",
+        fontSize = "small",
         order = 33.721,
         hidden = function()
           if not IsDurationBar() then return true end
           if IsIconMode() then return true end
           if collapsedSections.colorOptions then return true end
-          return not (ns.API and ns.API.IS_121)
+          if not (ns.API and ns.API.IS_121) then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.durationColorCurveEnabled and cfg.display.durationThresholdAsSeconds)
         end
       },
 

@@ -831,7 +831,7 @@ local function BuildEditor()
         },
         fadeNote121 = {
           type = "description",
-          name = "|cffff8800Disabled on the 12.1 (Midnight) PTR: a texture can't be faded by remaining time there (the duration is a protected value), so it stays at its normal opacity while active. This works normally on live servers.|r",
+          name = "|cffff8800Disabled in Patch 12.1: the game no longer lets addons fade a texture by remaining time, so it stays at its normal opacity while active.|r",
           order = 5.05,
           width = "full",
           hidden = function() return not (ns.API and ns.API.IS_121) end,

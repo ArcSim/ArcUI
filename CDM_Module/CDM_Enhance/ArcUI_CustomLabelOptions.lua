@@ -57,6 +57,15 @@ local function HideAuraCustomLabel()
   return h.HideIfNoAuraSelection() or h.collapsedSections.customLabel
 end
 
+-- Arc aura icons (container-driven) support ACTIVE-state labels only: the
+-- labels ride the engine button, which only renders while the aura is up.
+-- There is no missing-state signal (aspect-walled), so the When Inactive
+-- toggle is hidden for those selections.
+local function IsArcAuraSelection()
+  local h = H()
+  return h.IsCurrentAuraSelectionAllArcAura and h.IsCurrentAuraSelectionAllArcAura() or false
+end
+
 local function HideAuraCustomLabel2()
   if HideAuraCustomLabel() then return true end
   local c = H().GetAuraCfg()
@@ -206,7 +215,12 @@ local function BuildLabelEntries(suffix, orderBase, mode, hideLabel)
         Refresh()
       end,
       order = orderBase + 0.08, width = 0.95,
-      hidden = hideLabel,
+      hidden = function()
+        if hideLabel() then return true end
+        -- Arc aura icons: no missing-state signal exists -- active-only
+        local h = H()
+        return h.IsCurrentAuraSelectionAllArcAura and h.IsCurrentAuraSelectionAllArcAura() or false
+      end,
     }
   else
     -- Cooldown state toggles
@@ -415,6 +429,18 @@ function ns.CustomLabelOptions.GetAuraArgs()
     set = function(_, v) H().collapsedSections.customLabel = not v end,
     order = 168, width = "full",
     hidden = function() return H().HideIfNoAuraSelection() end,
+  }
+
+  -- Arc aura icon note: active-only labels (rides the live aura button)
+  args.customLabelArcAuraNote = {
+    type = "description",
+    name = "|cff88ccffArc aura icons:|r labels render on the live aura icon, so they only show while the aura is active.",
+    fontSize = "small",
+    order = 168.05, width = "full",
+    hidden = function()
+      if HideAuraCustomLabel() then return true end
+      return not IsArcAuraSelection()
+    end,
   }
 
   -- Label 1 (text, size, color, anchor, offsets, state toggles)

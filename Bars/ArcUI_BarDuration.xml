@@ -20,6 +20,17 @@
           </Layer>
         </Layers>
       </Frame>
+      <Frame parentKey="ArcStackHolder" setAllPoints="true">
+        <Layers>
+          <Layer level="OVERLAY">
+            <FontString parentKey="ArcStacks" inherits="NumberFontNormal" justifyH="CENTER">
+              <Anchors>
+                <Anchor point="CENTER" x="0" y="0"/>
+              </Anchors>
+            </FontString>
+          </Layer>
+        </Layers>
+      </Frame>
     </Frames>
   </Button>
 </Ui>

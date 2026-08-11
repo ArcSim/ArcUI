@@ -149,6 +149,32 @@ function GCDFilter.Install(frame, cdID)
     local spellID = ci and (ci.overrideSpellID or ci.spellID)
     if not spellID then return end
 
+    -- GCD-RACE GUARD: this hook fires at CDM REPAINT moments (every GCD for
+    -- every icon while spamming), and a FRESH cooldown API read taken there
+    -- can report a transient phantom state - a spell that is not on a real
+    -- cooldown briefly reads as if it were (the isActive=true/isOnGCD=false
+    -- race; EllesmereUI documents the same race and only trusts reads taken
+    -- at event moments). Under high haste this alternated phantom and real
+    -- reads on low-CD spells: the "flickering on/off cooldown" report.
+    -- CDM's own isOnActualCooldown field was computed during ITS event
+    -- processing (the settled moment), so when CDM says there is NO real
+    -- cooldown, clear the swipe instead of trusting the racy fresh read.
+    -- Charge spells keep the recharge push (recharge state has no GCD race).
+    -- SECRECY: isOnActualCooldown is a SECRET boolean in restricted contexts
+    -- (CDM derives it from secret compares in its secure context). Comparing
+    -- a secret throws - read it through an issecretvalue gate and let the
+    -- guard step aside when the field is secret (falls through to the
+    -- pre-guard behavior, which is safe, just not race-protected).
+    local onActual = pf.isOnActualCooldown
+    if issecretvalue and issecretvalue(onActual) then onActual = nil end
+    if not pf._arcIsChargeSpellCached and onActual == false then
+      pf._arcBypassCDHook = true
+      self:Clear()
+      pf._arcBypassCDHook = false
+      RefloatPreservedText(pf)
+      return
+    end
+
     -- Pick the right API: charge spells use recharge timer, normal spells
     -- use cooldown duration. Both called with ignoreGCD=true.
     -- For charge spells, GetSpellChargeDuration returns zero-span when no

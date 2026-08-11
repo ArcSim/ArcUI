@@ -704,6 +704,12 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key,xOffset,yOffset)
     if glowRef then
         local f = glowRef
         f._arcReleased = nil  -- Clear release guard (frame is active)
+        -- ARC FIX: ButtonGlowResetter Hide()s the frame on release, and nothing
+        -- here ever Show()d it again. A brand-new frame is shown by default, so
+        -- the FIRST glow worked and every one after a Stop came back from the
+        -- pool still hidden -- invisible, with no error. (PixelGlow/AutoCast
+        -- were unaffected; they never hide the frame in their resetters.)
+        f:Show()
         local width,height = r:GetSize()
         local gw = width  * 1.4 + xOffset * 2
         local gh = height * 1.4 + yOffset * 2
@@ -773,6 +779,7 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel,key,xOffset,yOffset)
         f:SetSize(gw, gh)
         f:SetPoint("TOPLEFT",     r, "TOPLEFT",     -ox,  oy)
         f:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT",  ox, -oy)
+        f:Show()   -- ARC FIX: recycled pool frames come back hidden (see above)
         if not(color) then
             f.color = false
             for texture in pairs(ButtonGlowTextures) do

@@ -1134,7 +1134,24 @@ local function FeedOptions(appName, options,container,rootframe,path,group,inlin
 						GroupContainer = gui:Create("SimpleGroup")
 					end
 
-					GroupContainer.width = "fill"
+					-- ARC LOCAL PATCH (ArcUI only; re-apply if this lib is updated).
+					-- Upstream forces EVERY inline group to full width, so two
+					-- can never share a row. Honour a numeric `width` from the
+					-- option table when one is given -- AceGUI's Flow layout
+					-- already understands relative widths. No width in the
+					-- option table means the original "fill", so every existing
+					-- group is unaffected.
+					local groupWidth = GetOptionsMemberValue("width", v, options, path, appName)
+					if type(groupWidth) == "number" and groupWidth > 0 and groupWidth <= 1 then
+						GroupContainer:SetRelativeWidth(groupWidth)
+						-- TOP-align it in the row. Flow centres a child on the row's
+						-- midline when alignoffset is nil, so two boxes of different
+						-- heights start at different Y. Only side-by-side groups take
+						-- this branch, so nothing else is affected.
+						GroupContainer.alignoffset = 0
+					else
+						GroupContainer.width = "fill"
+					end
 					GroupContainer:SetLayout("flow")
 					container:AddChild(GroupContainer)
 					FeedOptions(appName,options,GroupContainer,rootframe,path,v,true)

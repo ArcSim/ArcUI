@@ -78,6 +78,12 @@ end
 local function GetSelectedTimer()
     local arcID = ns.ArcAurasOptions and ns.ArcAurasOptions.GetSelectedArcAura
         and ns.ArcAurasOptions.GetSelectedArcAura()
+    -- CATALOG BRIDGE: the Icon Catalog mounts this editor's entries; when a
+    -- single arc timer is selected THERE (and the tab has no timer), edit it
+    if (not arcID or not arcID:match("^arc_timer_"))
+       and ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.GetSingleSelectedArcTimer then
+        arcID = ns.CDMEnhanceOptions.GetSingleSelectedArcTimer() or arcID
+    end
     if not arcID then return nil end
     for _, e in ipairs(GetTimersList()) do
         if e.arcID == arcID then return e end

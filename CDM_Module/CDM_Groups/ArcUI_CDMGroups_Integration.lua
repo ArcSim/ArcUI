@@ -261,7 +261,12 @@ function Integration.AssignAsFreeIcon(id, frame, x, y, iconSize, viewerType)
     
     frame._cdmgIsFreeIcon = true
     frame._cdmgFreeTargetSize = iconSize
-    
+
+    -- Apply per-icon Stack Priority strata/level (installs its own hooks)
+    if ns.CDMGroups.ApplyFreeIconStrata then
+        ns.CDMGroups.ApplyFreeIconStrata(id, frame)
+    end
+
     if ns.CDMGroups.SetupFreeIconDrag then
         ns.CDMGroups.SetupFreeIconDrag(id)
     end

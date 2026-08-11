@@ -801,6 +801,227 @@ function ns.Catalog.CreateArcUIDisplay(cooldownID, displayType, options)
   return true, barNum
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CUSTOM AURA DISPLAYS (12.1, by raw spell ID — auras NOT in the CD Manager)
+-- The AuraContainer engine lane (ns.BarDuration) already accepts a bare
+-- trackedSpellID; these creators just build a bar/texture config flagged
+-- customAura = true, which Core/Display/Textures route straight to the
+-- engine. The bar frame renders always (presence is secret); the engine
+-- fill + countdown appear while the aura is active.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- useDurationBar: true/nil = duration bar (default); false = STACK bar (engine
+-- ApplicationBar fill; the user must set Max Stacks after creation -- the
+-- binding requires it and BD only attaches once it is > 0).
+function ns.Catalog.CreateCustomAuraBar(spellID, trackType, useDurationBar)
+  if useDurationBar == nil then useDurationBar = true end
+  if not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()) then
+    return false, "Custom aura bars need patch 12.1."
+  end
+  spellID = tonumber(spellID)
+  if not spellID or spellID <= 0 then
+    return false, "Invalid spell ID"
+  end
+  local db = ns.API.GetDB()
+  if not db or not db.bars then
+    return false, "ArcUI database not ready"
+  end
+
+  local barNum = nil
+  for i = 1, 30 do
+    local cfg = ns.API.GetBarConfig(i)
+    if cfg and not cfg.tracking.enabled and not cfg.tracking.customEnabled then
+      barNum = i
+      break
+    end
+  end
+  if not barNum then
+    return false, "No available bar slots (max 30)"
+  end
+
+  local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+  local cfg = ns.API.GetBarConfig(barNum)
+  cfg.tracking.enabled = true
+  cfg.tracking.customAura = true
+  cfg.tracking.sourceType = "icon"
+  cfg.tracking.buffName = (info and info.name) or ("Spell " .. spellID)
+  cfg.tracking.spellID = spellID
+  cfg.tracking.displaySpellID = spellID
+  cfg.tracking.trackedSpellID = spellID
+  cfg.tracking.iconTextureID = (info and (info.iconID or info.originalIconID)) or 134400
+  cfg.tracking.cooldownID = nil
+  cfg.tracking.useDurationBar = useDurationBar
+  cfg.tracking.maxStacks = 0
+  cfg.tracking.maxDuration = 0
+  cfg.tracking.dynamicMaxDuration = useDurationBar
+  cfg.tracking.trackType = trackType or "buff"
+  cfg.display.displayType = "bar"
+  cfg.display.enabled = true
+  cfg.display.showDuration = useDurationBar
+  if not useDurationBar then cfg.display.showText = true end
+  if not cfg.behavior then cfg.behavior = {} end
+  cfg.behavior.showOnSpecs = { GetSpecialization() or 1 }
+
+  if ns.API.InvalidateActiveBarCache then ns.API.InvalidateActiveBarCache() end
+  if ns.Display and ns.Display.ApplyAppearance then
+    ns.Display.ApplyAppearance(barNum)
+  end
+  if ns.API.ValidateAllBarTracking then
+    ns.API.ValidateAllBarTracking()
+  end
+  if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNum) end
+
+  return true, barNum
+end
+
+function ns.Catalog.CreateCustomAuraTexture(spellID, trackType)
+  if not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()) then
+    return false, "Custom aura textures need patch 12.1."
+  end
+  spellID = tonumber(spellID)
+  if not spellID or spellID <= 0 then
+    return false, "Invalid spell ID"
+  end
+  if not (ns.API and ns.API.InitializeNewTexture and ns.API.SelectBuffForTexture) then
+    return false, "Textures module not available"
+  end
+  local num = ns.API.InitializeNewTexture()
+  if not num then
+    return false, "No free texture slots"
+  end
+  local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+  ns.API.SelectBuffForTexture({
+    spellID = spellID,
+    buffName = (info and info.name) or ("Spell " .. spellID),
+    iconTextureID = (info and (info.iconID or info.originalIconID)) or 134400,
+    cooldownID = nil,
+    slotNumber = 0,
+    maxStacks = 10,
+  }, num)
+  local tcfg = ns.API.GetTextureConfig and ns.API.GetTextureConfig(num)
+  if tcfg and tcfg.tracking then
+    tcfg.tracking.customAura = true
+    tcfg.tracking.trackedSpellID = spellID
+    tcfg.tracking.trackType = trackType or "buff"
+  end
+  local db = ns.API.GetDB and ns.API.GetDB()
+  if db then db.selectedTexture = num end
+  if ns.Textures and ns.Textures.UpdateTexture then ns.Textures.UpdateTexture(num) end
+  return true, num
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CUSTOM AURA CATALOG ENTRIES
+-- Session store keyed "custom_<spellID>". Entries are also re-seeded from any
+-- existing customAura bar/texture configs, so customs with a live display
+-- reappear in the catalog grid after reload without their own SavedVariables.
+-- isDisplayed = true so the shared selection/create paths treat customs as
+-- ready (there is no CDM configuration step for them).
+-- ═══════════════════════════════════════════════════════════════════════════
+local customCatalog = {}
+
+local function BuildCustomEntry(spellID, trackType)
+  local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+  if not info then return nil end
+  return {
+    key = "custom_" .. spellID,
+    isCustomAura = true,
+    spellID = spellID,
+    displaySpellID = spellID,
+    cooldownID = nil,
+    name = info.name or ("Spell " .. spellID),
+    icon = info.iconID or info.originalIconID or 134400,
+    trackType = trackType or "buff",
+    isDisplayed = true,
+  }
+end
+
+function ns.Catalog.AddCustomEntry(spellID, trackType)
+  spellID = tonumber(spellID)
+  if not spellID or spellID <= 0 then
+    return nil, "Invalid spell ID"
+  end
+  local key = "custom_" .. spellID
+  local existing = customCatalog[key]
+  if existing then
+    existing.trackType = trackType or existing.trackType
+    return key
+  end
+  local entry = BuildCustomEntry(spellID, trackType)
+  if not entry then
+    return nil, "Unknown spell ID " .. spellID .. " — check the ID and try again."
+  end
+  customCatalog[key] = entry
+  return key
+end
+
+function ns.Catalog.GetCustomEntry(key)
+  return customCatalog[key]
+end
+
+function ns.Catalog.RemoveCustomEntry(key)
+  customCatalog[key] = nil
+end
+
+-- Re-seed session entries from existing custom bar/texture configs, then
+-- return all custom entries sorted by name. Names come from C_Spell (never
+-- secret), so a plain sort is fine.
+function ns.Catalog.GetCustomEntries()
+  local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+  if db then
+    if db.bars then
+      for i = 1, 30 do
+        local cfg = db.bars[i]
+        local t = cfg and cfg.tracking
+        if t and t.enabled and t.customAura and t.trackedSpellID then
+          local key = "custom_" .. t.trackedSpellID
+          if not customCatalog[key] then
+            customCatalog[key] = BuildCustomEntry(t.trackedSpellID, t.trackType)
+          end
+        end
+      end
+    end
+    if db.textures then
+      for _, cfg in pairs(db.textures) do
+        local t = cfg and cfg.tracking
+        if t and t.enabled and t.customAura and t.trackedSpellID then
+          local key = "custom_" .. t.trackedSpellID
+          if not customCatalog[key] then
+            customCatalog[key] = BuildCustomEntry(t.trackedSpellID, t.trackType)
+          end
+        end
+      end
+    end
+  end
+  local results = {}
+  for _, entry in pairs(customCatalog) do
+    table.insert(results, entry)
+  end
+  table.sort(results, function(a, b)
+    return (a.name or "") < (b.name or "")
+  end)
+  return results
+end
+
+-- Bars created from a custom entry (mirrors FindAllArcUIBarsByCooldownID's
+-- return shape for the selection info panel)
+function ns.Catalog.FindCustomAuraBars(spellID)
+  local bars = {}
+  local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+  if not db or not db.bars then return bars end
+  for i = 1, 30 do
+    local cfg = db.bars[i]
+    local t = cfg and cfg.tracking
+    if t and t.enabled and t.customAura and t.trackedSpellID == spellID then
+      table.insert(bars, {
+        barNum = i,
+        mode = t.useDurationBar and "duration" or "stacks",
+      })
+    end
+  end
+  return bars
+end
+
 -- Remove an ArcUI bar/icon
 function ns.Catalog.RemoveArcUIDisplay(barNum, disableInCDM)
   local cfg = ns.API.GetBarConfig(barNum)

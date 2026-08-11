@@ -86,12 +86,15 @@ local function MatchCover(slot, targetFrame)
     cover:SetAllPoints(tIcon)   -- match the icon's exact position/size (inside any border inset)
 end
 
+-- PTR7+ (build > 68675): containers can be created IN COMBAT; the defer below
+-- remains only for older 12.1 builds (pre-PTR7 creation is a Lua error).
+local COMBAT_CREATE_OK = (tonumber((select(2, GetBuildInfo()))) or 0) > 68675
+
 -- One AuraContainer per unit (player buffs vs target debuffs live separately).
--- Created out of combat only (in-combat creation is a Lua error, intended).
 local function GetContainer(unit)
     local c = containers[unit]
     if c then return c end
-    if InCombatLockdown() then
+    if InCombatLockdown() and not COMBAT_CREATE_OK then
         Log("cannot create a container in combat — try again out of combat.")
         return nil
     end

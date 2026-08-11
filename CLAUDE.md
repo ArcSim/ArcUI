@@ -17,6 +17,11 @@ build-check protocol in Reference Sources before doing API work.)
 
 ## ABSOLUTE RULES — never violate these
 
+- **COMBAT-FIRST: if a feature or option cannot do its job DURING COMBAT under 12.x secrecy,
+  it does NOT ship — remove the option entirely, never ship it degraded-with-a-disclaimer.**
+  Evaluate combat behavior BEFORE building; hunt workarounds first; if none, say "can't work
+  in combat" and skip. Applies to every Arc addon (see the `wow-addon-dev` skill and the
+  `combat-first-feature-rule` memory).
 - **NEVER use pcall anywhere in ArcUI.** No exceptions. It has all been removed; do not reintroduce it.
 - **ALL new features and options MUST default to false/disabled.** Users opt-in, never opt-out.
 - **Surgical fixes only.** Fix exactly what was asked. No "while I'm here" restructuring, no broad
@@ -500,7 +505,8 @@ legacy/orphan files), `Cooldown_Reminder\`, and `Import_Export\`. The CDM side i
   `AssignFrameToOwner`), installs anti-reclamation hooks, 2Hz visual maintainer, `OnFrameRebind`
   callback registry.
 - **ArcUI_CDMGroups_Maintain.lua** — hook callbacks/installers (`HookFrame*`) that re-assert
-  frame properties when CDM fights back; `SetupFreeIconFrame`, `FindFrameInViewers`.
+  frame properties when CDM fights back; `ApplyFreeIconStrata` (free-icon Stack Priority
+  strata/level), `FindFrameInViewers`.
 - **ArcUI_CDMGroups_Layout.lua** — icon sizing/slot math, grid alignment, tooltip/click-through
   application (`SetupFrameInContainer`, `RefreshAllGroupLayouts`, `CalculateSlotPosition`).
 - **ArcUI_CDMGroups_Placeholders.lua** — `ns.CDMGroups.Placeholders`: draggable placeholder

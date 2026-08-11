@@ -145,6 +145,9 @@ local function SecondsColorKey(d)
   end
   return table.concat(parts, "|")
 end
+-- exported: BarDuration's ApplyStyle uses it to detect band edits (values or
+-- colors changed while Color by Remaining Time stays on) and rewire the slot
+DT.SecondsColorKey = SecondsColorKey
 
 -- Build a NumericRuleFormatter whose breakpoints switch the text colour by the
 -- remaining-seconds value. Band [0, t1) uses the lowest threshold's colour; each

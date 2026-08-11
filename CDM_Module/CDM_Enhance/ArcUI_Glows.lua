@@ -416,15 +416,37 @@ local function ApplyPostStartOpts(frame, glowType, key, opts)
     -- LCG call. Without this, Masque-skinned frames can report stale layout
     -- dimensions to LCG at creation time, causing undersized glows.
     local pw, ph = GetFrameSize(frame)
-    if pw and ph and pw > 1 and ph > 1 and glowType ~= "button" then
-        -- Button glow manages its own internal texture sizing
+    if pw and ph and pw > 1 and ph > 1 then
         -- Snap to integer screen pixels to prevent 1px glow misalignment at fractional UI scales
         local effScale = frame:GetEffectiveScale()
         if effScale and effScale > 0 then
             pw = math.floor(pw * effScale + 0.5) / effScale
             ph = math.floor(ph * effScale + 0.5) / effScale
         end
-        glowFrame:SetSize(pw, ph)
+        if glowType ~= "button" then
+            glowFrame:SetSize(pw, ph)
+        else
+            -- Button glow was EXCLUDED from this correction, and that was the
+            -- bug: LCG bakes its geometry from r:GetSize() once, at creation,
+            -- and nothing ever revisits it. A frame that reports a stale or
+            -- zero size at that instant gets a zero-sized glow that simply
+            -- never appears -- "button glow does nothing" with no error.
+            -- Every other type was rescued by the SetSize above; button was not.
+            --
+            -- Same math LCG uses, re-run against the corrected parent size.
+            local xo, yo = opts.xOffset or 0, opts.yOffset or 0
+            local gw = pw * 1.4 + xo * 2
+            local gh = ph * 1.4 + yo * 2
+            local ox = pw * 0.2 + xo
+            local oy = ph * 0.2 + yo
+            if gw > 0 and gh > 0 then
+                glowFrame:SetSize(gw, gh)
+                glowFrame:ClearAllPoints()
+                glowFrame:SetPoint("TOPLEFT",     frame, "TOPLEFT",     -ox,  oy)
+                glowFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT",  ox, -oy)
+                if glowFrame.ants then glowFrame.ants:SetSize(gw * 0.85, gh * 0.85) end
+            end
+        end
     end
 
     -- Intensity (alpha override) — skip button, it has own fade animations

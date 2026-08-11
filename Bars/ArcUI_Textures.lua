@@ -274,6 +274,21 @@ local PROGRESS_DIRS = {
     fillCorner = "TOPLEFT",     frameCorner = "BOTTOMRIGHT", fillOffX = -1, fillOffY = 0  },
 }
 
+-- Re-anchor the reveal mask to a given fill TEXTURE (live: frame.bar's own
+-- fill; 12.1: the borrowed AuraButton engine's ArcBar fill, captured once at
+-- wire time). The outer corner always pins to frame.bar's RECT (the drain
+-- region geometry), which both modes share -- the button is SetAllPoints to
+-- frame.bar, and its ArcBar is SetAllPoints to the button. Anchoring TO the
+-- stored (access-constrained) texture is legal; we never call into it.
+local function AnchorDrainMask(frame, fillTex)
+  local dir = PROGRESS_DIRS[frame._arcDrainDirKey] or PROGRESS_DIRS.TOP_TO_BOTTOM
+  local mask = frame.drainMask
+  if not (mask and fillTex) then return end
+  mask:ClearAllPoints()
+  mask:SetPoint(dir.fillCorner, fillTex, dir.fillCorner, dir.fillOffX, dir.fillOffY)
+  mask:SetPoint(dir.frameCorner, frame.bar, dir.frameCorner, 0, 0)
+end
+
 -- Rotation for a texture (the manual Rotate angle, in radians). Works in BOTH
 -- static and drain now that the foreground is a normal, rotatable texture (the
 -- mask-based drain no longer relies on a StatusBar fill visual).
@@ -1065,8 +1080,26 @@ function Textures.ApplyAppearance(num)
     -- DRAIN (mask-based): a hidden status bar drives the timing; a mask reveals the
     -- depleting part in place -- the texture never moves.
     local dir = PROGRESS_DIRS[d.progressDir] or PROGRESS_DIRS.TOP_TO_BOTTOM
+    frame._arcDrainDirKey = d.progressDir or "TOP_TO_BOTTOM"
+    frame._arcDrainSrcFile = srcFile
+    frame._arcDrainBlend = blend
     local rcx, rcy, rW, rH, regionMode = DrainRegion(d, w, h)
     frame._arcRegionDrain = regionMode
+
+    -- 12.1 engine HOST: art-as-fill maps the WHOLE art onto whatever rect the
+    -- bar covers, so the engine must ride the plain UNROTATED texture rect --
+    -- never frame.bar (rotated bounding box / thin region band), which
+    -- squeezes the art into a sliver (the "texture flying up" bug). Region
+    -- drains and rotation are therefore INELIGIBLE for the 12.1 engine mode
+    -- (they fall back to static-while-active there; live mask mode unaffected).
+    if not frame._arcDrainHost then
+      frame._arcDrainHost = CreateFrame("Frame", nil, frame)
+    end
+    frame._arcDrainHost:ClearAllPoints()
+    frame._arcDrainHost:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    frame._arcDrainHost:SetSize(w, h)
+    frame._arcDrainHost:Show()
+    frame._arcDrainEligible = (not regionMode) and (EffectiveRotation(d) == 0)
 
     -- Foreground: the full, in-place texture.
     tex:SetTexture(nil)
@@ -1170,6 +1203,18 @@ function Textures.ApplyAppearance(num)
       end
     end
 
+    -- 12.1 borrowed-engine mode: the engine's ArcBar carries the art as its
+    -- FILL (mask-to-engine-fill anchoring is aspect-blocked). A DIRECTION,
+    -- TEXTURE or ELIGIBILITY change needs a fresh engine (bindings + fill are
+    -- init-window): release the slot; the drive block re-attaches next pass.
+    if frame._arcDrainAttached
+       and (frame._arcDrainDir ~= frame._arcDrainDirKey
+            or frame._arcDrainSrc ~= srcFile
+            or not frame._arcDrainEligible) then
+      if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(frame._arcDrainHost) end
+      frame._arcDrainAttached, frame._arcDrainDir, frame._arcDrainSrc, frame._arcDrainBT = nil, nil, nil, nil
+    end
+
     -- Config (direction/source) changed: re-seed the timer next update.
     frame._arcDrainSeeded = false
     frame._arcDrainFrame = nil
@@ -1247,10 +1292,22 @@ function Textures.UpdateTexture(num)
 
   local activeFrame = FindActiveFrame(cfg)
   local active = activeFrame ~= nil
+  -- CUSTOM AURA (12.1, no CDM entry): presence cannot be read (secret) —
+  -- treat as always-active. In Progress/Drain mode the engine-driven art
+  -- appears and vanishes with the aura anyway (it rides the AuraButton);
+  -- static mode renders permanently (documented limitation).
+  if cfg.tracking and cfg.tracking.customAura
+     and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable() then
+    active = true
+  end
   local showInactive = (d.showWhenInactive == true)
 
   -- Hidden when inactive (and not editing): nothing to draw.
-  if (not active) and (not showInactive) and (not optionsOpen) then
+  -- NOT during the prebuild (Textures._prebuild): this return sits BEFORE the
+  -- drain-engine attach, so a CDM texture whose aura first lands in combat
+  -- never armed its engine and the art never drained that session (in-game
+  -- log: the endless "cd=113506 tracked=nil" deferrals were these textures).
+  if (not active) and (not showInactive) and (not optionsOpen) and (not Textures._prebuild) then
     Textures.HideTexture(num)
     return
   end
@@ -1328,8 +1385,98 @@ function Textures.UpdateTexture(num)
     -- _arcDrainSeeded so the aura's OWN refresh re-seeds. The bar stays invisible
     -- (alpha 0); only its fill geometry sweeps the mask over the foreground.
     bar:SetStatusBarColor(1, 1, 1, 0)
-    local durObj = active and GetDurObjFor(cfg, activeFrame)
-    if durObj and bar.SetTimerDuration and Enum and Enum.StatusBarInterpolation and Enum.StatusBarTimerDirection then
+    local drainUnit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
+    local drainSecret = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(drainUnit)
+    -- custom auras have no live-data fallback (no CDM frame to read a durObj
+    -- from) — they always ride the engine lane on 12.1, secret or not
+    local texCustomAura = cfg.tracking and cfg.tracking.customAura
+      and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
+    local durObj = (not drainSecret) and (not texCustomAura) and active and GetDurObjFor(cfg, activeFrame) or nil
+    if (drainSecret or texCustomAura) and frame._arcDrainEligible and frame._arcDrainHost
+       and ns.BarDuration and ns.BarDuration.Attach then
+      -- 12.1: the durObj is unreadable, so borrow an AuraButton engine (same as
+      -- the duration text): it drives its own invisible ArcBar -- a geometry
+      -- clone of frame.bar -- and our reveal mask anchors to THAT fill,
+      -- captured once inside the engine's init window. Our own bar stays FULL:
+      -- it is only the outer mask anchor + the drain-region rect now. Attach
+      -- once per texture; the engine re-drives on every aura (re)apply,
+      -- combat included.
+      local cdID = cfg.tracking and cfg.tracking.cooldownID
+      local tsID = cfg.tracking and cfg.tracking.trackedSpellID
+      -- DIRECTION MODEL (lab-proven): StandardNoRangeFill only pins the art on
+      -- NON-reversed fills. Non-reversed directions (TOP_TO_BOTTOM,
+      -- RIGHT_TO_LEFT) = BRIGHT mode: the art is the fill, shrinking with
+      -- RemainingTime. Reversed directions (BOTTOM_TO_TOP, LEFT_TO_RIGHT) =
+      -- CLIP mode, TRUE vanish: an INVISIBLE ElapsedTime fill grows from the
+      -- consumed side; a SetClipsChildren frame (child of the button --
+      -- inherits the secret show/hide) spans host-edge .. fill-moving-edge =
+      -- the REMAINING region; the art inside anchors to the HOST (pinned) and
+      -- is genuinely clipped away. Frames MAY ride engine geometry (only
+      -- MASKS are aspect-blocked). Exact visual parity with bright mode:
+      -- consumed = gone, ghost shows through.
+      local dirTbl = PROGRESS_DIRS[frame._arcDrainDirKey] or PROGRESS_DIRS.TOP_TO_BOTTOM
+      local clipMode = dirTbl.reverse == true
+      if ((cdID and cdID > 0) or (tsID and tsID > 0)) and not frame._arcDrainAttached
+         and frame._arcDrainSrcFile then
+        frame._arcDrainAttached = true
+        frame._arcDrainDir = frame._arcDrainDirKey
+        frame._arcDrainSrc = frame._arcDrainSrcFile
+        local host = frame._arcDrainHost
+        -- ALWAYS the ACTIVE style: the engine art renders only while the aura
+        -- is up, but wiring can happen while it is DOWN (the login prebuild,
+        -- or showWhenInactive) -- taking the state-dependent r/g/b/alpha here
+        -- baked the low-opacity ghost style into the drain art (in-game
+        -- report: "full color not showing, looks like the ghost texture")
+        local ac = d.activeColor
+        local artR = (ac and ac.r) or 1
+        local artG = (ac and ac.g) or 1
+        local artB = (ac and ac.b) or 1
+        local artA = tonumber(d.activeAlpha) or 1
+        local artFile, artBlend = frame._arcDrainSrcFile, frame._arcDrainBlend
+        local vertical = dirTbl.orient == "VERTICAL"
+        -- the HOST (plain unrotated texture rect), never frame.bar -- see setup
+        ns.BarDuration.Attach(host, nil, cdID, tsID, drainUnit, {
+          driveArcBar  = true,
+          drainOrient  = dirTbl.orient,
+          drainReverse = false,          -- NEVER reverse (NoRangeFill can't pin it)
+          drainElapsed = clipMode,       -- boundary tracks elapsed time
+          drainClip    = clipMode,       -- invisible geometry driver
+          drainTexture = (not clipMode) and artFile or nil,
+          drainBlend   = artBlend,
+          drainColor   = { r = artR, g = artG, b = artB, a = artA },
+          onWired = clipMode and function(btn2, ab2)
+            local ft = ab2 and ab2.GetStatusBarTexture and ab2:GetStatusBarTexture()
+            if not ft then return end
+            local clip = CreateFrame("Frame", nil, btn2)
+            clip:SetClipsChildren(true)
+            if vertical then
+              -- remaining = host top .. fill top edge (fill grows from bottom)
+              clip:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+              clip:SetPoint("BOTTOMRIGHT", ft, "TOPRIGHT", 0, 0)
+            else
+              -- remaining = fill right edge .. host right (fill grows from left)
+              clip:SetPoint("TOPLEFT", ft, "TOPRIGHT", 0, 0)
+              clip:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
+            end
+            local art = clip:CreateTexture(nil, "ARTWORK")
+            art:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+            art:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
+            art:SetTexture(artFile)
+            if artBlend then art:SetBlendMode(artBlend) end
+            art:SetVertexColor(artR, artG, artB)
+            art:SetAlpha(artA)
+          end or nil,
+        })
+      end
+      -- the engine renders the draining art in BOTH modes (bright fill or
+      -- clipped child); our own foreground stays hidden. Ghost/rest pieces
+      -- remain ours; the normal path re-shows everything when non-secret.
+      if frame.tex then frame.tex:Hide() end
+      bar:SetMinMaxValues(0, 1)
+      bar:SetValue(1)
+      frame._arcDrainSeeded = false
+      frame._arcDrainFrame = nil
+    elseif durObj and bar.SetTimerDuration and Enum and Enum.StatusBarInterpolation and Enum.StatusBarTimerDirection then
       if (not frame._arcDrainSeeded) or (frame._arcDrainFrame ~= activeFrame) then
         bar:SetMinMaxValues(0, 1)
         bar:SetTimerDuration(durObj, Enum.StatusBarInterpolation.ExponentialEaseOut, Enum.StatusBarTimerDirection.RemainingTime)
@@ -1356,6 +1503,13 @@ function Textures.UpdateTexture(num)
       bar:SetValue(active and 1 or 0)   -- no live duration: full / empty
       frame._arcDrainSeeded = false
       frame._arcDrainFrame = nil
+      -- borrowed engine no longer applicable (left the secret env): release the
+      -- slot and hand the mask back to our own bar's fill
+      if frame._arcDrainAttached then
+        if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(frame._arcDrainHost) end
+        frame._arcDrainAttached, frame._arcDrainBT, frame._arcDrainDir, frame._arcDrainSrc = nil, nil, nil, nil
+        AnchorDrainMask(frame, bar:GetStatusBarTexture())
+      end
     end
     bar:Show()   -- shown but invisible, so its fill geometry (and the mask) keep updating
 
@@ -1409,7 +1563,9 @@ function Textures.UpdateTexture(num)
         -- no bar) exactly like the aura duration bars. The engine's ArcTimer overlays our dtext.
         local cdID = cfg.tracking and cfg.tracking.cooldownID
         local tsID = cfg.tracking and cfg.tracking.trackedSpellID
-        if active and ns.BarDuration and ns.BarDuration.Attach and ((cdID and cdID > 0) or (tsID and tsID > 0)) then
+        -- arm during the prebuild too: this binding is the texture's one
+        -- chance per session, same as the drain engine above
+        if (active or Textures._prebuild) and ns.BarDuration and ns.BarDuration.Attach and ((cdID and cdID > 0) or (tsID and tsID > 0)) then
           local dOutline = DUR_OUTLINE[d.durationOutline or "THICKOUTLINE"] or "THICKOUTLINE"
           local dFontPath = "Fonts\\FRIZQT__.TTF"
           if LSM and d.durationFont then local f = LSM:Fetch("font", d.durationFont); if f and f ~= "" then dFontPath = f end end

@@ -141,6 +141,58 @@ ArcAurasCooldown.PlayerKnowsOrGranted = PlayerKnowsOrGranted
 ArcAurasCooldown.GetSpellNameAndIcon = GetSpellNameAndIcon
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- OVERRIDE FOLLOWING (ported from the ArcCDM mirror engine)
+-- Talents/auras override which spell a button casts (Stormstrike -> Windstrike
+-- in Ascendance, Flame Shock -> Voltaic Blaze) and the COOLDOWN lives on that
+-- override spell, not the base. Blizzard's own CooldownViewer reads the
+-- override first; EnhanceQoL does the same. Reading the base returns NO
+-- cooldown for proc/replacement spells, leaving those icons stuck "never on
+-- cooldown". GetOverrideSpell is non-secret; no override = id unchanged.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function EffectiveSID(spellID)
+    if not spellID then return spellID end
+    if C_Spell.GetOverrideSpell then
+        local o = C_Spell.GetOverrideSpell(spellID)
+        if type(o) == "number" and o > 0 then return o end
+    end
+    return spellID
+end
+ArcAurasCooldown.EffectiveSID = EffectiveSID
+
+-- Reverse map: live override id -> arcID. Built lazily whenever a feed sees an
+-- override form, so event handlers (cast success, proc glows) that receive the
+-- OVERRIDE id can find the tracked base icon. Stale entries are harmless (a
+-- gone override's id can no longer fire events).
+ArcAurasCooldown.overrideToArc = ArcAurasCooldown.overrideToArc or {}
+
+local function FindArcIDForSpell(sid)
+    if not sid then return nil end
+    return ArcAurasCooldown.spellsByID[sid] or ArcAurasCooldown.overrideToArc[sid]
+end
+
+-- Keep the icon ART in sync with the live override form. Change-detected on
+-- fd._arcDisplayedSID so SetTexture only runs when the form actually flips.
+-- Skipped when the user configured a custom icon (never stomp their choice).
+local function UpdateOverrideIcon(fd, effectiveSID)
+    if not fd or not fd.spellID or not fd.frame then return end
+    if fd.isCustomTimer or fd.isCustomTotem then return end
+    if effectiveSID == fd._arcDisplayedSID then return end
+    local frame = fd.frame
+    local cfg = frame.cooldownID and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings
+        and ns.CDMEnhance.GetIconSettings(frame.cooldownID)
+    if cfg and cfg.customIconID and cfg.customIconID ~= 0 and cfg.customIconID ~= "" then
+        return  -- user picked a custom icon: leave it alone
+    end
+    fd._arcDisplayedSID = effectiveSID
+    local iconTex = frame.Icon or frame.icon
+    if iconTex and not iconTex.SetTexture and iconTex.Icon then iconTex = iconTex.Icon end
+    if iconTex and iconTex.SetTexture and C_Spell.GetSpellTexture then
+        local tex = C_Spell.GetSpellTexture(effectiveSID)
+        if tex then iconTex:SetTexture(tex) end
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- GLOW HELPERS
 -- ═══════════════════════════════════════════════════════════════════════════
 -- FORWARD DECLARATIONS
@@ -189,8 +241,13 @@ local function FeedShadows(fd)
     if not fd or not fd.spellID then return end
     EnsureShadowFrames(fd)
 
+    -- Read the cooldown off the LIVE form (override-aware): the cooldown lives
+    -- on the override spell for proc/replacement/transform spells.
+    local sid = EffectiveSID(fd.spellID)
+    if sid ~= fd.spellID then ArcAurasCooldown.overrideToArc[sid] = fd.arcID end
+
     if C_Spell.GetSpellCooldownDuration then
-        local dur = C_Spell.GetSpellCooldownDuration(fd.spellID, true)
+        local dur = C_Spell.GetSpellCooldownDuration(sid, true)
         if dur then
             fd._arcShadowCD:SetCooldownFromDurationObject(dur, true)
         else
@@ -199,13 +256,47 @@ local function FeedShadows(fd)
     end
 
     if C_Spell.GetSpellChargeDuration then
-        local dur = C_Spell.GetSpellChargeDuration(fd.spellID, true)
+        local dur = C_Spell.GetSpellChargeDuration(sid, true)
         if dur then
             fd._arcShadowCharge:SetCooldownFromDurationObject(dur, true)
         else
             fd._arcShadowCharge:Clear()
         end
     end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- POSTGCD RE-PUSH (Arc's experiment): when a feed runs while a GCD is up, the
+-- filtered (ignoreGCD) reads can be transiently wrong — the client may have
+-- re-bucketed a real remaining cooldown under the GCD. Instead of holding or
+-- verifying, ACCEPT the filtered result now and schedule ONE re-feed for the
+-- moment the GCD ends: the record has settled by then, and the re-push
+-- restores the true remaining cooldown to BOTH the shadow and the visible
+-- widget (or confirms ready — a harmless no-op). Chained GCDs re-arm until a
+-- clean window. One timer per icon per GCD window, zero idle cost.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function SchedulePostGCDRepush(fd)
+    if fd._arcPostGCDQueued then return end
+    fd._arcPostGCDQueued = true
+    -- Delay = the GCD's actual remaining time (61304's record carries plain
+    -- numbers in normal play), with a fixed fallback when unreadable.
+    local delay = 0.3
+    local cd = C_Spell.GetSpellCooldown(61304)
+    if cd then
+        local s, d = cd.startTime, cd.duration
+        if not (issecretvalue and (issecretvalue(s) or issecretvalue(d)))
+           and type(s) == "number" and type(d) == "number" and d > 0 then
+            local rem = (s + d) - GetTime()
+            if rem > 0 and rem < 2 then delay = rem + 0.05 end
+        end
+    end
+    C_Timer.After(delay, function()
+        fd._arcPostGCDQueued = nil
+        if ArcAurasCooldown.FeedCooldown and fd.frame and fd.frame:IsShown()
+           and not fd.frame._arcHiddenNotInSpec then
+            ArcAurasCooldown.FeedCooldown(fd)
+        end
+    end)
 end
 
 -- GetCooldownState: returns (isOnCD, isRecharging) for FeedCooldown / visuals.
@@ -279,14 +370,20 @@ local function GetCooldownState(spellID, isChargeSpell, callerFd)
     if isChargeSpell then
         local isDepleted   = mainShown and chargeShown
         local isRecharging = (not mainShown) and chargeShown
+        if not isDepleted then
+            fd._arcICDCastToZero = nil  -- ambiguous window over; next cast re-derives
+        end
         -- IGNORE HARD ICD (per-icon opt-in, e.g. Monk Zenith): a charge spell
         -- whose cast starts a real spell CD (hard ICD) alongside the recharge
         -- shows main+charge together — read here as depleted/full desat while a
         -- charge is in hand. With the toggle on, treat it as RECHARGING (the
-        -- visible-feed branch then pushes the charge durObj, not the ICD).
-        -- Trade-off: true 0-charge depletion also reads RECHARGING (the two are
-        -- indistinguishable without secret duration compares).
-        if isDepleted then
+        -- visible-feed branch then pushes the charge durObj, not the ICD) —
+        -- UNLESS the cast-history discriminator (UNIT_SPELLCAST_SUCCEEDED
+        -- handler) proved the last cast spent the final charge: a genuine zero
+        -- keeps DEPLETED so desat and charge glows stay truthful. With no
+        -- history (login/reload mid-cooldown) the remap applies until the
+        -- first observed cast.
+        if isDepleted and not fd._arcICDCastToZero then
             local s = ArcAuras.GetCachedSettings and ArcAuras.GetCachedSettings(fd.arcID)
             if s and s.cooldownSwipe and s.cooldownSwipe.ignoreHardICD then
                 isDepleted, isRecharging = false, true
@@ -902,7 +999,12 @@ _FeedCooldownFn = function(fd)
     if not fd or not fd.frame or not fd.frame:IsShown() then return end
     if fd.frame._arcHiddenNotInSpec then return end
 
-    local spellID = fd.spellID
+    -- OVERRIDE-AWARE: every API read below queries the LIVE casting form.
+    -- The cooldown for proc/replacement/transform spells lives on the
+    -- override id; base-only reads left those icons stuck "never on CD".
+    local spellID = EffectiveSID(fd.spellID)
+    if spellID ~= fd.spellID then ArcAurasCooldown.overrideToArc[spellID] = fd.arcID end
+    UpdateOverrideIcon(fd, spellID)
     local isChargeSpell = fd.isChargeSpell
 
     -- Get CDMEnhance settings ONCE — passed to both UpdateChargeText and ApplySpellStateVisuals
@@ -1025,6 +1127,17 @@ _FeedCooldownFn = function(fd)
         else
             cooldown:Clear()
         end
+        -- POSTGCD: this feed ran while a GCD was up — the filtered reads may
+        -- be transiently wrong (tail re-bucket). Schedule ONE settled re-feed
+        -- for the moment the GCD ends (see SchedulePostGCDRepush above).
+        if noGCD then
+            local gcdInfo = C_Spell.GetSpellCooldown(spellID)
+            local onGcd = gcdInfo and gcdInfo.isOnGCD
+            if issecretvalue and issecretvalue(onGcd) then onGcd = nil end
+            if onGcd == true then
+                SchedulePostGCDRepush(fd)
+            end
+        end
         local showEdge = not settings or not settings.cooldownSwipe or settings.cooldownSwipe.showEdge ~= false
         fd.frame._arcBypassSwipeHook = true
         cooldown:SetDrawEdge(showEdge)
@@ -1117,17 +1230,32 @@ UpdateChargeText = function(fd, settings)
         end
     end
 
-    if not fd.hasChargeText then
-        fd.chargeText:SetText("")
-        return
-    end
-
     -- Respect chargeText.enabled from settings cascade (DEFAULT → global → per-icon)
     -- Without this, hiding charge text via options gets overridden every cooldown event
     local chargeCfg = settings and settings.chargeText
     if chargeCfg and chargeCfg.enabled == false then
         fd.chargeText:SetText("")
         fd.chargeText:Hide()
+        return
+    end
+
+    if not fd.hasChargeText then
+        -- CAST-COUNT spells (granted temporaries like Zenith Stomp / Void
+        -- Volley): GetSpellCharges is nil for them — their number lives in
+        -- GetSpellCastCount (CDM's own CacheChargeValues reads the same API;
+        -- its native icon misses these because it queries the BASE spell while
+        -- the count sits on the granted spellID — arc icons track the granted
+        -- ID directly). The count is SECRET in instances: SetText only, never
+        -- compare. TruncateWhenZero blanks zeros — including every normal
+        -- no-count spell, which reads 0 — so this needs no detection flag.
+        if fd.spellID and C_Spell.GetSpellCastCount
+           and C_StringUtil and C_StringUtil.TruncateWhenZero then
+            local count = C_StringUtil.TruncateWhenZero(C_Spell.GetSpellCastCount(fd.spellID))
+            fd.chargeText:SetText(count or "")
+            fd.chargeText:Show()
+        else
+            fd.chargeText:SetText("")
+        end
         return
     end
 
@@ -1158,7 +1286,8 @@ end
 UpdateProcGlow = function(fd, forceShow)
     if not fd or not fd.frame then return end
 
-    local spellID = fd.spellID
+    -- Overlay procs fire for the OVERRIDE form (Voltaic Blaze, not Flame Shock)
+    local spellID = EffectiveSID(fd.spellID)
     local isOverlayed = forceShow
 
     -- When we weren't told the state (forceShow == nil), query it directly.
@@ -1317,6 +1446,7 @@ function ArcAurasCooldown.InitializeSpellFrame(arcID, frame, config)
     fd.isChargeSpell = (chargeInfo ~= nil)
                        and (tonumber(chargeInfo.maxCharges) or 0) > 1
     fd.hasChargeText = (chargeInfo ~= nil)
+    fd.maxCharges    = chargeInfo and tonumber(chargeInfo.maxCharges) or nil
 
     -- Range check setup — EnableSpellRangeCheck opts in to SPELL_RANGE_CHECK_UPDATE
     if C_Spell.SpellHasRange and C_Spell.EnableSpellRangeCheck then
@@ -1783,11 +1913,13 @@ local eventFrame = CreateFrame("Frame")
 _G.ArcUIArcAurasCooldownEventFrame = eventFrame  -- profiler
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 eventFrame:RegisterEvent("SPELL_UPDATE_USES")
 eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 eventFrame:RegisterEvent("SPELL_RANGE_CHECK_UPDATE")
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
@@ -1812,10 +1944,9 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
         -- Mirror CDM's NeedsCooldownUpdate filter:
         --   arg1 == nil                              — bulk update (refresh all)
         --   arg1 == our spell (or arg2 == our spell) — our spell's CD changed
-        --   arg4 == GLOBAL_RECOVERY_CATEGORY         — GCD event (affects ALL
-        --     tracked spells on GCD — without this filter, our charge spells
-        --     miss GCD updates from other spells' casts and the swipe only
-        --     shows intermittently when other events happen to trigger a feed)
+        --   arg4 == GLOBAL_RECOVERY_CATEGORY         — GCD event (affects all
+        --     tracked spells that actually display the GCD swipe; filtered
+        --     frames keep their current real cooldown until a direct/bulk update)
         -- Custom timer frames are skipped entirely — their cooldown source is
         -- a user-defined timer, not the spell's real cooldown.
         local isBulkNil = (arg1 == nil)
@@ -1824,7 +1955,10 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
             if not fd.isCustomTimer and fd.frame and fd.frame:IsShown()
                and not fd.frame._arcHiddenNotInSpec then
                 local isOurSpell = (arg1 == fd.spellID) or (arg2 == fd.spellID)
-                if isOurSpell or isBulkNil or isGCDEvent then
+                local noGCD = fd.frame._arcNoGCDSwipeEnabled
+                if noGCD == nil then noGCD = true end
+                local needsGCDRefresh = isGCDEvent and not noGCD
+                if isOurSpell or isBulkNil or needsGCDRefresh then
                     FeedCooldown(fd)
                 end
             end
@@ -1866,6 +2000,32 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
             FeedCooldown(fd)
         end
 
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- Hard-ICD discriminator (mirrors CooldownState): sample the PRE-cast
+        -- shadow state before SPELL_UPDATE_COOLDOWN refeeds the shadows (the
+        -- cast event always arrives first). Exact for 2-charge spells:
+        --   cast from FULL (main hidden, charge hidden) -> a charge remains (ICD)
+        --   cast from RECHARGING (charge shown only)    -> that was the last
+        --     charge -> true depletion; keep desat/no-glow despite ignoreHardICD.
+        -- Player casts are non-secret everywhere, so this works in M+/instances.
+        local castSpellID = arg3
+        -- Override-aware: cast events carry the OVERRIDE id (Voltaic Blaze,
+        -- Windstrike), which spellsByID (base-keyed) misses — the reverse map
+        -- built by the feeds resolves it back to the tracked base icon.
+        local castArcID = castSpellID and FindArcIDForSpell(castSpellID)
+        local castFd = castArcID and ArcAurasCooldown.spellData[castArcID]
+        if castFd and castFd.isChargeSpell and castFd.maxCharges == 2
+           and castFd._arcShadowCD and castFd._arcShadowCharge
+           and not castFd._arcShadowCD:IsShown() then
+            if castFd._arcShadowCharge:IsShown() then
+                castFd._arcICDCastToZero = true
+            else
+                castFd._arcICDCastToZero = nil
+            end
+        end
+
+
+
     elseif event == "SPELL_UPDATE_CHARGES" then
         -- SPELL_UPDATE_CHARGES fires ONLY meaningfully for real charge spells.
         -- Filter to fd.isChargeSpell to avoid iterating every tracked normal
@@ -1878,9 +2038,24 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
             end
         end
 
+    elseif event == "SPELL_UPDATE_ICON" then
+        -- An override form flipped (proc gained/expired, Ascendance, form swap):
+        -- re-feed spell frames so the effective-spell reads and the icon art
+        -- track the NEW form at the exact change moment. Fires rarely (form
+        -- changes only); UpdateOverrideIcon inside the feed is change-detected
+        -- so unchanged frames cost two cheap API calls and nothing else.
+        for arcID, fd in pairs(ArcAurasCooldown.spellData) do
+            if not fd.isCustomTimer and not fd.isCustomTotem
+               and fd.frame and fd.frame:IsShown()
+               and not fd.frame._arcHiddenNotInSpec then
+                FeedCooldown(fd)
+            end
+        end
+
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
+        -- Proc glows fire for the OVERRIDE form — resolve via the reverse map too
         local spellID = arg1
-        local arcID = ArcAurasCooldown.spellsByID[spellID]
+        local arcID = FindArcIDForSpell(spellID)
         local fd = arcID and ArcAurasCooldown.spellData[arcID]
         if fd then
             UpdateProcGlow(fd, true)
@@ -1889,7 +2064,7 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
 
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
         local spellID = arg1
-        local arcID = ArcAurasCooldown.spellsByID[spellID]
+        local arcID = FindArcIDForSpell(spellID)
         local fd = arcID and ArcAurasCooldown.spellData[arcID]
         if fd then
             UpdateProcGlow(fd, false)
@@ -2051,6 +2226,7 @@ function ArcAurasCooldown.Initialize()
                     fd.isChargeSpell = (chargeInfo ~= nil)
                                        and (tonumber(chargeInfo.maxCharges) or 0) > 1
                     fd.hasChargeText = (chargeInfo ~= nil)
+                    fd.maxCharges    = chargeInfo and tonumber(chargeInfo.maxCharges) or nil
                 end
                 FeedCooldown(fd)
                 UpdateProcGlow(fd)

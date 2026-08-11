@@ -29,6 +29,57 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.7.10",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Aura Icons: Track Any Buff or Debuff by Spell ID", desc = "Give it a spell ID and you get an icon for that aura, whether or not the Cooldown Manager knows about it. They keep working in raids and Mythic+, where addons are no longer allowed to read your auras: a dimmed ghost while the aura is missing, the real icon while it is on you." },
+          { title = "Spell-ID Aura Groups", desc = "Aura icons get their own group type that flows and compacts like any other Arc group, with its own border, title, drag mode, visibility conditions and per-spec profiles." },
+          { title = "Aura Alert Sounds", desc = "Play a sound the moment an aura lands, refreshes or drops. The game plays these itself, so they still fire in content where aura tracking is hidden from addons." },
+          { title = "Cooldown Manager Aura Alerts", desc = "Sounds and spoken callouts for buffs and debuffs tracked by the Cooldown Manager, with separate triggers for gaining it, losing it, and stacks going up." },
+          { title = "Refresh-Window Glows", desc = "Aura icons can glow during the pandemic window, so you know exactly when reapplying is worth it." },
+          { title = "Aura Bars and Textures by Spell ID", desc = "The Aura Catalog has a new green Add tile: enter a spell ID and it joins the catalog, so the same buttons build a duration bar, a stack bar or a texture for auras the Cooldown Manager never sees." },
+          { title = "Ping Keys and the Ping Feed", desc = "Call your cooldowns out to your group with one key and no macros, and read everyone's pings in a window you can lay out yourself." },
+          { title = "New Add Window for Arc Icons", desc = "One place to add items, trinkets, spell cooldowns, aura icons and custom timers, with a drag-and-drop zone." },
+          { title = "One Icon Catalog", desc = "The Arc Icons and Custom Icons tabs are gone: every icon, its settings, load conditions, the timer editor, auto-tracking and bulk management now live together in the Icon Catalog." },
+          { title = "Guided Tours", desc = "The What's New window can now walk you to exactly where the new features live." },
+          { title = "Stack Priority for Free Icons", desc = "Free-positioned icons get a Stack Strata and Stack Level control in Icon Positioning, so you decide exactly which icon draws on top when icons overlap. The whole icon moves together: glows, text and keybinds follow." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Aura Textures Work Again on 12.1", desc = "Progress and Drain textures are driven by the game engine now, so the art still drains during combat and inside instances." },
+          { title = "Bulk Management for Arc Icons", desc = "Clear all spells, all aura icons or everything at once, and force a refresh of Arc frames." },
+          { title = "Layout Safety Warning", desc = "Loading a profile while layouts are linked can overwrite the shared layout on every character. The first time you do something risky, ArcUI explains it once." },
+          { title = "Smoother Resource Bars", desc = "Energy and other fast-regenerating bars moved in visible chunks out of combat. They now update ten times a second while regenerating, and still cost nothing at rest." },
+          { title = "One Line at Login", desc = "ArcUI now prints a single load message instead of a stream of module chatter." },
+          { title = "Fewer Cooldown Updates per Keypress", desc = "Icons only react to cooldown events that actually concern them, cutting the work done on every cast of any ability." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Replacement Spells Show Their Real Cooldown", desc = "Spells that get swapped out by a talent or a proc (Stormstrike becoming Windstrike under Ascendance, Flame Shock becoming Voltaic Blaze) were read from the original spell, so those icons looked like they were never on cooldown. They now follow whichever form is live, and the icon art follows it too." },
+          { title = "High-Haste Cooldown Flicker Fixed", desc = "Cooldown icons no longer blink ready for a split second mid-cooldown when you press other abilities, which got worse the more haste and cooldown reduction you had. Any cooldown read taken while a global cooldown is running now re-checks itself the moment that global ends, on both Arc icons and Cooldown Manager icons." },
+          { title = "Cooldown Manager Icons Gray Out on Cooldown Again", desc = "Managed icons could stay full-color while on cooldown even though Arc icons of the same spell grayed out correctly. ArcUI now drives the gray-out itself instead of relying on the game's, which silently stops working on styled icons." },
+          { title = "Totem Icons No Longer Stick as Active", desc = "A totem icon could keep showing as active after the totem was gone, most visibly on Earthbind." },
+          { title = "Charge Numbers No Longer Vanish on Faded Groups", desc = "A group at partial opacity hid its charge text completely until you opened the CD Manager panel." },
+          { title = "On-Use Trinkets No Longer Go Missing at Login", desc = "A trinket whose data had not loaded yet was treated as passive and hidden by the On-Use filter until you toggled auto-track off and on." },
+          { title = "Layouts No Longer Look Like They Reset on Every Relog", desc = "A phantom spec entry created early at login made ArcUI read and write the wrong spec's layout depending on timing." },
+          { title = "Cooldown Reminder Fires for Buff-Consumption Cooldowns", desc = "Spells whose cooldown only starts when the buff is spent never armed their ready reminder." },
+          { title = "Bars and Textures Survive a Combat Reload", desc = "Reloading mid-fight or inside a dungeon could leave a duration bar's fill frozen and an aura texture's art static for the rest of the session, because they only set themselves up if the aura happened to be active at the right moment. They now set up as soon as they know which aura they track." },
+          { title = "Aura Texture Art Shows Its Real Colour", desc = "Progress and Drain art could come up with the dimmed \"missing\" colour baked in instead of the active one." },
+          { title = "Duration Text Settings Apply on 12.1 Bars", desc = "Decimals, abbreviation and colour-by-time were being ignored on engine-driven bars." },
+          { title = "Bar Fill and Tick Marks", desc = "Bar fill no longer bleeds over the border, and tick marks come back on bars that hide when inactive." },
+          { title = "Unit Frames Stay Put", desc = "Addons anchored to Arc icon groups no longer drift when the group is rebuilt." },
+          { title = "Charge Bars Hide for Spells Your Build Doesn't Know", desc = "A charge bar for an untalented spell (like Healing Stream Totem on Elemental) stayed on screen as an empty black frame instead of hiding." },
+          { title = "The Utility Group Keeps Its Column Count", desc = "Column settings could creep back to their default after a reload or relog." },
+          { title = "Trinkets Keep Their Slot", desc = "A trinket icon could get bumped out of its saved position by another icon claiming the same cell during login or a spec change." },
+          { title = "Cooldown Reminder Panel Grays Out While the Module Is Off", desc = "So it is clear those settings will not do anything until you enable it." },
+        },
+      },
+    },
+  },
+  {
     version = "3.7.9",
     sections = {
       {
@@ -295,7 +346,10 @@ local function BuildFrame()
   local f = CreateFrame("Frame", "ArcUIChangelogFrame", UIParent, "BackdropTemplate")
   f:SetSize(540, 580)
   f:SetPoint("CENTER")
-  f:SetFrameStrata("DIALOG")
+  -- TOOLTIP, not DIALOG: the options window is FULLSCREEN_DIALOG, so a DIALOG
+  -- frame opens BEHIND it when the changelog is launched from the Settings tab
+  -- (Raise only reorders within a strata). Same choice the Add popup makes.
+  f:SetFrameStrata("TOOLTIP")
   f:SetToplevel(true)
   f:SetClampedToScreen(true)
   f:EnableMouse(true)
@@ -442,6 +496,26 @@ local function BuildFrame()
   close:SetText("Close")
   close:SetScript("OnClick", function() f:Hide() end)
 
+  -- Guided tour launcher: the PRIMARY action on this window, not a footnote
+  -- beside Close. The changelog says what changed, the tour shows where, and a
+  -- tour nobody notices teaches nobody. Centred, oversized and accented.
+  -- Hidden when this version has no tour authored.
+  local tour = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  tour:SetSize(220, 26)
+  tour:SetPoint("TOP", f, "TOP", 0, -50)
+  tour:SetText("Click for Guided Tour")
+  local tfs = tour:GetFontString()
+  if tfs then
+    tfs:SetTextColor(0.25, 0.79, 0.95)
+    local fp, _, fl = tfs:GetFont()
+    if fp then tfs:SetFont(fp, 14, fl) end
+  end
+  tour:SetScript("OnClick", function()
+    f:Hide()
+    if ns.Tour and ns.Tour.Start then ns.Tour.Start() end
+  end)
+  f._tourBtn = tour
+
   -- Escape closes it
   if not tContains(UISpecialFrames, "ArcUIChangelogFrame") then
     tinsert(UISpecialFrames, "ArcUIChangelogFrame")
@@ -465,6 +539,18 @@ function CL.Show()
   local g = ns.API and ns.API.GetGlobalDB and ns.API.GetGlobalDB()
   local disabled = g and g.changelog and g.changelog.disabled
   if f._check then f._check:SetChecked(not disabled) end
+  -- only offer the tour when this version actually has one authored, and give
+  -- the button its own band above the notes: the scroll starts lower when it
+  -- is there, and reclaims the space when it is not
+  if f._tourBtn then
+    local has = (ns.Tour and ns.Tour.HasTour and ns.Tour.HasTour()) and true or false
+    f._tourBtn:SetShown(has)
+    if f._scroll then
+      f._scroll:ClearAllPoints()
+      f._scroll:SetPoint("TOPLEFT", 16, has and -84 or -52)
+      f._scroll:SetPoint("BOTTOMRIGHT", -34, 50)
+    end
+  end
   f:Show()
   f:Raise()
 end

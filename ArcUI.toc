@@ -1,8 +1,8 @@
-## Interface: 120000, 120001, 120005, 120007, 120100
+﻿## Interface: 120100
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.7.9
+## Version: 3.7.10
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614
 ## SavedVariables: ArcUIDB, ArcUI_CDMEnhance_Debug
@@ -58,8 +58,9 @@ Castbar\ArcUI_FocusCastbar.lua
 # Main Options (creates AceDB)
 ArcUI_Options.lua
 
-# Changelog ("What's New" window)
+# Changelog ("What's New" window) + the guided tour it launches
 ArcUI_Changelog.lua
+ArcUI_Tour.lua
 
 # Cooldown Reminder
 Cooldown_Reminder\ArcUI_CooldownReminder.lua
@@ -67,6 +68,9 @@ Cooldown_Reminder\ArcUI_CooldownReminder_Options.lua
 
 # Set My Kick (built-in; dormant if the standalone SetMyKick addon is loaded)
 SetMyKick\ArcUI_SetMyKick.lua
+
+# Pings (12.1 action-ping system: history window + pingable Arc icons; inert on live)
+Pings\ArcUI_Pings.lua
 
 # Options Panels
 Bars\ArcUI_TrackingOptions.lua
@@ -100,6 +104,7 @@ CDM_Module\CDM_Enhance\ArcUI_CDMSpellUsability.lua
 CDM_Module\CDM_Enhance\ArcUI_AssistedCombatHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_ButtonPressHighlight.lua
 CDM_Module\CDM_Enhance\ArcUI_CDMTextColor.lua
+CDM_Module\CDM_Enhance\ArcUI_CDMAuraAlerts.lua
 CDM_Module\CDM_Enhance\ArcUI_StackColor.lua
 CDM_Module\CDM_Enhance\ArcUI_DurationOverride.lua
 CDM_Module\CDM_Enhance\ArcUI_DurationOverrideContainer.xml
@@ -127,6 +132,10 @@ CDM_Module\Arc_Auras\ArcUI_ArcAuras.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAurasCooldown.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAurasTimer.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAurasTotems.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasAuraIcons.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasAuraGlows.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasAuraGroups.lua
+CDM_Module\Arc_Auras\ArcUI_ArcAurasAuraSounds.lua
 CDM_Module\Arc_Auras\ArcUI_CustomIcons_Presets.lua
 CDM_Module\Arc_Auras\ArcUI_CustomIcons_Options.lua
 CDM_Module\Arc_Auras\ArcUI_ArcAuras_Options.lua

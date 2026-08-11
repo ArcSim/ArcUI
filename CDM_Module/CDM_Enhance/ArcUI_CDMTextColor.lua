@@ -262,6 +262,10 @@ local function GetCurveForConfig(cfg)
   return GetCurveForPreset("classic")
 end
 
+-- Public: aura icons (12.1) feed this curve into the engine's DurationText
+-- binding (options.textColorCurve) instead of the ticker path.
+ns.CDMTextColor.GetCurveForConfig = GetCurveForConfig
+
 --- Wipe curve cache (call when settings change)
 local _checkedNoConfig = false  -- true when we scanned all frames and found no durationColor config
 
@@ -552,6 +556,49 @@ function ns.CDMTextColor.Stop()
     ResetColor(frame, cfg)
   end
   wipe(activeFrames)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 12.1 DIAGNOSTIC (/arctcprobe) — the "duration text color dead on PTR" bug.
+-- Answers, on a live client, the two questions the fix depends on:
+--   1. do AURA frames have a hook-captured durObj (the path that matches the
+--      display exactly and needs no aura API read)?
+--   2. does durObj:EvaluateRemainingDuration(curve) work on a (possibly
+--      secret) aura durObj for tainted callers, or does it throw?
+-- USER-TRIGGERED, one pass, prints per-frame findings. If question 2 throws,
+-- the error itself is the answer (run once, out of raid, expect at most one
+-- error line) — that tells us whether the fix is "ungate the evaluate path"
+-- or "migrate to SetCountdownFormatter breakpoints".
+-- ═══════════════════════════════════════════════════════════════════════════
+SLASH_ARCTCPROBE1 = "/arctcprobe"
+SlashCmdList["ARCTCPROBE"] = function()
+  local issecret = issecretvalue
+  local P = function(fmt, ...) print("|cff33ff99[ArcTC]|r " .. fmt:format(...)) end
+  local GetEnhancedFrames = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrames
+  if not GetEnhancedFrames then P("CDMEnhance not ready.") return end
+  local frames = GetEnhancedFrames()
+  if not frames then P("no enhanced frames.") return end
+  local curve = GetCurveForPreset("classic")
+  P("build=%s IS_121=%s", tostring((select(2, GetBuildInfo()))), tostring(ns.API and ns.API.IS_121))
+  local tested = 0
+  for cdID, data in pairs(frames) do
+    local f = data.frame
+    if f and f:IsVisible() and f.auraInstanceID ~= nil and tested < 3 then
+      tested = tested + 1
+      local aidSecret = issecret and issecret(f.auraInstanceID) or false
+      local stored = f._arcTextColorDurObj
+      P("frame cd=%s aidSecret=%s hookedDurObj=%s", tostring(cdID), tostring(aidSecret), tostring(stored ~= nil))
+      if stored and curve then
+        -- THE probe: if this line errors, Evaluate is walled for aura durObjs
+        -- and the fix must go through SetCountdownFormatter instead.
+        local col = stored:EvaluateRemainingDuration(curve)
+        P("  Evaluate on hooked durObj -> %s (colorSecret=%s) -- EVALUATE WORKS on this frame",
+          tostring(col ~= nil), tostring(col and issecret and issecret(col) or false))
+      end
+    end
+  end
+  if tested == 0 then P("no visible AURA frames found -- get a tracked buff up and rerun.") end
+  P("run once in the open world AND once in a dungeon/forced-CVar env; paste both outputs.")
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -220,7 +220,14 @@ ns.API.OpenOptions = function()
 
   AceConfigDialog:Open("ArcUI")
   -- CDM_Shared's ACD:Open posthook sets ns.optionsPanelOpen and fires all callbacks
-  
+
+  -- First time these options are opened on a build that HAS a tour, ask once
+  -- whether they want it. Deferred a frame so it lands over a drawn panel; the
+  -- answer (either way) is remembered per patch, so it never asks twice.
+  if ns.Tour and ns.Tour.OfferIfNew then
+    C_Timer.After(0.35, function() ns.Tour.OfferIfNew() end)
+  end
+
   -- Refresh resource bars immediately so they show despite talent/spec/combat conditions
   if ns.Resources and ns.Resources.RefreshAllBars then
     ns.Resources.RefreshAllBars()
@@ -459,39 +466,12 @@ local function GetOptionsTable()
             return tbl
           end)(),
           
-          -- Arc Icons tab (tracked trinkets / items / spells)
-          arcAuras = (function()
-            local tbl = ns.GetArcAurasOptionsTable and ns.GetArcAurasOptionsTable() or {
-              type = "group",
-              name = "Arc Icons",
-              args = { loading = { type = "description", name = "Loading...", order = 1 } }
-            }
-            -- Custom Icons is now its OWN top-level tab (below). Strip the nested
-            -- copy, and flatten the lone "Main" child so Arc Icons shows its
-            -- catalog directly instead of behind a redundant sub-tab.
-            if tbl.args then
-              tbl.args.customIcons = nil
-              if tbl.args.main and tbl.args.main.args then
-                tbl.args = tbl.args.main.args
-                tbl.childGroups = nil
-              end
-            end
-            tbl.name = "Arc Icons"
-            tbl.order = 3
-            return tbl
-          end)(),
-
-          -- Custom Icons tab (timers) — pulled up out of Arc Icons for visibility
-          customIcons = (function()
-            local tbl = ns.GetCustomIconsOptionsTable and ns.GetCustomIconsOptionsTable() or {
-              type = "group",
-              name = "Custom Icons",
-              args = { loading = { type = "description", name = "Loading...", order = 1 } }
-            }
-            tbl.name = "Custom Icons"
-            tbl.order = 4
-            return tbl
-          end)(),
+          -- (Arc Icons + Custom Icons tabs RETIRED 2026-08-09: the Icon
+          -- Catalog absorbed everything — Add popup, filters, Load
+          -- Conditions, Arc Icon Settings, mounted timer editor, auto-track
+          -- config, bulk management. The FILES stay loaded: the catalog
+          -- consumes ns.GetCustomIconsOptionsTable for the editor mount and
+          -- the ns.ArcAurasOptions exports/popup.)
           
           -- Profiles tab: Arc Manager profile selector + Profile Browser combined
           profiles = (function()
@@ -828,6 +808,17 @@ local function GetOptionsTable()
         return tbl
       end)(),
 
+      pings = (function()
+        local tbl = ns.GetPingsOptionsTable and ns.GetPingsOptionsTable() or {
+          type = "group",
+          name = "Pings",
+          args = { loading = { type = "description", name = "Loading...", order = 1 } }
+        }
+        tbl.name  = "Pings"
+        tbl.order = 6.5
+        return tbl
+      end)(),
+
       settings = {
         type = "group",
         name = "Settings",
@@ -987,6 +978,72 @@ local function GetOptionsTable()
             end,
           },
 
+          troubleshootingHeader = {
+            type = "header",
+            name = "Troubleshooting",
+            order = 80,
+          },
+          troubleshootingDesc = {
+            type = "description",
+            name = "|cffaaaaaaDebug messages for bug reports. Leave these OFF for normal play - they flood the chat window with internal traces. Changes take effect immediately and persist until turned off.|r",
+            order = 81,
+            fontSize = "medium",
+          },
+          debugVerbose = {
+            type = "toggle",
+            name = "Verbose Debug Messages",
+            desc = "Developer traces from the bar engine, catalog scans, and icon styling. Enable when asked to during a bug report, then copy the chat output.",
+            order = 82,
+            width = 1.5,
+            get = function()
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              return (g and g.troubleshooting and g.troubleshooting.devMode) or false
+            end,
+            set = function(_, v)
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              if not g then return end
+              g.troubleshooting = g.troubleshooting or {}
+              g.troubleshooting.devMode = v or nil
+              ns.devMode = v
+              _G.ARCUI_DEBUG = v or nil
+            end,
+          },
+          debugFrameController = {
+            type = "toggle",
+            name = "Frame Controller Trace",
+            desc = "Traces CDM frame assignment, group reconciliation, and rebuild handling (the /arcuifc system). Very chatty during spec changes and reloads.",
+            order = 83,
+            width = 1.5,
+            get = function()
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              return (g and g.troubleshooting and g.troubleshooting.fcDebug) or false
+            end,
+            set = function(_, v)
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              if not g then return end
+              g.troubleshooting = g.troubleshooting or {}
+              g.troubleshooting.fcDebug = v or nil
+              _G.ARCUI_FC_DEBUG = v
+            end,
+          },
+          debugCDMStyling = {
+            type = "toggle",
+            name = "CDM Styling Debug Log",
+            desc = "Records CDM icon styling diagnostics used by /arcdebug reports.",
+            order = 84,
+            width = 1.5,
+            get = function()
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              return (g and g.troubleshooting and g.troubleshooting.enhanceDebug) or false
+            end,
+            set = function(_, v)
+              local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+              if not g then return end
+              g.troubleshooting = g.troubleshooting or {}
+              g.troubleshooting.enhanceDebug = v or nil
+              _G.ArcUI_CDMEnhance_Debug = v or nil
+            end,
+          },
           aboutHeader = {
             type = "header",
             name = "About",
@@ -1380,7 +1437,17 @@ initFrame:SetScript("OnEvent", function(self, event)
     if ns.DataRepair and ns.DataRepair.RunAutoCleanup then
       ns.DataRepair.RunAutoCleanup()
     end
-    
+
+    -- ENGINE PREBUILD -- must run SYNCHRONOUSLY here, inside the load window.
+    -- 12.1 blocks aura-slot creation from addon stacks whenever auras are
+    -- secret (all combat, instances 24/7), and the normal bar init runs from a
+    -- timer well after this point -- so reloading during a pull used to leave
+    -- every engine-driven bar empty for the rest of the fight. Creating the
+    -- slots here makes every later pass a filter retarget, which stays legal.
+    if ns.Display and ns.Display.EnginePrebuild then
+      ns.Display.EnginePrebuild()
+    end
+
     C_Timer.After(0.1, function()
       RegisterOptions()
       
@@ -1412,7 +1479,23 @@ initFrame:SetScript("OnEvent", function(self, event)
         ns.Textures.Init()
       end
 
-      print("|cff00ccffArc UI|r v" .. ns.AddonInfo.Version .. " loaded. Type /arcui for options, /cdm for CDM settings, /arcui recenter to move panel back to screen.")
+      -- Re-apply persisted Troubleshooting debug toggles (Settings tab).
+      -- Runs after every module has loaded, so it wins over file-load resets
+      -- (CDMEnhance sets its debug SavedVariable false at file scope).
+      do
+        local g = ns.API.GetGlobalDB and ns.API.GetGlobalDB()
+        local ts = g and g.troubleshooting
+        if ts then
+          if ts.devMode then
+            ns.devMode = true
+            _G.ARCUI_DEBUG = true
+          end
+          if ts.fcDebug then _G.ARCUI_FC_DEBUG = true end
+          if ts.enhanceDebug then _G.ArcUI_CDMEnhance_Debug = true end
+        end
+      end
+
+      print("|cff00ccffArc UI|r v" .. ns.AddonInfo.Version .. " loaded - /arcui")
     end)
   end
 end)
