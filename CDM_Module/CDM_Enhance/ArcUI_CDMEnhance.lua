@@ -1641,6 +1641,31 @@ local function CreateBorderEdges(frame)
   edges.right:SetTexelSnappingBias(0)
 
   frame._arcBorderEdges = edges
+
+  -- BLANK-FRAME GUARD: a CDM frame can end up SHOWN with no icon art after a
+  -- combat reload (its refresh never painted the icon), and our border edges
+  -- were the only thing rendering — a floating empty black square at the
+  -- native viewer position (in-game report, 12.1 day one). The border only
+  -- has meaning around actual icon art, so track the Icon texture: blanked ->
+  -- hide the edges; painted -> restore whatever the config had shown.
+  local icon = frame.Icon
+  if icon and icon.SetTexture and not frame._arcIconTexHooked then
+    frame._arcIconTexHooked = true
+    hooksecurefunc(icon, "SetTexture", function(_, tex)
+      local e = frame._arcBorderEdges
+      if not e then return end
+      if tex == nil then
+        if e.top:IsShown() then
+          frame._arcBorderAutoHidden = true
+          e.top:Hide(); e.bottom:Hide(); e.left:Hide(); e.right:Hide()
+        end
+      elseif frame._arcBorderAutoHidden then
+        frame._arcBorderAutoHidden = nil
+        e.top:Show(); e.bottom:Show(); e.left:Show(); e.right:Show()
+      end
+    end)
+  end
+
   return edges
 end
 
@@ -1651,7 +1676,17 @@ local function UpdateIconBorder(frame, cdID, iconWidth, iconHeight, padding, zoo
   if not cfg or not cfg.border then return end
   
   local edges = frame._arcBorderEdges or CreateBorderEdges(frame)
-  
+
+  -- Blank-frame guard (see CreateBorderEdges): no icon art -> no border. The
+  -- SetTexture hook restores the edges the moment the frame gets painted.
+  local iconTex = frame.Icon
+  if cfg.border.enabled and iconTex and iconTex.GetTexture and iconTex:GetTexture() == nil then
+    frame._arcBorderAutoHidden = true
+    edges.top:Hide(); edges.bottom:Hide(); edges.left:Hide(); edges.right:Hide()
+    return
+  end
+  frame._arcBorderAutoHidden = nil
+
   if cfg.border.enabled then
     local color
     if cfg.border.useClassColor then

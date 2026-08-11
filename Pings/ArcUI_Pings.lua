@@ -3572,6 +3572,8 @@ local function PKOptionArgs()
     local a = {
         desc = { type = "description", order = 1, fontSize = "medium",
             name = "Call your cooldowns out to the group without editing a macro.\n" },
+        standalone = { type = "description", order = 1.5, fontSize = "small",
+            name = "|cff8298b4Also available without ArcUI: search \"Arc Pings\" on CurseForge for the standalone addon.|r\n" },
         -- SETUP: the ping key and what it covers. Grouped so the three controls
         -- that describe one behaviour stay together at any panel width.
         setup = {

@@ -6360,7 +6360,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     cdDurationColorUsePercent = {
       type = "toggle", name = "Use % Thresholds",
-      desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+      desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.\n\n|cffff8800Does not work on 12.1 (Midnight): an aura's total duration is protected there, so percentages can't be computed for aura icons. Turn this OFF to use seconds thresholds, which work fully.|r",
       get = function() local c = GetAuraCfg(); return c and c.cooldownText and c.cooldownText.durationColorUsePercent end,
       set = function(_, v)
         ApplyAuraSetting(function(c)

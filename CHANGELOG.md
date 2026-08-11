@@ -1,3 +1,10 @@
+## 3.7.10.b
+
+### Bug Fixes
+
+- **Aura icon countdown colors work again** — The countdown text on tracked buff and debuff icons changes color at your thresholds again, everywhere including raids and Mythic+.
+- **No more floating empty border after a combat reload** — A square border with nothing inside could appear at the Cooldown Manager's default position after reloading mid-fight. Icon borders now only draw around icons that actually have art.
+
 ## 3.7.10.a
 
 ### Improvements

@@ -272,6 +272,12 @@ local _checkedNoConfig = false  -- true when we scanned all frames and found no 
 function ns.CDMTextColor.InvalidateCurves()
   wipe(curveCache)
   _checkedNoConfig = false  -- settings changed — re-scan on next event in case durationColor was just enabled
+  -- Clear every applied banded countdown formatter (12.1 aura icons) so a
+  -- settings change or disable never leaves a stale formatter on the widget;
+  -- the next tick re-applies the current config. Desk-time only, cheap.
+  if ns.CDMTextColor._ClearAllBandedFormatters then
+    ns.CDMTextColor._ClearAllBandedFormatters()
+  end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -419,13 +425,180 @@ local function ResetColor(frame, cfg)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- 12.1 AURA ICONS — BANDED COUNTDOWN FORMATTER
+--
+-- On 12.1 CDM stopped pushing duration objects entirely (its refresh went
+-- back to CooldownFrame_Set with numbers that are SECRET to addons), so for
+-- aura icons the ticker has NO color source: the SetCooldownFromDurationObject
+-- hook never fires and the aura duration APIs are walled. Instead the color
+-- thresholds are BAKED into a NumericRuleFormatter (color escapes per band)
+-- pushed once via Cooldown:SetCountdownFormatter — the engine then formats
+-- AND colors the countdown C-side from the real remaining time. Secret-proof,
+-- event-free, zero ticks. Above the top band no escape is emitted, so the
+-- fontstring's own static color shows.
+--
+-- Because a set formatter takes over ALL countdown rendering, it replicates
+-- the icon's Decimals / Abbreviate options (ns.CooldownFormatter semantics)
+-- in its breakpoints. Seconds thresholds only: percent-of-duration needs the
+-- total duration, which is unreadable for 12.1 auras.
+--
+-- Cooldown-viewer frames keep the durObj ticker: it works there, and a baked
+-- formatter would color the GCD's own countdown on every keypress.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local fmtCache  = {}   -- [sig]   = formatter
+local fmtFrames = {}   -- [frame] = sig currently applied to its Cooldown
+
+local function ColorEscape(c)
+  return string.format("|c%02x%02x%02x%02x", 255,
+    math.floor((c.r or 1) * 255 + 0.5),
+    math.floor((c.g or 1) * 255 + 0.5),
+    math.floor((c.b or 1) * 255 + 0.5))
+end
+
+-- Build (or fetch) the banded formatter for this icon config.
+-- Returns formatter, sig — or nil when this path can't serve the config.
+local function BandedFormatterForConfig(cfg)
+  local tc = cfg and cfg.cooldownText
+  if not tc or not tc.durationColor then return nil end
+  if tc.durationColorUsePercent then return nil end
+  if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
+
+  -- Color bands: enabled custom entries, else the classic preset (mirrors
+  -- GetCurveForConfig's fallback so both paths color identically).
+  local bands = {}
+  if tc.durationColorCustom then
+    for _, e in ipairs(tc.durationColorCustom) do
+      local t = tonumber(e.threshold)
+      if e.enabled and t and t > 0 and e.color then
+        bands[#bands + 1] = { t = t, c = e.color }
+      end
+    end
+  end
+  if #bands == 0 then
+    for _, e in ipairs(PRESETS.classic.entries) do
+      local r, g, b = e.color:GetRGB()
+      bands[#bands + 1] = { t = e.threshold, c = { r = r, g = g, b = b } }
+    end
+  end
+  table.sort(bands, function(a, b) return a.t < b.t end)
+
+  -- Format regions replicate ns.CooldownFormatter's decimals/abbrev handling.
+  local decTo = 0
+  if (tc.decimals or 0) == 1 then
+    local v = tc.decimalThreshold
+    decTo = (type(v) == "number" and v > 0) and v or 99999
+  end
+  if decTo > 60 then decTo = 60 end   -- minutes formatting takes over past 60
+  local abbrev = tc.abbrevThreshold
+  if type(abbrev) == "string" then
+    abbrev = (abbrev == "1m" and 60) or (abbrev == "5m" and 300)
+      or (abbrev == "1h" and 3600) or nil
+  end
+  if type(abbrev) ~= "number" or abbrev <= 0 then abbrev = nil end
+
+  local parts = { "v1", tostring(decTo), tostring(abbrev) }
+  for _, b in ipairs(bands) do
+    parts[#parts + 1] = string.format("%g:%.2f,%.2f,%.2f",
+      b.t, b.c.r or 1, b.c.g or 1, b.c.b or 1)
+  end
+  local sig = table.concat(parts, "|")
+  if fmtCache[sig] then return fmtCache[sig], sig end
+
+  -- Breakpoint edges: 0, every band edge, and every format-region edge.
+  local edgeSet = { [0] = true, [60] = true, [3600] = true }
+  for _, b in ipairs(bands) do edgeSet[b.t] = true end
+  if decTo > 0 and decTo < 60 then edgeSet[decTo] = true end
+  if abbrev and abbrev > 60 and abbrev < 3600 then edgeSet[abbrev] = true end
+  local edges = {}
+  for v in pairs(edgeSet) do edges[#edges + 1] = v end
+  table.sort(edges)
+
+  local Up = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Up
+  local f = C_StringUtil.CreateNumericRuleFormatter()
+  for _, lo in ipairs(edges) do
+    -- Band color for [lo, nextEdge): the first band whose threshold is above
+    -- lo. Above the top band esc stays nil (static text color shows).
+    local esc
+    for _, b in ipairs(bands) do
+      if lo < b.t then esc = ColorEscape(b.c) break end
+    end
+    local fmt, comps, step
+    if lo >= 3600 then
+      fmt, comps, step = "%d h", { { div = 3600 } }, 3600
+    elseif lo >= 60 then
+      if abbrev and lo < abbrev then
+        fmt = "%d:%02d"
+        comps = {
+          { div = 60, step = 1, rounding = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Down or nil },
+          { mod = 60, step = 1, rounding = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Down or nil },
+        }
+      else
+        fmt, comps, step = "%d m", { { div = 60 } }, 60
+      end
+    elseif lo < decTo then
+      fmt = "%.1f"
+    else
+      fmt = "%.0f"
+    end
+    local bp = { threshold = lo, format = esc and (esc .. fmt .. "|r") or fmt }
+    if comps then bp.components = comps end
+    if step then
+      -- countdown-style ceiling: "2 m" until the timer crosses into 60s
+      bp.step = step
+      if Up then bp.rounding = Up end
+    end
+    f:AddBreakpoint(bp)
+  end
+  fmtCache[sig] = f
+  return f, sig
+end
+
+local function ClearBandedFormatter(frame)
+  if not fmtFrames[frame] then return end
+  fmtFrames[frame] = nil
+  local cd = frame.Cooldown
+  if cd and cd.SetCountdownFormatter then cd:SetCountdownFormatter(nil) end
+end
+
+-- Forward-target for InvalidateCurves (defined above this section).
+function ns.CDMTextColor._ClearAllBandedFormatters()
+  wipe(fmtCache)
+  for frame in pairs(fmtFrames) do
+    local cd = frame.Cooldown
+    if cd and cd.SetCountdownFormatter then cd:SetCountdownFormatter(nil) end
+  end
+  wipe(fmtFrames)
+end
+
+local function ApplyBandedFormatter(frame, cfg)
+  local cd = frame.Cooldown
+  if not (cd and cd.SetCountdownFormatter) then return false end
+  local f, sig = BandedFormatterForConfig(cfg)
+  if not f then
+    ClearBandedFormatter(frame)
+    return false
+  end
+  if fmtFrames[frame] ~= sig then
+    cd:SetCountdownFormatter(f)
+    fmtFrames[frame] = sig
+  end
+  return false   -- set-and-forget: this frame needs no tick
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- TICKER — Runs at 0.1s, iterates group members, applies text color
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local ticker = nil
 local activeFrames = {}  -- [frame] = true
 
-local function ProcessFrame(frame, cfg)
+local function ProcessFrame(frame, cfg, viewerType)
+  -- 12.1 aura icons take the baked-formatter path (see block above): the
+  -- ticker has no readable duration source for them.
+  if viewerType == "aura" and ns.API and ns.API.IS_121 then
+    return ApplyBandedFormatter(frame, cfg)
+  end
   -- Install duration hook once per frame (captures CDMEnhance's DurationObject)
   InstallDurationHook(frame)
 
@@ -517,13 +690,14 @@ local function OnTick()
       local cfg = GetIconSettings(cdID)
       -- Fast-skip frames with no durationColor enabled — most frames won't have it
       if cfg and cfg.cooldownText and cfg.cooldownText.durationColor then
-        if ProcessFrame(data.frame, cfg) then
+        if ProcessFrame(data.frame, cfg, data.viewerType) then
           hasActive = true
         end
-      elseif activeFrames[data.frame] then
+      elseif activeFrames[data.frame] or fmtFrames[data.frame] then
         -- Was active but config disabled — reset and remove
         ResetColor(data.frame, cfg)
         activeFrames[data.frame] = nil
+        ClearBandedFormatter(data.frame)
       end
     end
   end
@@ -556,6 +730,9 @@ function ns.CDMTextColor.Stop()
     ResetColor(frame, cfg)
   end
   wipe(activeFrames)
+  if ns.CDMTextColor._ClearAllBandedFormatters then
+    ns.CDMTextColor._ClearAllBandedFormatters()
+  end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
