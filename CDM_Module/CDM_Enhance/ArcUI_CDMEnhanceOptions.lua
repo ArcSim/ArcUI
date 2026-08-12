@@ -568,6 +568,14 @@ local function HideAuraChargeText()
   return HideIfNoAuraSelection() or collapsedSections.chargeText
 end
 
+-- Stack threshold band rows. On 12.1 the bands work for Arc AURA ICONS (the
+-- banded application-count formatter, live-proven) AND for CDM aura icons
+-- (the ns.StackColor count overlay drives the same formatter on an invisible
+-- engine button anchored over the icon) — no 12.1 gate needed anymore.
+local function HideStackBands121()
+  return HideAuraChargeText()
+end
+
 local function HideAuraCooldownText()
   return HideIfNoAuraSelection() or collapsedSections.cooldownText
 end
@@ -1016,6 +1024,11 @@ end
 
 -- Apply a setting to all selected/applicable aura icons
 -- In mixed mode or unified edit-all mode, also applies to cooldown icons (shared settings)
+-- Forward-declared below ApplyAuraSetting: stack-text settings live in
+-- CREATE-TIME engine bindings on aura-icon buttons, so their setters must
+-- also rewire the slots for the change to take effect without a reload.
+local ApplyStackTextSetting
+
 local function ApplyAuraSetting(setter)
   local icons = GetAuraIconsToUpdate()
   for _, cdID in ipairs(icons) do
@@ -1073,6 +1086,22 @@ local function ApplyAuraSetting(setter)
   -- Refresh cooldown preview if active
   if ns.CDMEnhance and ns.CDMEnhance.IsCooldownPreviewMode and ns.CDMEnhance.IsCooldownPreviewMode() then
     ns.CDMEnhance.RefreshCooldownPreview()
+  end
+end
+
+-- Stack-text variant: same apply, then REWIRE aura-icon slots — the stack
+-- formatter (Show at 1 / band colors) is a create-time engine binding, and
+-- the engine reuses each slot's pre-created button forever, so without the
+-- rewire these settings would only apply after a reload.
+ApplyStackTextSetting = function(setter)
+  ApplyAuraSetting(setter)
+  if ns.AuraIcons and ns.AuraIcons.RewireAll then
+    ns.AuraIcons.RewireAll()
+  end
+  -- CDM aura icons: the count overlay (ns.StackColor 12.1 path) is also a
+  -- create-time binding — rebuild it with the fresh settings
+  if ns.StackColor and ns.StackColor.RefreshOverlays then
+    ns.StackColor.RefreshOverlays()
   end
 end
 
@@ -4339,8 +4368,10 @@ function ns.GetCDMAuraIconsOptionsTable()
       values = function()
         -- arc aura icons: remaining duration is SECRET on container-driven
         -- icons — threshold timings cannot work; the engine's pandemic
-        -- window (AddPandemicRegion) and always-on are the two real modes
-        if IsCurrentAuraSelectionAllArcAura() then
+        -- window (AddPandemicRegion) and always-on are the two real modes.
+        -- 12.1: the SAME wall applies to every aura icon (the aura duration
+        -- APIs are protected), so the threshold modes disappear for all.
+        if IsCurrentAuraSelectionAllArcAura() or (ns.API and ns.API.IS_121) then
           return { always = "Always", pandemic = "CDM Pandemic Timing" }
         end
         return {
@@ -4351,7 +4382,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         }
       end,
       sorting = function()
-        if IsCurrentAuraSelectionAllArcAura() then
+        if IsCurrentAuraSelectionAllArcAura() or (ns.API and ns.API.IS_121) then
           return { "always", "pandemic" }
         end
         return { "always", "percent", "seconds", "pandemic" }
@@ -4361,9 +4392,9 @@ function ns.GetCDMAuraIconsOptionsTable()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not rs then return "always" end
         if rs.glowFollowPandemic then return "pandemic" end
-        local isArc = IsCurrentAuraSelectionAllArcAura()
-        if rs.glowThresholdSeconds then return isArc and "always" or "seconds" end
-        if (rs.glowThreshold or 1.0) < 1.0 then return isArc and "always" or "percent" end
+        local coerce = IsCurrentAuraSelectionAllArcAura() or (ns.API and ns.API.IS_121)
+        if rs.glowThresholdSeconds then return coerce and "always" or "seconds" end
+        if (rs.glowThreshold or 1.0) < 1.0 then return coerce and "always" or "percent" end
         return "always"
       end,
       set = function(_, v)
@@ -4483,6 +4514,22 @@ function ns.GetCDMAuraIconsOptionsTable()
         return rs.glowFollowPandemic and true or false
       end,
     },
+    activeStateGlow121Note = {
+      type = "description", fontSize = "small",
+      name = "|cffff8800Threshold % and Threshold Seconds are not available on this game version (12.1 Midnight): an aura's remaining time is protected, so a glow can't watch it. This icon's saved threshold now behaves as Always. CDM Pandemic Timing still works exactly — it is driven by the game itself.|r",
+      order = 107.84066, width = "full",
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if not (ns.API and ns.API.IS_121) then return true end
+        if IsCurrentAuraSelectionAllArcAura() then return true end   -- never offered thresholds
+        local c = GetAuraCfg()
+        local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+        if not (rs and rs.glow) then return true end
+        -- only for icons actually carrying a saved threshold — everyone else
+        -- just sees the two working modes with no noise
+        return not (rs.glowThresholdSeconds or (rs.glowThreshold or 1.0) < 1.0)
+      end,
+    },
     activeStateGlowThreshold = {
       type = "range",
       name = "Threshold %",
@@ -4507,6 +4554,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         if IsCurrentAuraSelectionAllArcAura() then return true end
+        if ns.API and ns.API.IS_121 then return true end   -- thresholds impossible on 12.1
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not (rs and rs.glow) then return true end
@@ -4534,6 +4582,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
         if IsCurrentAuraSelectionAllArcAura() then return true end
+        if ns.API and ns.API.IS_121 then return true end   -- thresholds impossible on 12.1
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not (rs and rs.glow) then return true end
@@ -4564,6 +4613,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8409, width = 0.85,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        if ns.API and ns.API.IS_121 then return true end   -- serves the threshold lookup only
         local c = GetAuraCfg()
         local rs = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
         if not (rs and rs.glow) then return true end
@@ -5870,7 +5920,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "toggle", name = "Show at 1 Stack",
       desc = "Show the stack count even when you only have 1 stack (CDM hides it by default)",
       get = function() return GetAuraBoolSetting(function(c) return c and c.chargeText and c.chargeText.showSingleStack == true end, function() local c = GetAuraCfg(); return c and c.chargeText and c.chargeText.showSingleStack == true end) end,
-      set = function(_, v) ApplyAuraSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.showSingleStack = v end) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.showSingleStack = v end) end,
       order = 131.5, width = 0.9, hidden = HideAuraChargeText,
     },
     chargeTextDrag = {
@@ -5980,157 +6030,188 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "description", name = "\n|cffffd700Stack Threshold Colors|r", order = 144.5, width = "full",
       hidden = HideAuraChargeText,
     },
-    stackColorNote121 = {
-      type = "description",
-      name = "|cffff8800Not available on this game version (12.1 Midnight).|r Aura stack counts are protected here, so the number shows in Blizzard's default color and can't be recolored. It returns with the new aura-icon system.",
-      order = 144.55, width = "full",
-      hidden = function() if HideAuraChargeText() then return true end return not (ns.API and ns.API.IS_121) end,
-    },
     stackColorEnable = {
       type = "toggle", name = "Color by Stack Count",
-      desc = "Color the stack number by how many stacks are present. Each enabled band colors the number once the stack count reaches its Min Stacks; the highest band reached wins. Below the lowest enabled band the number is hidden.\n\nWorks in instances / Mythic+ where the stack count is a secret value (it recolors the number text only, never the icon image).\n\n|cffff8800Disabled on 12.1 (Midnight): stack counts are protected there and can't be colored.|r",
+      desc = "Color the stack number by how many stacks are present. Each enabled band colors the number once the stack count reaches its Min Stacks; the highest band reached wins.\n\nWorks in instances / Mythic+ where the stack count is a secret value (it recolors the number text only, never the icon image).",
       get = function() return GetAuraBoolSetting(function(c) return c and c.chargeText and c.chargeText.thresholdColorEnabled == true end, function() local c = GetAuraCfg(); return c and c.chargeText and c.chargeText.thresholdColorEnabled == true end) end,
-      set = function(_, v) ApplyAuraSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.thresholdColorEnabled = v end) end,
-      disabled = function() return (ns.API and ns.API.IS_121) or false end,
+      set = function(_, v) ApplyStackTextSetting(function(c) if not c.chargeText then c.chargeText = {} end; c.chargeText.thresholdColorEnabled = v end) end,
       order = 144.6, width = 1.4, hidden = HideAuraChargeText,
     },
-    stackColorHint = {
-      type = "description",
-      name = "|cff888888Uses the font, size, outline, shadow and position from the settings above. Toggle each band, set its Min Stacks, and pick a color.|r",
-      order = 144.7, width = "full",
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    -- Hard row breaks: the flow layout wraps mid-band otherwise (the master
+    -- toggle offsets every band's color swatch onto the NEXT band's row).
+    -- One full-width empty description per row pins Band N + its Color + its
+    -- Min Stacks together at any panel width.
+    stackColorBreak0 = {
+      type = "description", name = "", order = 144.66, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak1 = {
+      type = "description", name = "", order = 145.14, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak2 = {
+      type = "description", name = "", order = 145.24, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak3 = {
+      type = "description", name = "", order = 145.34, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak4 = {
+      type = "description", name = "", order = 145.44, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak5 = {
+      type = "description", name = "", order = 145.54, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+    },
+    stackColorBreak6 = {
+      type = "description", name = "", order = 145.64, width = "full",
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     -- Band 1
     scb1Enable = {
       type = "toggle", name = "Band 1", desc = "Enable color band 1.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[1] and e[1].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].enabled = v end) end,
-      order = 145.11, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[1].enabled = v end) end,
+      order = 145.11, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb1Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[1] and e[1].threshold or 1 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].threshold = v end) end,
-      order = 145.12, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[1].threshold = v end) end,
+      order = 145.13, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
     },
     scb1Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end return 1, 1, 1, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[1].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.13, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[1].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.12, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[1] and e[1].enabled) end,
     },
     -- Band 2
     scb2Enable = {
       type = "toggle", name = "Band 2", desc = "Enable color band 2.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[2] and e[2].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].enabled = v end) end,
-      order = 145.21, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[2].enabled = v end) end,
+      order = 145.21, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb2Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[2] and e[2].threshold or 3 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].threshold = v end) end,
-      order = 145.22, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[2].threshold = v end) end,
+      order = 145.23, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
     },
     scb2Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[2] and e[2].color; if col then return col.r or 0.3, col.g or 1, col.b or 0.3, col.a or 1 end return 0.3, 1, 0.3, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[2].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.23, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[2].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.22, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[2] and e[2].enabled) end,
     },
     -- Band 3
     scb3Enable = {
       type = "toggle", name = "Band 3", desc = "Enable color band 3.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[3] and e[3].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].enabled = v end) end,
-      order = 145.31, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[3].enabled = v end) end,
+      order = 145.31, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb3Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[3] and e[3].threshold or 6 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].threshold = v end) end,
-      order = 145.32, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[3].threshold = v end) end,
+      order = 145.33, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
     },
     scb3Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 0.3, col.b or 0.3, col.a or 1 end return 1, 0.3, 0.3, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[3].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.33, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[3].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.32, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[3] and e[3].enabled) end,
     },
     -- Band 4
     scb4Enable = {
       type = "toggle", name = "Band 4", desc = "Enable color band 4.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[4] and e[4].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].enabled = v end) end,
-      order = 145.41, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[4].enabled = v end) end,
+      order = 145.41, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb4Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[4] and e[4].threshold or 9 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].threshold = v end) end,
-      order = 145.42, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[4].threshold = v end) end,
+      order = 145.43, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
     },
     scb4Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[4] and e[4].color; if col then return col.r or 1, col.g or 0.6, col.b or 0, col.a or 1 end return 1, 0.6, 0, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[4].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.43, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[4].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.42, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[4] and e[4].enabled) end,
     },
     -- Band 5
     scb5Enable = {
       type = "toggle", name = "Band 5", desc = "Enable color band 5.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[5] and e[5].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].enabled = v end) end,
-      order = 145.51, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[5].enabled = v end) end,
+      order = 145.51, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb5Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[5] and e[5].threshold or 12 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].threshold = v end) end,
-      order = 145.52, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[5].threshold = v end) end,
+      order = 145.53, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
     },
     scb5Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[5] and e[5].color; if col then return col.r or 0.6, col.g or 0.4, col.b or 1, col.a or 1 end return 0.6, 0.4, 1, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[5].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.53, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[5].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.52, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[5] and e[5].enabled) end,
     },
     -- Band 6
     scb6Enable = {
       type = "toggle", name = "Band 6", desc = "Enable color band 6.",
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[6] and e[6].enabled or false end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].enabled = v end) end,
-      order = 145.61, width = 0.6,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[6].enabled = v end) end,
+      order = 145.61, width = 0.8,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
     },
     scb6Threshold = {
       type = "range", name = "Min Stacks", min = 1, max = 50, step = 1,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return e and e[6] and e[6].threshold or 15 end,
-      set = function(_, v) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].threshold = v end) end,
-      order = 145.62, width = 1.0,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
+      set = function(_, v) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[6].threshold = v end) end,
+      order = 145.63, width = 1.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
     },
     scb6Color = {
       type = "color", name = "Color", hasAlpha = true,
       get = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; local col = e and e[6] and e[6].color; if col then return col.r or 0.3, col.g or 0.7, col.b or 1, col.a or 1 end return 0.3, 0.7, 1, 1 end,
-      set = function(_, r, g, b, a) ApplyAuraSetting(function(c) local e = EnsureStackBands(c); e[6].color = {r=r, g=g, b=b, a=a or 1} end) end,
-      order = 145.63, width = 0.7,
-      hidden = function() if HideAuraChargeText() or (ns.API and ns.API.IS_121) then return true end local c = GetAuraCfg(); if not (c and c.chargeText and c.chargeText.thresholdColorEnabled) then return true end local e = c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
+      set = function(_, r, g, b, a) ApplyStackTextSetting(function(c) local e = EnsureStackBands(c); e[6].color = {r=r, g=g, b=b, a=a or 1} end) end,
+      order = 145.62, width = 0.6,
+      hidden = function() if HideStackBands121() then return true end local c = GetAuraCfg(); return not (c and c.chargeText and c.chargeText.thresholdColorEnabled) end,
+      disabled = function() local c = GetAuraCfg(); local e = c and c.chargeText and c.chargeText.thresholdBands; return not (e and e[6] and e[6].enabled) end,
     },
     resetChargeText = {
       type = "execute",

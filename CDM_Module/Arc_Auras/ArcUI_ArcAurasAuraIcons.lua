@@ -86,16 +86,21 @@ function AuraIcons.MakeID(spellID) return ID_PREFIX .. tostring(spellID) end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- Containers only self-refresh on UNIT_AURA of their unit — target containers
--- go STALE on target swap (in-game confirmed). UpdateAllAuras on our own
--- PLAYER_TARGET_CHANGED closes the gap.
+-- go STALE on target swap (in-game confirmed), and pet containers when the
+-- pet is summoned/dismissed/replaced. UpdateAllAuras on our own
+-- PLAYER_TARGET_CHANGED / UNIT_PET closes both gaps.
 local targetSwapWatcher
 local function ArmTargetSwapRefresh()
     if targetSwapWatcher then return end
     targetSwapWatcher = CreateFrame("Frame")
     targetSwapWatcher:RegisterEvent("PLAYER_TARGET_CHANGED")
-    targetSwapWatcher:SetScript("OnEvent", function()
+    targetSwapWatcher:RegisterEvent("UNIT_PET")
+    targetSwapWatcher:SetScript("OnEvent", function(_, event, evUnit)
+        if event == "UNIT_PET" and evUnit ~= "player" then return end
+        local wantUnit = (event == "UNIT_PET") and "pet" or nil
         for _, rec in ipairs(allContainers) do
-            if rec.unit ~= "player" and type(rec.frame.UpdateAllAuras) == "function" then
+            if rec.unit ~= "player" and (not wantUnit or rec.unit == wantUnit)
+               and type(rec.frame.UpdateAllAuras) == "function" then
                 rec.frame:UpdateAllAuras()
             end
         end
@@ -128,7 +133,77 @@ end
 -- BUTTON WIRING (create-time only; regions are statically configured)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function WireAuraButton(btn)
+-- ── STACK-TEXT FORMATTER (12.1) ─────────────────────────────────────────────
+-- The engine's default application-count formatter hides the number at 0/1
+-- stacks (CDM parity). A NumericRuleFormatter replaces it WHOLESALE and its
+-- breakpoints run on the REAL (secret) count C-side — which returns both
+-- options the 12.1 wall took away from stack text: "Show at 1 Stack"
+-- (breakpoint at 1) and stack threshold COLORS (color escapes baked per band,
+-- the same primitive as the countdown-color fix). Built at wire time from the
+-- icon's settings; the engine recreates buttons as the aura cycles, so a
+-- settings change takes effect on the next application (or a reload).
+-- Per-icon slots only — the dynamic Aura Group slots serve changing
+-- occupants and cannot carry a per-icon formatter.
+local function StackColorEscape(c)
+    return string.format("|c%02x%02x%02x%02x", 255,
+        math.floor((c.r or 1) * 255 + 0.5),
+        math.floor((c.g or 1) * 255 + 0.5),
+        math.floor((c.b or 1) * 255 + 0.5))
+end
+
+local function BuildStackFormatter(arcID)
+    if not arcID then return nil end
+    if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
+    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(arcID)
+    local cht = cfg and cfg.chargeText
+    if not cht then return nil end
+    local showAtOne = cht.showSingleStack == true
+    local bands
+    if cht.thresholdColorEnabled and type(cht.thresholdBands) == "table" then
+        bands = {}
+        for i = 1, 6 do
+            local b = cht.thresholdBands[i]
+            local t = b and b.enabled and tonumber(b.threshold)
+            if t and t >= 1 and b.color then bands[#bands + 1] = { t = t, c = b.color } end
+        end
+        table.sort(bands, function(a, b2) return a.t < b2.t end)
+        if #bands == 0 then bands = nil end
+    end
+    if not showAtOne and not bands then return nil end   -- engine default is right
+
+    -- Edges: 0 (always hidden), 1 (shown iff Show at 1), 2 (always shown),
+    -- plus every band minimum. Highest band whose minimum is reached colors
+    -- the segment; below the lowest band the fontstring's own color shows.
+    local edgeSet = { [0] = true, [1] = true, [2] = true }
+    if bands then for _, b in ipairs(bands) do edgeSet[b.t] = true end end
+    local edges = {}
+    for v in pairs(edgeSet) do edges[#edges + 1] = v end
+    table.sort(edges)
+
+    local f = C_StringUtil.CreateNumericRuleFormatter()
+    for _, lo in ipairs(edges) do
+        local fmtStr
+        if lo == 0 or (lo == 1 and not showAtOne) then
+            fmtStr = ""
+        else
+            local esc
+            if bands then
+                for _, b in ipairs(bands) do
+                    if b.t <= lo then esc = StackColorEscape(b.c) end
+                end
+            end
+            fmtStr = esc and (esc .. "%d|r") or "%d"
+        end
+        f:AddBreakpoint({ threshold = lo, format = fmtStr })
+    end
+    return f
+end
+
+-- exported: the CDM stack overlay (ns.StackColor 12.1 path) builds the same
+-- formatter from the same chargeText settings, keyed by numeric cooldownID
+AuraIcons.BuildStackFormatter = BuildStackFormatter
+
+local function WireAuraButton(btn, arcID)
     -- The engine can re-run initializeFrame on the same frame — wire once
     if btn._arcWired then return end
     btn._arcWired = true
@@ -183,7 +258,7 @@ local function WireAuraButton(btn)
 
     -- Hand the engine our widgets (inbound setters; engine drives from here)
     btn:SetIcon(icon)
-    btn:SetApplicationCount(stacks, {})
+    btn:SetApplicationCount(stacks, { formatter = BuildStackFormatter(arcID) })
     btn:SetDurationCooldown(swipe)
 
     -- The holder owns all mouse interaction (drag/tooltip/context menu)
@@ -200,11 +275,13 @@ AuraIcons.WireAuraButton = WireAuraButton
 local function UnitsFor(def)
     if def.unitMode == "debuff" then return { "target" } end
     if def.unitMode == "both" then return { "player", "target" } end
+    if def.unitMode == "pet" then return { "pet" } end   -- buffs the PET carries
     return { "player" }   -- "buff"
 end
 
 local function FilterFor(def, unit)
-    if unit == "player" then return "HELPFUL" end
+    -- friendly units carry HELPFUL auras; only the target lane hunts debuffs
+    if unit == "player" or unit == "pet" then return "HELPFUL" end
     return def.ownOnly and "HARMFUL|PLAYER" or "HARMFUL"
 end
 
@@ -307,7 +384,10 @@ local function EnsureSlots(arcID, def, startParked)
     for _, unit in ipairs(UnitsFor(def)) do
         local c = CreateIconContainer(unit)
         if c then
-            local key = arcID .. "_" .. unit
+            -- generation suffix: slots can never be unregistered, so a REWIRE
+            -- (settings that live in create-time bindings, e.g. the stack
+            -- formatter) parks the old keys and adds fresh ones
+            local key = arcID .. "_" .. unit .. "_g" .. (entry.gen or 0)
             local sub = { unit = unit, key = key, container = c }
             table.insert(entry.subs, sub)
             -- ALL button setup lives in initializeFrame: the engine
@@ -317,7 +397,7 @@ local function EnsureSlots(arcID, def, startParked)
             local btn = c:AddAuraSlot(key, FilterFor(def, unit), {
                 maxFrameCount = 1,
                 initializeFrame = function(b)
-                    WireAuraButton(b)
+                    WireAuraButton(b, arcID)
                     sub.frame = b
                     -- bake the icon's CONFIGURED zoom into art + swipe here:
                     -- initializeFrame is always a legal context and re-runs
@@ -1308,6 +1388,58 @@ end
 -- Login/profile-load sweep.
 function AuraIcons.RefreshAll()
     AuraIcons.RefreshVisibility()
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- REWIRE: recreate every icon's slots so CREATE-TIME bindings pick up changed
+-- settings NOW. The engine pre-creates each slot's button once and reuses it
+-- forever (maxFrameCount contract) — so the stack formatter, baked in
+-- initializeFrame, would otherwise only refresh on a reload. Old slots can't
+-- be unregistered: park them on a never-matching filter (the BD pattern) and
+-- add fresh generation-suffixed slots. Desk-time only — slot creation is
+-- blocked under aura secrecy; callers are options setters, so that is always
+-- satisfied outside combat/instances.
+-- ═══════════════════════════════════════════════════════════════════════════
+local rewirePending = false
+local rewireFlush = CreateFrame("Frame")
+rewireFlush:RegisterEvent("PLAYER_REGEN_ENABLED")
+rewireFlush:RegisterEvent("PLAYER_ENTERING_WORLD")
+rewireFlush:SetScript("OnEvent", function()
+    if rewirePending and not AurasSecretNow() then
+        rewirePending = false
+        AuraIcons.RewireAll()
+    end
+end)
+
+function AuraIcons.RewireAll()
+    if not IS_121 then return end
+    if AurasSecretNow() then
+        -- Slot creation is illegal under aura secrecy (combat/instances). A
+        -- silent skip left toggles flipped MID-COMBAT dead until a reload (the
+        -- Maelstrom show-at-1 report) — queue instead and flush on regen/zone.
+        rewirePending = true
+        return
+    end
+    local touched = {}
+    for arcID, entry in pairs(entries) do
+        if entry.subs and #entry.subs > 0 then
+            for _, sub in ipairs(entry.subs) do
+                if sub.container and sub.key and sub.container.SetAuraSlotCandidateFilters then
+                    sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
+                    touched[sub.container] = true
+                end
+            end
+            wipe(entry.subs)
+            entry.gen = (entry.gen or 0) + 1
+            EnsureSlots(arcID, entry.def, entry.parked)
+            for _, sub in ipairs(entry.subs) do
+                if sub.container then touched[sub.container] = true end
+            end
+        end
+    end
+    for c in pairs(touched) do
+        if c.UpdateAllAuras then c:UpdateAllAuras() end
+    end
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

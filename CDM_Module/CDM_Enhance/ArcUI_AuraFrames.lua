@@ -634,7 +634,14 @@ function AF.UpdateAuraFrame(frame)
         HideReadyGlow(frame)
       end
       frame._arcTargetGlow = true
-    elseif threshold >= 1.0 and not stateVisuals.glowThresholdSeconds then
+    elseif (threshold >= 1.0 and not stateVisuals.glowThresholdSeconds)
+        or (ns.API and ns.API.IS_121) then
+      -- 12.1: aura remaining-duration reads are walled, so the threshold
+      -- ticker can never evaluate — saved % / seconds thresholds collapse to
+      -- plain aura-active glow HERE (event-driven show/hide, no dead 0.5s
+      -- ticker burning cycles to reach the same fallback). The aura options
+      -- panel hides the threshold modes on 12.1 and says why; CDM Pandemic
+      -- Timing (the branch above) still works — it is Blizzard-driven.
       if ShouldShowReadyGlow(stateVisuals, frame) and isReadyOrPreview then
         ShowReadyGlow(frame, stateVisuals)
       else

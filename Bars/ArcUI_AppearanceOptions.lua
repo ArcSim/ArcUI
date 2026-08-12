@@ -446,6 +446,16 @@ IsIconMode = function()
   return cfg and cfg.display and cfg.display.displayType == "icon"
 end
 
+-- Selected bar is driven by the CDM Timer Mirror (12.1 lane). The mirror
+-- re-pushes the CD Manager bar item's OWN secret timer values into our bar,
+-- so options that would need to COMPUTE on those values (fill direction,
+-- smoothing interpolation, conditional color layers) cannot apply.
+local function IsMirrorBar()
+  if not (ns.API and ns.API.IS_121) then return false end
+  local cfg = GetSelectedConfig()
+  return (cfg and cfg.tracking and cfg.tracking.cdmMirror) and true or false
+end
+
 -- Check if current bar is in bar display mode (or no selection)
 IsBarMode = function()
   local cfg = GetSelectedConfig()
@@ -3340,10 +3350,21 @@ function ns.AppearanceOptions.GetOptionsTable()
           return not cfg or (cfg.display.thresholdMode ~= "perStack" and cfg.display.thresholdMode ~= "granular")
         end
       },
+      barFillModeMirrorNote = {
+        type = "description", fontSize = "small",
+        name = "|cffff8800This bar uses CDM Timer Mirror: it repeats the Cooldown Manager's own timer, which always drains. Fill mode, Smoothing and Conditional Color can't apply to a mirrored timer.|r",
+        order = 21.45, width = "full",
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          if not IsDurationBar() then return true end
+          return not IsMirrorBar()
+        end
+      },
       barFillMode = {
         type = "select",
         name = "Fill Mode",
-        desc = "Drain: bar shrinks as time passes. Fill: bar grows as time passes.",
+        desc = "Drain: bar shrinks as time passes. Fill: bar grows as time passes.\n\n|cffff8800Not available while CDM Timer Mirror is on: the mirror repeats the Cooldown Manager's own timer, which always drains.|r",
+        disabled = IsMirrorBar,
         values = GetFillModes,
         get = function()
           local cfg = GetSelectedConfig()
@@ -3418,7 +3439,8 @@ function ns.AppearanceOptions.GetOptionsTable()
       enableSmoothing = {
         type = "toggle",
         name = "Smooth Fill",
-        desc = "Smoothly animate bar fill changes.\n\n|cff00ff00Duration bars:|r Applies to Manual Max mode. Auto mode always uses smooth interpolation via SetTimerDuration.",
+        desc = "Smoothly animate bar fill changes.\n\n|cff00ff00Duration bars:|r Applies to Manual Max mode. Auto mode always uses smooth interpolation via SetTimerDuration.\n\n|cffff8800Not available while CDM Timer Mirror is on: the mirror repeats the Cooldown Manager's raw timer pushes as-is.|r",
+        disabled = IsMirrorBar,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.enableSmoothing
@@ -6490,7 +6512,8 @@ function ns.AppearanceOptions.GetOptionsTable()
       durationColorCurveEnabled = {
         type = "toggle",
         name = "Conditional Color",
-        desc = "Change bar color based on remaining time. 100% uses Base Bar Color.\n\n|cffff9900Note:|r Enabling this disables gradient effect (WoW API limitation).",
+        desc = "Change bar color based on remaining time. 100% uses Base Bar Color.\n\n|cffff9900Note:|r Enabling this disables gradient effect (WoW API limitation).\n\n|cffff8800Not available while CDM Timer Mirror is on: conditional colors are drawn by the aura engine, which mirror bars bypass (the mirror repeats the Cooldown Manager's own timer instead).|r",
+        disabled = IsMirrorBar,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.durationColorCurveEnabled
@@ -6524,6 +6547,20 @@ function ns.AppearanceOptions.GetOptionsTable()
           if not (ns.API and ns.API.IS_121) then return true end
           local cfg = GetSelectedConfig()
           return not (cfg and cfg.display.durationColorCurveEnabled and cfg.display.durationThresholdAsSeconds)
+        end
+      },
+      durationColorCurveMirrorNote = {
+        type = "description",
+        name = "|cffff8800This bar uses CDM Timer Mirror, so the settings below have no effect: the mirror repeats the Cooldown Manager's own timer and bypasses the aura engine that draws conditional colors.|r",
+        fontSize = "small",
+        order = 33.722, width = "full",
+        hidden = function()
+          if not IsDurationBar() then return true end
+          if IsIconMode() then return true end
+          if collapsedSections.colorOptions then return true end
+          if not IsMirrorBar() then return true end
+          local cfg = GetSelectedConfig()
+          return not (cfg and cfg.display.durationColorCurveEnabled)
         end
       },
 

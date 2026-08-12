@@ -1544,14 +1544,19 @@ ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- zone-out ends instance secrecy without a regen
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
-ev:SetScript("OnEvent", function(_, event)
-  if event == "PLAYER_TARGET_CHANGED" then
-    -- Target containers do NOT self-refresh on target swap (they only react to their own unit's
-    -- UNIT_AURA), so a target debuff bar/text goes stale until the new target fires an aura event.
-    -- Force a full re-parse of every non-player container. (The exact debuff bug the AuraLab found.)
+ev:RegisterEvent("UNIT_PET")            -- pet summoned/dismissed/replaced: pet containers go stale
+ev:SetScript("OnEvent", function(_, event, evUnit)
+  if event == "PLAYER_TARGET_CHANGED" or (event == "UNIT_PET" and evUnit == "player") then
+    -- Non-player containers do NOT self-refresh when their unit's IDENTITY changes (they only
+    -- react to their own unit's UNIT_AURA), so a target debuff bar goes stale on target swap and
+    -- a pet bar on summon/dismiss. Force a full re-parse of the affected containers.
+    -- (The exact debuff bug the AuraLab found; pet lane added with the Dark Transformation fix.)
+    local wantUnit = (event == "UNIT_PET") and "pet" or nil   -- nil = every non-player unit
     for _, perOwner in pairs(containers) do
       for unit, c in pairs(perOwner) do
-        if unit ~= "player" and c.UpdateAllAuras then c:UpdateAllAuras() end
+        if unit ~= "player" and (not wantUnit or unit == wantUnit) and c.UpdateAllAuras then
+          c:UpdateAllAuras()
+        end
       end
     end
     return

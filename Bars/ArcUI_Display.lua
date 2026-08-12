@@ -4341,7 +4341,19 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     -- Route the engine by the user's buff/debuff PICKER (trackType), NOT the frame's auraDataUnit,
     -- which lies for selfAura debuffs like Flame Shock (it reports "player" though the debuff is on
     -- the target). A debuff tracks the target/HARMFUL; a buff the player/HELPFUL.
-    local bdUnit = (barConfig.tracking and barConfig.tracking.trackType == "debuff") and "target" or "player"
+    -- PET-BUFF lane (trackType "petbuff", 12.1-only picker choice): buffs the
+    -- PET carries (Dark Transformation). Lab-proven: pet slots populate, and
+    -- the pet's visible copy uses the entry's BASE spell ID (1233448 for DT) —
+    -- already in the candidate set — while the player-side copy CDM reads is a
+    -- hidden nameplate-only mirror containers can never match.
+    local bdUnit = "player"
+    if barConfig.tracking then
+      if barConfig.tracking.trackType == "debuff" then
+        bdUnit = "target"
+      elseif barConfig.tracking.trackType == "petbuff" then
+        bdUnit = "pet"
+      end
+    end
     local aurasSecret121 = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(bdUnit)
     local bdCooldownID   = barConfig.tracking and barConfig.tracking.cooldownID
     -- Fall back to the bar's own saved spell ID. A CDM bar usually has no

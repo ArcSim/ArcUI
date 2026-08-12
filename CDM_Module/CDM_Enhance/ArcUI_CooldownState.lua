@@ -1402,9 +1402,22 @@ local function HandleAuraLogic(frame, iconTex, cfg, stateVisuals)
   -- DESATURATION
   if frame._arcTargetDesat == nil then
     if isCooldownFrame then
-      frame._arcDesatBranch = "AURA_CD_NATIVE"
-      frame._arcForceDesatValue = nil
-      frame._arcTargetDesat = -1
+      -- Cooldown-viewer frame in its AURA-ACTIVE phase: the aura takes
+      -- priority over the shadow — the icon stays COLORED while the buff
+      -- runs (IAO is routed upstream and never reaches this branch). The old
+      -- "release to CDM native" (_arcForceDesatValue = nil) is DEAD on
+      -- enhanced frames (DesatLab: CDM's desat state goes secret, its writes
+      -- never render), so the desat our shadow path forced during the earlier
+      -- cooldown phase STUCK through the whole aura phase. Own it instead:
+      -- actively saturate + enforce, the same ownership rule as the shadow
+      -- branch — never hand desat back to CDM.
+      frame._arcDesatBranch = "AURA_CD_SATURATE"
+      frame._arcForceDesatValue = 0
+      frame._arcBypassDesatHook = true
+      SetDesat(iconTex, 0)
+      frame._arcBypassDesatHook = false
+      frame._arcTargetDesat = 0
+      ApplyBorderDesaturation(frame, 0)
     else
       if isAuraActive then
         -- Aura active = ready state — no desat needed. CDM agrees so no fight.
@@ -1720,6 +1733,16 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
   if frame._arcConfig or frame._arcAuraID then return end
   -- Never process CDM aura viewer frames (buff/debuff icons) — they have no cooldown state
   if frame._arcViewerType == "aura" then return end
+  -- RELEASED-FRAME GUARD (timeline-proven, 2026-08-12): a frame CDM has
+  -- released (ClearCooldownID → cooldownID nil) can still reach this engine
+  -- through stale caches/relays — spell resolution rides OUR cached settings,
+  -- not the frame's cleared cooldownInfo — and HandleCooldownLogic's
+  -- unconditional frame:Show() raised the corpse (the "clone icon" /
+  -- floating-square bug: trace showed Show cdID=nil from this file on a pool
+  -- spare CDM never assigned). A CDM item frame with no cooldownID must never
+  -- be shown or styled. (Arc's own frames exited above via _arcAuraID/_arcConfig;
+  -- totem/item CDM frames always carry a cooldownID.)
+  if frame.cooldownID == nil and frame.GetCooldownID then return end
 
   -- DURATION OVERRIDE: while an experimental duration override is active, it owns
   -- the entire visual (treated as an aura-active override) and drives the same

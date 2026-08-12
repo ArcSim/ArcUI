@@ -247,3 +247,178 @@ function SC.ClearBands(frame)
     frame._arcStackBandContainer:Hide()
   end
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 12.1 CDM AURA-ICON COUNT OVERLAY (field-proven mechanism, 2026-08-12)
+--
+-- On 12.1 the layered min-band trick above is walled (the display-count API
+-- throws for tainted callers), and CDM's own Applications number is a game-
+-- drawn fontstring we can neither re-threshold nor recolor. The proven
+-- replacement (live-tested on Arc aura icons the same night): an INVISIBLE
+-- engine aura button whose only job is the application count — its fontstring
+-- is driven C-side by SetApplicationCount with a banded NumericRuleFormatter
+-- (Show at 1 + per-band color escapes), overlaid on the CDM icon while CDM's
+-- own count is alpha-hidden (CDM re-asserts SetShown, never alpha).
+--
+-- Structure per overlaid icon: two tiny AuraContainers (player/HELPFUL +
+-- target/HARMFUL — the BD dual-unit model, whichever unit holds the aura
+-- populates) PARENTED TO THE CDM FRAME so the overlay inherits every
+-- visibility path the icon has (hide-when, force-hide, group alpha) with zero
+-- extra plumbing. Candidate spell IDs come from BD.ResolveCandidateSpellIDs
+-- (base + override + linked). Buttons reuse ArcBarDurButtonTemplate (already
+-- carries ArcStackHolder.ArcStacks). Desk-time rebuild model: slots can't
+-- unregister, so refreshes park old generations and add fresh keys.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local IS_121_SC = select(4, GetBuildInfo()) >= 120100
+if IS_121_SC then
+
+local overlayGen  = 0
+local overlayRecs = {}   -- [cdID] = { frame, subs = {{container, key}}, dimmed }
+
+local function WantsOverlay(cfg)
+  local cht = cfg and cfg.chargeText
+  if not cht then return false end
+  if cht.enabled == false then return false end
+  return cht.showSingleStack == true or cht.thresholdColorEnabled == true
+end
+
+local function WireOverlayButton(btn, cdmFrame, cdID)
+  local sh = btn.ArcStackHolder
+  local fs = sh and sh.ArcStacks
+  if not fs then return end
+  btn:ClearAllPoints()
+  btn:SetAllPoints(cdmFrame)
+  btn:SetFrameStrata(cdmFrame:GetFrameStrata())
+  btn:SetFrameLevel((cdmFrame:GetFrameLevel() or 1) + 7)
+  if btn.EnableMouse then btn:EnableMouse(false) end
+  local fmt = ns.AuraIcons and ns.AuraIcons.BuildStackFormatter
+    and ns.AuraIcons.BuildStackFormatter(cdID)
+  btn:SetApplicationCount(fs, { formatter = fmt })
+  -- style from chargeText — the same recipe the arc aura icons use, so the
+  -- overlaid number sits exactly where the user's stack text settings say
+  local cfg = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(cdID)
+  local cht = (cfg and cfg.chargeText) or {}
+  local lsm = LibStub and LibStub("LibSharedMedia-3.0", true)
+  local fontPath = (cht.font and lsm and lsm:Fetch("font", cht.font, true)) or select(1, fs:GetFont())
+  local outline = cht.outline or "OUTLINE"
+  if outline == "NONE" then outline = "" end
+  fs:SetFont(fontPath, cht.size or 16, outline)
+  fs:SetDrawLayer("OVERLAY", 7)
+  local c = cht.color
+  if c then fs:SetTextColor(c.r or 1, c.g or 1, c.b or 1, c.a or 1) end
+  if cht.shadow then
+    fs:SetShadowOffset(cht.shadowOffsetX or 1, cht.shadowOffsetY or -1)
+    fs:SetShadowColor(0, 0, 0, 0.8)
+  else
+    fs:SetShadowOffset(0, 0)
+  end
+  fs:ClearAllPoints()
+  if cht.mode == "free" then
+    fs:SetPoint("CENTER", btn, "CENTER", cht.freeX or 0, cht.freeY or 0)
+  else
+    local a = cht.anchor or cht.position or "BOTTOMRIGHT"
+    fs:SetPoint(a, btn, a, cht.offsetX or -2, cht.offsetY or 2)
+  end
+  fs:Show()
+  if sh and sh.SetFrameLevel then
+    sh:SetFrameStrata(cdmFrame:GetFrameStrata())
+    sh:SetFrameLevel(btn:GetFrameLevel() + 1)
+  end
+end
+
+local function ParkOverlayRec(rec)
+  for _, sub in ipairs(rec.subs) do
+    if sub.container and sub.container.SetAuraSlotCandidateFilters then
+      sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
+    end
+  end
+  wipe(rec.subs)
+  if rec.frame and rec.frame.Applications and rec.dimmed then
+    rec.frame.Applications:SetAlpha(1)
+    rec.dimmed = nil
+  end
+end
+
+-- Desk-time full rebuild: called at login and from the stack-text setters.
+-- Under secrecy (combat/instance) slot creation is illegal — QUEUE and flush
+-- on regen/zone (a silent skip left mid-combat toggles dead until reload).
+local overlayPending = false
+local overlayFlush = CreateFrame("Frame")
+overlayFlush:RegisterEvent("PLAYER_REGEN_ENABLED")
+overlayFlush:RegisterEvent("PLAYER_ENTERING_WORLD")
+overlayFlush:SetScript("OnEvent", function()
+  if overlayPending
+     and not (C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()) then
+    overlayPending = false
+    SC.RefreshOverlays()
+  end
+end)
+
+function SC.RefreshOverlays()
+  if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+    overlayPending = true
+    return
+  end
+  local GetEnhancedFrames = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrames
+  local GetIconSettings   = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings
+  if not (GetEnhancedFrames and GetIconSettings) then return end
+  local frames = GetEnhancedFrames()
+  if not frames then return end
+  overlayGen = overlayGen + 1
+  for _, rec in pairs(overlayRecs) do ParkOverlayRec(rec) end
+  for cdID, data in pairs(frames) do
+    local f = data.frame
+    if f and data.viewerType == "aura" and type(cdID) == "number" then
+      local cfg = GetIconSettings(cdID)
+      if WantsOverlay(cfg) then
+        local ids = ns.BarDuration and ns.BarDuration.ResolveCandidateSpellIDs
+          and ns.BarDuration.ResolveCandidateSpellIDs(cdID, nil)
+        if ids and next(ids) then
+          local rec = overlayRecs[cdID] or { subs = {} }
+          rec.frame = f
+          overlayRecs[cdID] = rec
+          for _, unit in ipairs({ "player", "target" }) do
+            local ckey = "_arcSCOv_" .. unit
+            local cont = f[ckey]
+            if not cont then
+              cont = CreateFrame("AuraContainer", nil, f, "CustomAuraContainerTemplate")
+              if not (cont and cont.AddAuraSlot) then return end
+              cont:SetUnit(unit)
+              cont:SetEnabled(true)
+              cont:SetPoint("CENTER", f, "CENTER", 0, 0)
+              cont:SetSize(1, 1)
+              cont:Show()
+              f[ckey] = cont   -- _arc* field on a Blizzard frame: taint-safe
+            end
+            local key = "arcscov" .. cdID .. "_" .. unit .. "_g" .. overlayGen
+            cont:AddAuraSlot(key, (unit == "player") and "HELPFUL" or "HARMFUL", {
+              maxFrameCount    = 1,
+              candidateFilters = { includeSpellIDs = ids },
+              templateNames    = { "ArcBarDurButtonTemplate" },
+              initializeFrame  = function(b) WireOverlayButton(b, f, cdID) end,
+            })
+            if cont.UpdateAllAuras then cont:UpdateAllAuras() end
+            table.insert(rec.subs, { container = cont, key = key })
+          end
+          if f.Applications then
+            f.Applications:SetAlpha(0)
+            rec.dimmed = true
+          end
+        end
+      else
+        overlayRecs[cdID] = nil   -- already parked + restored above
+      end
+    end
+  end
+end
+
+local scOvLoader = CreateFrame("Frame")
+scOvLoader:RegisterEvent("PLAYER_ENTERING_WORLD")
+scOvLoader:SetScript("OnEvent", function(self, event)
+  self:UnregisterAllEvents()
+  -- CDM frames get enhanced/assigned over the first seconds of a session
+  C_Timer.After(5, function() SC.RefreshOverlays() end)
+end)
+
+end -- IS_121_SC

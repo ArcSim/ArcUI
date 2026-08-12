@@ -7,7 +7,23 @@ local LibStub = LibStub
 local gui = LibStub("AceGUI-3.0")
 local reg = LibStub("AceConfigRegistry-3.0")
 
-local MAJOR, MINOR = "AceConfigDialog-3.0", 89
+-- ARC LOCAL PATCH (version): this file is UPSTREAM 89 plus the ArcUI-only inline
+-- group width patch further down (search "ARC LOCAL PATCH"). It ships as 90 so it
+-- WINS the LibStub race.
+--
+-- Why: LibStub keeps whichever copy registers first at the highest minor, and a
+-- typical live install has dozens of addons bundling stock 89. Several of them load
+-- before ArcUI (AdvancedInterfaceOptions, AngryAssignments, Bartender4, ...), so a
+-- stock copy won, our patch never registered, and ArcUI's panels silently lost their
+-- side-by-side option boxes on exactly the accounts with the most addons.
+--
+-- Safe for everyone else: the behaviour change below is gated to appName == "ArcUI",
+-- so every other addon gets stock 89 behaviour from this copy.
+--
+-- WHEN UPDATING THIS LIBRARY FROM UPSTREAM: take the new upstream file, re-apply the
+-- inline width patch, and set MINOR to (new upstream minor + 1). Never leave it far
+-- above upstream, or we suppress real library updates for every addon in the session.
+local MAJOR, MINOR = "AceConfigDialog-3.0", 90
 local AceConfigDialog, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not AceConfigDialog then return end
@@ -1141,7 +1157,13 @@ local function FeedOptions(appName, options,container,rootframe,path,group,inlin
 					-- already understands relative widths. No width in the
 					-- option table means the original "fill", so every existing
 					-- group is unaffected.
-					local groupWidth = GetOptionsMemberValue("width", v, options, path, appName)
+					-- GATED TO ArcUI'S OWN OPTION TABLES: this copy registers at minor
+					-- 90 (see the header) so it serves EVERY addon in the session, and
+					-- a foreign addon carrying a numeric width on an inline group must
+					-- keep rendering exactly as it does under stock 89.
+					local groupWidth = (appName == "ArcUI")
+						and GetOptionsMemberValue("width", v, options, path, appName)
+						or nil
 					if type(groupWidth) == "number" and groupWidth > 0 and groupWidth <= 1 then
 						GroupContainer:SetRelativeWidth(groupWidth)
 						-- TOP-align it in the row. Flow centres a child on the row's

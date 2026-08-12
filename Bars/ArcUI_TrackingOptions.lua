@@ -698,6 +698,8 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
             local typeLabel
             if trackType == "debuff" then
               typeLabel = "|cffff6b6bDebuff|r"
+            elseif trackType == "petbuff" then
+              typeLabel = "|cffaa88ffPet Buff|r"
             elseif trackType == "pet" then
               typeLabel = "|cffaa88ffPet|r"
             else
@@ -821,9 +823,20 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           end
           return "Type"
         end,
-        desc = "Track as buff, debuff, pet, totem, or ground effect duration\n\n|cffFFD100Buff|r - Player buffs (Maelstrom Weapon, procs, etc.)\n|cffFFD100Debuff|r - Target debuffs (DoTs, applied effects)\n|cffFFD100Pet|r - Guardians/pets (Dreadstalkers, Wild Imps, Spirit Wolves)\n|cffFFD100Totem|r - Actual totems (Healing Stream, Capacitor)\n|cffFFD100Ground Effect|r - Placed effects (Consecration, Efflorescence, Death and Decay)",
-        values = { [""] = "-- Select Type --", ["buff"] = "Buff", ["debuff"] = "Debuff", ["pet"] = "Pet", ["totem"] = "Totem", ["ground"] = "Ground Effect" },
-        sorting = { "", "buff", "debuff", "pet", "totem", "ground" },
+        desc = "Track as buff, debuff, pet, totem, or ground effect duration\n\n|cffFFD100Buff|r - Player buffs (Maelstrom Weapon, procs, etc.)\n|cffFFD100Debuff|r - Target debuffs (DoTs, applied effects)\n|cffFFD100Buff on Pet|r - Buffs your pet carries (Dark Transformation)\n|cffFFD100Pet|r - Guardians/pets (Dreadstalkers, Wild Imps, Spirit Wolves)\n|cffFFD100Totem|r - Actual totems (Healing Stream, Capacitor)\n|cffFFD100Ground Effect|r - Placed effects (Consecration, Efflorescence, Death and Decay)",
+        values = function()
+          local v = { [""] = "-- Select Type --", ["buff"] = "Buff", ["debuff"] = "Debuff", ["pet"] = "Pet", ["totem"] = "Totem", ["ground"] = "Ground Effect" }
+          -- Buff on Pet rides the 12.1 engine lane (pet-unit aura slots); on
+          -- older clients there is no working path, so the choice is not offered
+          if ns.API and ns.API.IS_121 then v["petbuff"] = "Buff on Pet" end
+          return v
+        end,
+        sorting = function()
+          if ns.API and ns.API.IS_121 then
+            return { "", "buff", "debuff", "petbuff", "pet", "totem", "ground" }
+          end
+          return { "", "buff", "debuff", "pet", "totem", "ground" }
+        end,
         get = function()
           local cfg = ns.API.GetBarConfig(barNum)
           return cfg and cfg.tracking.trackType or ""
@@ -1053,7 +1066,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
       cdmMirror = {
         type = "toggle",
         name = "CDM Timer Mirror",
-        desc = "Drives this duration bar by mirroring the Cooldown Manager entry's own bar timer. Use for internal timers that normal aura tracking cannot see (for example Crusading Strikes' weapon swing timer).\n\nRequires the entry to be displayed as a BAR in the Cooldown Manager and visible. Fill direction is always drain.",
+        desc = "Drives this duration bar by mirroring the Cooldown Manager entry's own bar timer. Use for internal timers that normal aura tracking cannot see (for example Crusading Strikes' weapon swing timer).\n\nRequires the entry to be displayed as a BAR in the Cooldown Manager and visible.\n\n|cffff8800Mirrored timers repeat the game's own pushes as-is, so some options can't apply while this is on: the bar always DRAINS (Fill mode is ignored), Smoothing and Conditional Color are off, and the duration text shows whole seconds.|r",
         get = function()
           local cfg = ns.API.GetBarConfig(barNum)
           return cfg and cfg.tracking and cfg.tracking.cdmMirror or false
