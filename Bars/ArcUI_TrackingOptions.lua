@@ -987,7 +987,7 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
       },
       hideCDM = {
         type = "toggle",
-        name = "Hide CDM Icon",
+        name = "Hide CDM Icon/Bar",
         desc = "Hide the CD Manager icon/bar for this aura",
         get = function()
           local cfg = ns.API.GetBarConfig(barNum)
@@ -1002,7 +1002,27 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           end
         end,
         order = 4.7,
-        width = 0.7,
+        width = 0.95,
+        hidden = function() return not expandedBars[barKey] end
+      },
+      hideInactive = {
+        type = "toggle",
+        name = "Hide When Inactive",
+        desc = "Hide the bar/icon when the buff/debuff is not active.\n\nSame setting as in the Appearance tab's Behavior section.",
+        get = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          return cfg and cfg.behavior and cfg.behavior.hideWhenInactive
+        end,
+        set = function(info, value)
+          local cfg = ns.API.GetBarConfig(barNum)
+          if cfg then
+            if not cfg.behavior then cfg.behavior = {} end
+            cfg.behavior.hideWhenInactive = value
+            if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNum) end
+          end
+        end,
+        order = 4.72,
+        width = 1.0,
         hidden = function() return not expandedBars[barKey] end
       },
       useBaseSpell = {

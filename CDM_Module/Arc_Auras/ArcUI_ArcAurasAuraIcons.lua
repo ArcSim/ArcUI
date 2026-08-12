@@ -133,17 +133,35 @@ end
 -- BUTTON WIRING (create-time only; regions are statically configured)
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── STACK-TEXT FORMATTER (12.1) ─────────────────────────────────────────────
+-- ── STACK-TEXT FORMATTER (12.1) — LIVE REGISTRY ─────────────────────────────
 -- The engine's default application-count formatter hides the number at 0/1
 -- stacks (CDM parity). A NumericRuleFormatter replaces it WHOLESALE and its
--- breakpoints run on the REAL (secret) count C-side — which returns both
+-- breakpoints run on the REAL (secret) count C-side — which restores both
 -- options the 12.1 wall took away from stack text: "Show at 1 Stack"
--- (breakpoint at 1) and stack threshold COLORS (color escapes baked per band,
--- the same primitive as the countdown-color fix). Built at wire time from the
--- icon's settings; the engine recreates buttons as the aura cycles, so a
--- settings change takes effect on the next application (or a reload).
+-- (breakpoint at 1) and stack threshold COLORS (color escapes baked per band).
+--
+-- LIFECYCLE (the post-3.7.10.c lesson, Blizzard source verified): each slot's
+-- button is created EXACTLY ONCE at AddAuraSlot (per-slot provider, batch
+-- size 1) and initializeFrame never re-runs — anything read at wire time is
+-- frozen into the binding until an explicit re-bind. The .c build derived the
+-- formatter from settings at wire time, and the ADDON_LOADED prebuild runs
+-- BEFORE the AceDB exists (GetIconSettings returned nil), so EVERY login
+-- reverted to the engine-default formatter ("settings not being restored").
+--
+-- The fix is ONE PERSISTENT formatter object per icon key:
+--   * the engine stores the OBJECT and calls FormatNumber on it on every
+--     aura update (ApplyApplicationCount, source-verified) — so refreshing
+--     the object's breakpoints re-derives the display with NO slot or button
+--     work: plain userdata calls, legal in ANY context including mid-key;
+--   * belt-and-suspenders (in case the engine copies the formatter at bind
+--     time), ApplySettings re-binds SetApplicationCount on ACCESSIBLE
+--     buttons whenever the registry version moves — SetApplicationCount
+--     re-processes options and refreshes the display immediately;
+--   * settings resolve through GetIconSettings, with a READ-ONLY raw
+--     ArcUIDB fallback for the ADDON_LOADED window (per-icon chargeText
+--     lives in raw spec storage that IS loaded before the AceDB exists).
 -- Per-icon slots only — the dynamic Aura Group slots serve changing
--- occupants and cannot carry a per-icon formatter.
+-- occupants and get no per-icon formatter (GetLiveFormatter(nil) = nil).
 local function StackColorEscape(c)
     return string.format("|c%02x%02x%02x%02x", 255,
         math.floor((c.r or 1) * 255 + 0.5),
@@ -151,15 +169,43 @@ local function StackColorEscape(c)
         math.floor((c.b or 1) * 255 + 0.5))
 end
 
-local function BuildStackFormatter(arcID)
-    if not arcID then return nil end
-    if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
-    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(arcID)
+-- Read-only raw fallback for the load window. Never creates tables: a bad
+-- early spec key must not fabricate spec entries (the 3.7.9 phantom-spec
+-- lesson), so this only follows keys that already exist.
+local function RawChargeTextFallback(key)
+    local charName = UnitName and UnitName("player")
+    if not charName or charName == "Unknown" then return nil end
+    local realm = GetRealmName and GetRealmName()
+    if not realm then return nil end
+    local charDB = ArcUIDB and ArcUIDB.char and ArcUIDB.char[charName .. " - " .. realm]
+    local cdm = charDB and charDB.cdmGroups
+    if not cdm or not cdm.specData then return nil end
+    local specKey = (ns.CDMGroups and ns.CDMGroups.currentSpec) or cdm.lastActiveSpec
+    if not specKey then
+        local specIndex = GetSpecialization and GetSpecialization()
+        local _, _, classID = UnitClass("player")
+        if not specIndex or not classID then return nil end
+        specKey = "class_" .. classID .. "_spec_" .. specIndex
+    end
+    local specData = cdm.specData[specKey]
+    local profiles = specData and specData.layoutProfiles
+    local profile = profiles and (profiles[specData.activeProfile or "Default"] or profiles["Default"])
+    local iconSettings = profile and profile.iconSettings
+    local s = iconSettings and iconSettings[tostring(key)]
+    return s and s.chargeText or nil
+end
+
+-- Current breakpoint list for an icon's settings. ALWAYS returns a list —
+-- when the features are off it mimics the engine default (hidden at 0/1,
+-- plain number at 2+) so the live formatter can stay bound permanently.
+local function ComputeStackBreakpoints(key)
+    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(key)
     local cht = cfg and cfg.chargeText
-    if not cht then return nil end
-    local showAtOne = cht.showSingleStack == true
+    if not cht then cht = RawChargeTextFallback(key) end
+    local showAtOne = cht and cht.enabled ~= false and cht.showSingleStack == true
     local bands
-    if cht.thresholdColorEnabled and type(cht.thresholdBands) == "table" then
+    if cht and cht.enabled ~= false and cht.thresholdColorEnabled
+       and type(cht.thresholdBands) == "table" then
         bands = {}
         for i = 1, 6 do
             local b = cht.thresholdBands[i]
@@ -169,7 +215,6 @@ local function BuildStackFormatter(arcID)
         table.sort(bands, function(a, b2) return a.t < b2.t end)
         if #bands == 0 then bands = nil end
     end
-    if not showAtOne and not bands then return nil end   -- engine default is right
 
     -- Edges: 0 (always hidden), 1 (shown iff Show at 1), 2 (always shown),
     -- plus every band minimum. Highest band whose minimum is reached colors
@@ -180,7 +225,7 @@ local function BuildStackFormatter(arcID)
     for v in pairs(edgeSet) do edges[#edges + 1] = v end
     table.sort(edges)
 
-    local f = C_StringUtil.CreateNumericRuleFormatter()
+    local bps = {}
     for _, lo in ipairs(edges) do
         local fmtStr
         if lo == 0 or (lo == 1 and not showAtOne) then
@@ -194,14 +239,43 @@ local function BuildStackFormatter(arcID)
             end
             fmtStr = esc and (esc .. "%d|r") or "%d"
         end
-        f:AddBreakpoint({ threshold = lo, format = fmtStr })
+        bps[#bps + 1] = { threshold = lo, format = fmtStr }
     end
-    return f
+    return bps
 end
 
--- exported: the CDM stack overlay (ns.StackColor 12.1 path) builds the same
--- formatter from the same chargeText settings, keyed by numeric cooldownID
-AuraIcons.BuildStackFormatter = BuildStackFormatter
+-- exported: the CDM count overlay owns PER-FRAME formatter objects and
+-- rewrites their rules on occupant/settings changes (frames shuffle
+-- cooldownIDs mid-key; a shared per-cdID object couldn't be swapped there)
+AuraIcons.ComputeStackBreakpoints = ComputeStackBreakpoints
+
+local liveFormatters = {}          -- key (arcID string / CDM cooldownID number) -> formatter
+local liveFormatterVersion = 0     -- bumped on refresh; buttons re-bind when stale
+
+local function GetLiveFormatter(key)
+    if not key then return nil end   -- dynamic group buttons: engine default
+    if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
+    local f = liveFormatters[key]
+    if not f then
+        f = C_StringUtil.CreateNumericRuleFormatter()
+        if not f then return nil end
+        liveFormatters[key] = f
+    end
+    f:SetBreakpoints(ComputeStackBreakpoints(key))
+    return f
+end
+AuraIcons.GetLiveFormatter = GetLiveFormatter
+-- legacy export name (the CDM count overlay binds through this)
+AuraIcons.BuildStackFormatter = GetLiveFormatter
+
+-- Re-derive every registered formatter's breakpoints from CURRENT settings.
+-- Plain userdata + saved-variable reads — legal anywhere, including mid-key.
+function AuraIcons.RefreshLiveFormatters()
+    liveFormatterVersion = liveFormatterVersion + 1
+    for key, f in pairs(liveFormatters) do
+        f:SetBreakpoints(ComputeStackBreakpoints(key))
+    end
+end
 
 local function WireAuraButton(btn, arcID)
     -- The engine can re-run initializeFrame on the same frame — wire once
@@ -258,7 +332,9 @@ local function WireAuraButton(btn, arcID)
 
     -- Hand the engine our widgets (inbound setters; engine drives from here)
     btn:SetIcon(icon)
-    btn:SetApplicationCount(stacks, { formatter = BuildStackFormatter(arcID) })
+    btn:SetApplicationCount(stacks, { formatter = GetLiveFormatter(arcID) })
+    btn._arcFmtKey = arcID
+    btn._arcFmtBoundV = liveFormatterVersion
     btn:SetDurationCooldown(swipe)
 
     -- The holder owns all mouse interaction (drag/tooltip/context menu)
@@ -1091,6 +1167,15 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
                 -- now lives in StyleActiveButton — ONE path shared with the
                 -- Aura Group engine buttons, so the presentations cannot drift
                 StyleActiveButton(btn, settings, holder)
+
+                -- STACK FORMATTER re-bind: belt-and-suspenders against the
+                -- engine copying the formatter object at bind time (the live
+                -- registry's breakpoint refresh covers the reference case).
+                -- Version-gated so it costs nothing when nothing changed.
+                if btn._arcStacks and btn._arcFmtBoundV ~= liveFormatterVersion then
+                    btn._arcFmtBoundV = liveFormatterVersion
+                    btn:SetApplicationCount(btn._arcStacks, { formatter = GetLiveFormatter(arcID) })
+                end
             end
         end
     end
@@ -1443,6 +1528,43 @@ function AuraIcons.RewireAll()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- AUTHORITATIVE STACK SETTLE: re-derive the live formatters from CURRENT
+-- settings and re-bind accessible buttons. Called debounced from
+-- ns.CDMEnhance.RequestStackSettle — the InvalidateCache chokepoint every
+-- settings-restore path funnels through (options setters, profile loads,
+-- spec changes, imports, shared-profile sync) — and directly at login/zone.
+--
+-- STACK TEXT ONLY — deliberately NOT the full ApplySettings: this runs at
+-- PLAYER_ENTERING_WORLD, when ArcAuras.GetCachedSettings can transiently
+-- serve nil (loading-screen read cached for the TTL window), and a full
+-- re-style painted DEFAULT visuals over per-icon customizations (zone-switch
+-- ghost-desaturate regression). Buttons still forbidden here (in-instance)
+-- pick the binding up at the next accessible settle; the live formatter's
+-- breakpoint refresh already covers rule changes on the existing binding.
+-- ═══════════════════════════════════════════════════════════════════════════
+function AuraIcons.StackSettle()
+    if not IS_121 then return end
+    AuraIcons.RefreshLiveFormatters()
+    for arcID, entry in pairs(entries) do
+        for _, sub in ipairs(entry.subs or {}) do
+            local btn = sub.frame
+            if btn and btn._arcStacks and btn._arcFmtBoundV ~= liveFormatterVersion then
+                local ok
+                if btn.CanBeAccessedInContext then
+                    ok = btn:CanBeAccessedInContext()
+                else
+                    ok = not (btn.IsForbidden and btn:IsForbidden())
+                end
+                if ok then
+                    btn._arcFmtBoundV = liveFormatterVersion
+                    btn:SetApplicationCount(btn._arcStacks, { formatter = GetLiveFormatter(arcID) })
+                end
+            end
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- CDM IMPORT (the lab's "Import CDM buffs" button): one Arc aura icon per
 -- Tracked Buff enabled in the Cooldown Manager. Uses the C_CooldownViewer
 -- DATA PROVIDER only (no viewer object methods = no taint surface).
@@ -1622,6 +1744,87 @@ SlashCmdList.ARCAURAICONS = function(msg)
     print("  defs=" .. n .. "   (/arcaura add <spellID> [buff|debuff|both]  |  /arcaura import)")
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- STACK-TEXT DIAGNOSTIC (/arcstacks): settings-as-read, formatter registry
+-- state, button bind versions, CDM count-overlay state. "/arcstacks watch"
+-- toggles caller attribution on the native count's SetAlpha (catches any
+-- writer fighting the overlay's hide).
+-- ═══════════════════════════════════════════════════════════════════════════
+
+local function ChtSummary(key)
+    local cfg = ns.CDMEnhance and ns.CDMEnhance.GetIconSettings and ns.CDMEnhance.GetIconSettings(key)
+    local cht = cfg and cfg.chargeText
+    if not cht then cht = RawChargeTextFallback(key) end
+    if not cht then return "cht=nil" end
+    local bandStr = ""
+    if type(cht.thresholdBands) == "table" then
+        for i = 1, 6 do
+            local b = cht.thresholdBands[i]
+            if b and b.enabled and b.threshold then
+                bandStr = bandStr .. " b" .. i .. "@" .. tostring(b.threshold)
+            end
+        end
+    end
+    return string.format("en=%s show1=%s bands=%s%s",
+        tostring(cht.enabled ~= false), tostring(cht.showSingleStack == true),
+        tostring(cht.thresholdColorEnabled == true), bandStr)
+end
+
+SLASH_ARCSTACKS1 = "/arcstacks"
+SlashCmdList.ARCSTACKS = function(msg)
+    local cmd = (msg or ""):match("^%s*(%S*)")
+    if cmd == "watch" then
+        if ns.StackColor and ns.StackColor.ToggleAlphaWatch then
+            ns.StackColor.ToggleAlphaWatch()
+        else
+            print("|cff00CCFF[ArcStacks]|r overlay module has no watch on this client")
+        end
+        return
+    end
+    if cmd == "settle" then
+        AuraIcons.StackSettle()
+        if ns.StackColor and ns.StackColor.RefreshOverlays then ns.StackColor.RefreshOverlays() end
+        print("|cff00CCFF[ArcStacks]|r manual settle requested")
+        return
+    end
+    print(string.format("|cff00CCFF[ArcStacks]|r 12.1=%s  db=%s  spec=%s  fmtV=%d  aurasSecret=%s",
+        tostring(IS_121), tostring(ns.db ~= nil),
+        tostring(ns.CDMShared and ns.CDMShared.GetCurrentSpecKey and ns.CDMShared.GetCurrentSpecKey()),
+        liveFormatterVersion, tostring(AurasSecretNow())))
+    print("|cffFFD100-- aura icons --|r")
+    local shown = 0
+    for arcID, entry in pairs(entries) do
+        shown = shown + 1
+        local f = liveFormatters[arcID]
+        local nbp = 0
+        if f and f.GetBreakpoints then
+            local bps = f:GetBreakpoints()
+            nbp = type(bps) == "table" and #bps or 0
+        end
+        local subInfo = ""
+        for _, sub in ipairs(entry.subs or {}) do
+            local b = sub.frame
+            local acc = "-"
+            if b then
+                if b.CanBeAccessedInContext then
+                    acc = tostring(b:CanBeAccessedInContext())
+                else
+                    acc = tostring(not (b.IsForbidden and b:IsForbidden()))
+                end
+            end
+            subInfo = subInfo .. string.format(" %s[btn=%s acc=%s boundV=%s]",
+                sub.unit, tostring(b ~= nil), acc, tostring(b and b._arcFmtBoundV))
+        end
+        print(string.format("  %s  fmt=%s bp=%d  %s  |%s",
+            arcID, tostring(f ~= nil), nbp, ChtSummary(arcID), subInfo))
+    end
+    if shown == 0 then print("  (no aura icon entries)") end
+    if ns.StackColor and ns.StackColor.DebugDump then
+        ns.StackColor.DebugDump(ChtSummary)
+    end
+    print("  (/arcstacks watch = alpha attribution  |  /arcstacks settle = force refresh)")
+end
+
 if IS_121 then
     -- follow the master toggle from ANY caller (options, slash, api)
     hooksecurefunc(ArcAuras, "Enable", function()
@@ -1655,15 +1858,22 @@ if IS_121 then
                 loadWindowOver = true
                 PreBuildAllSlots()
             end
+            -- The AceDB exists from here (ArcUI_Options' PLAYER_LOGIN handler
+            -- runs first — event registration follows toc load order): settle
+            -- the live formatters the ADDON_LOADED prebuild derived from the
+            -- raw fallback, and re-bind accessible buttons.
+            AuraIcons.StackSettle()
             -- STAGGERED passes (totem-module pattern): a single early pass
             -- raced ArcAuras.Enable — the master-enable gate was still false
             -- at +1s, every def skipped, and NO icons built for the session.
             C_Timer.After(1.5, AuraIcons.RefreshVisibility)
             C_Timer.After(4.5, AuraIcons.RefreshVisibility)
         else
-            -- spec/talent change: debounced re-evaluation
+            -- spec/talent change: debounced re-evaluation; formatters must
+            -- re-derive too — per-icon settings are per-spec
             C_Timer.After(1.0, AuraIcons.RefreshVisibility)
             C_Timer.After(3.0, AuraIcons.RefreshVisibility)
+            C_Timer.After(1.2, AuraIcons.StackSettle)
         end
     end)
 end

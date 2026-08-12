@@ -3274,11 +3274,17 @@ end
 local function RegisterTooltipHooks()
     local function OnSpellTooltip(tooltip, data)
         if not IsTooltipEnabled() then return end
+        -- 12.1: post-calls also fire for PROTECTED tooltips (the UI-widget
+        -- EmbeddedItemTooltip on scenario/affix spell displays) — ANY touch
+        -- from addon code throws "attempt to access forbidden object".
+        -- IsForbidden is the sanctioned probe (callable on forbidden frames).
+        if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
         local spellID = TryGetSpellIDFromTooltip(tooltip, data)
         if spellID then AddSpellIdLine(tooltip, spellID) end
     end
     local function OnItemTooltip(tooltip, data)
         if not IsTooltipEnabled() then return end
+        if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
         local itemID = TryGetItemIDFromTooltip(tooltip)
         if itemID then AddItemIdLine(tooltip, itemID) end  -- AddItemIdLine guards
     end

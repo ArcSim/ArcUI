@@ -4655,6 +4655,22 @@ function SetupChargeText(frame, cdID, cfg)
   -- showSingleStack ON:  suppress native Applications, use our mirror (also shows "1")
   if frame.Applications then
     local appFrame = frame.Applications
+    -- 12.1 COUNT OVERLAY OWNS THE DISPLAY: while the StackColor overlay is
+    -- live on this frame, THIS branch is the single writer for the native
+    -- count's alpha — re-assert the hide every style pass (CDM re-Shows the
+    -- frame but never re-alphas) and skip the legacy mirror/bands/native
+    -- restyle entirely. The pre-overlay secrecy fall-through below used to
+    -- restore alpha 1 mid-key and put TWO counts on one icon.
+    if ns.StackColor and ns.StackColor.IsOverlayActive and ns.StackColor.IsOverlayActive(frame) then
+      appFrame:SetAlpha(0)
+      if ns.StackColor.ClearBands then ns.StackColor.ClearBands(frame) end
+      if frame._arcSingleStackContainer then
+        frame._arcSingleStackContainer:Hide()
+        frame._arcSingleStackText:SetText("")
+        frame._arcSingleStackShowing = false
+      end
+      return
+    end
     -- Threshold-colored stack bands take over the stack display the same way the
     -- single-stack mirror does: suppress native Applications, render our own.
     local bandsOn = chargeCfg and chargeCfg.enabled ~= false and chargeCfg.thresholdColorEnabled
@@ -8456,6 +8472,26 @@ function ns.CDMEnhance.ResetGlobalDefaults(iconType)
   ns.CDMEnhance.RefreshIconType(iconType or "all")
 end
 
+-- STACK-TEXT SETTLE (12.1): every settings-restore path in the addon
+-- (options setters, profile loads, spec changes, imports, shared-profile
+-- sync) funnels through InvalidateCache — schedule ONE debounced pass that
+-- re-derives the engine-bound stack formatters and the CDM count overlays
+-- from the now-current settings. Without this, create-time engine bindings
+-- keep serving whatever settings existed when their buttons were wired.
+local stackSettleTimer
+function ns.CDMEnhance.RequestStackSettle()
+  if stackSettleTimer then return end
+  stackSettleTimer = C_Timer.NewTimer(0.3, function()
+    stackSettleTimer = nil
+    if ns.AuraIcons and ns.AuraIcons.StackSettle then
+      ns.AuraIcons.StackSettle()
+    end
+    if ns.StackColor and ns.StackColor.RefreshOverlays then
+      ns.StackColor.RefreshOverlays()
+    end
+  end)
+end
+
 -- Invalidate settings cache (call after changing settings)
 function ns.CDMEnhance.InvalidateCache()
   InvalidateEffectiveSettingsCache()
@@ -8506,6 +8542,10 @@ function ns.CDMEnhance.InvalidateCache()
       end
     end
   end
+
+  -- 12.1 stack text: settings may have just been restored/changed by ANY
+  -- caller — settle the engine-bound formatters + count overlays (debounced)
+  ns.CDMEnhance.RequestStackSettle()
 end
 
 -- Get current cache version (used by CDMGroups to validate cached dimensions)

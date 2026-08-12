@@ -1089,20 +1089,17 @@ local function ApplyAuraSetting(setter)
   end
 end
 
--- Stack-text variant: same apply, then REWIRE aura-icon slots — the stack
--- formatter (Show at 1 / band colors) is a create-time engine binding, and
--- the engine reuses each slot's pre-created button forever, so without the
--- rewire these settings would only apply after a reload.
+-- Stack-text variant: the stack formatter (Show at 1 / band colors) lives in
+-- engine bindings on pre-created buttons. ApplyAuraSetting -> InvalidateCache
+-- schedules the debounced stack settle (ns.CDMEnhance.RequestStackSettle):
+-- live-formatter breakpoint refresh + accessible-button re-binds + count
+-- overlay retarget. The old per-set RewireAll (full slot regeneration with
+-- fresh containers) is no longer needed for formatter changes — the engine
+-- holds the formatter OBJECT and formats with its current rules on every
+-- aura update, so refreshing breakpoints/re-binding covers it without
+-- leaking a new container per toggle.
 ApplyStackTextSetting = function(setter)
   ApplyAuraSetting(setter)
-  if ns.AuraIcons and ns.AuraIcons.RewireAll then
-    ns.AuraIcons.RewireAll()
-  end
-  -- CDM aura icons: the count overlay (ns.StackColor 12.1 path) is also a
-  -- create-time binding — rebuild it with the fresh settings
-  if ns.StackColor and ns.StackColor.RefreshOverlays then
-    ns.StackColor.RefreshOverlays()
-  end
 end
 
 -- Apply a TYPE-SPECIFIC setting to aura icons only (NOT shared with cooldowns)

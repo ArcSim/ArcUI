@@ -1167,8 +1167,13 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
     Log("Attach: container(%s) not ready -> pending (cd=%s)", unit, tostring(cooldownID))
     return
   end
-  local assist = (unit == "player") or (UnitCanAssist and UnitCanAssist("player", unit))
-  local filter = assist and "HELPFUL" or "HARMFUL"
+  -- Filter by LANE SEMANTICS, never live unit state: UnitCanAssist("player",
+  -- "pet") is FALSE while the pet does not exist — which is exactly the case
+  -- during the login prebuild — so the pet slot got baked with a HARMFUL
+  -- filter for the whole session and the pet's buff could never match (the
+  -- "empty pet bar after every reload" bug). The lanes are fixed by design:
+  -- target = debuffs (HARMFUL); player/pet = buffs (HELPFUL).
+  local filter = (unit == "target") and "HARMFUL" or "HELPFUL"
   -- threshold overlays present -> colour/texture split: the base goes FLAT
   -- too (the shade slot below carries the texture for every layer at once)
   local nSteps = opts.applicationSteps and #opts.applicationSteps or 0
