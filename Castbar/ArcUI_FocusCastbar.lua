@@ -780,6 +780,11 @@ local function ApplyAppearanceInternal(cfg)
     mainFrame.fillBar:SetStatusBarTexture(tex)
     mainFrame.positioner:SetStatusBarTexture(tex)
 
+    -- USE TEXTURE COLORS: claim (or release) the fill tint (see ns.API.SetNaturalFill)
+    if ns.API and ns.API.SetNaturalFill then
+        ns.API.SetNaturalFill(mainFrame.fillBar, ns.API.IsNaturalFill(cfg))
+    end
+
     local bc = cfg.barColor or {r=1,g=0.65,b=0,a=1}
     mainFrame.fillBar:SetStatusBarColor(bc.r, bc.g, bc.b, bc.a or 1)
 

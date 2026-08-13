@@ -6568,7 +6568,11 @@ function ns.Resources.ApplyAppearance(barNumber)
         layer:SetStatusBarTexture(texture)
       end
     end
-    
+
+    -- USE TEXTURE COLORS: claim (or release) the fill tint on every threshold
+    -- layer. Set AFTER the texture so the guard binds the current object.
+    ns.API.SetNaturalFill(layer, ns.API.IsNaturalFill(display))
+
     -- Fill direction - use barOrientation and barReverseFill
     local isVertical = (display.barOrientation == "vertical")
     layer:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")

@@ -22,8 +22,15 @@ $version = (Get-Content (Join-Path $AddonRoot 'ArcUI.toc') |
 if (-not $version) { $version = 'dev' }
 
 # Files / folders kept OUT of the package (keep in sync with .pkgmeta).
+# CustomTextures: community bar textures whose registration file is not in the
+# toc, so nothing in it is reachable in game — kept in the repo, out of the zip.
 $exclude = @('.git', '.github', '.gitignore', '.gitattributes',
-             '.claude', 'CLAUDE.md', '.pkgmeta', 'package.ps1')
+             '.claude', 'CLAUDE.md', '.pkgmeta', 'package.ps1',
+             'CustomTextures')
+
+# Nested files kept out (top-level $exclude matches names only). Paths are
+# relative to the addon root, with forward slashes.
+$excludeNested = @('Utilities/ArcUI_CustomTextures.lua')
 
 # Stage into <temp>\ArcUIbuild\ArcUI\ so the zip root is the addon folder.
 $build = Join-Path $env:TEMP 'ArcUIbuild'
@@ -34,6 +41,12 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Get-ChildItem -Path $AddonRoot -Force |
     Where-Object { ($exclude -notcontains $_.Name) -and ($_.Name -notlike 'CHANGELOG_*.md') } |
     ForEach-Object { Copy-Item $_.FullName -Destination (Join-Path $stage $_.Name) -Recurse -Force }
+
+# Prune the nested exclusions from the staged copy.
+foreach ($rel in $excludeNested) {
+    $staged = Join-Path $stage ($rel -replace '/', '\')
+    if (Test-Path $staged) { Remove-Item $staged -Recurse -Force }
+}
 
 # Write the zip to a dedicated releases folder as ArcUI-<version>.zip. Only the
 # FILE name carries the version — the FOLDER inside stays exactly "ArcUI" so WoW

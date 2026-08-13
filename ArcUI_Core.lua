@@ -192,14 +192,107 @@ function ns.Sounds.StopPreview()
   end
 end
 
+-- ===================================================================
+-- TEXT TO SPEECH — ONE VOICE FOR THE WHOLE ADDON
+--
+-- Voice + speech-rate live in ONE place (the character's cooldownReminder
+-- table, where ArcUI's TTS controls have always written them) and EVERY
+-- speaking feature reads them through here: Cooldown Reminder, CDM aura-icon
+-- alerts, Arc aura-icon alerts. Callers may still pass an explicit voice/rate
+-- to override for a preview.
+-- ===================================================================
+
+-- Shared TTS settings table (may be nil before the DB exists).
+function ns.Sounds.GetTTSConfig()
+  local charDB = ns.API and ns.API.GetDB and ns.API.GetDB()
+  if not charDB then return nil end
+  charDB.cooldownReminder = charDB.cooldownReminder or {}
+  return charDB.cooldownReminder
+end
+
+-- "default" (whatever the player picked in WoW's TTS options) / "male" / "female".
+function ns.Sounds.GetTTSVoiceID()
+  local cfg = ns.Sounds.GetTTSConfig()
+  local override = cfg and cfg.ttsVoiceOverride
+  -- Cooldown Reminder owns the name-matching resolver; reuse it so both
+  -- features can never disagree about which voice "Female" means.
+  if ns.CooldownReminder and ns.CooldownReminder.ResolveTTSVoiceID then
+    return ns.CooldownReminder.ResolveTTSVoiceID(override) or 0
+  end
+  if TextToSpeech_GetSelectedVoice and Enum and Enum.TtsVoiceType then
+    local v = TextToSpeech_GetSelectedVoice(Enum.TtsVoiceType.Standard)
+    if v and v.voiceID then return v.voiceID end
+  end
+  return 0
+end
+
+-- nil rate override = use WoW's own speech rate.
+function ns.Sounds.GetTTSRate()
+  local cfg = ns.Sounds.GetTTSConfig()
+  if cfg and cfg.ttsRateOverride ~= nil then
+    return tonumber(cfg.ttsRateOverride) or 0
+  end
+  if C_TTSSettings and C_TTSSettings.GetSpeechRate then
+    return C_TTSSettings.GetSpeechRate() or 0
+  end
+  return 0
+end
+
+-- ── WoW's OWN text-to-speech settings ──────────────────────────────
+-- C_TTSSettings writes are unprotected, so ArcUI can surface the handful of
+-- game settings that decide how our speech sounds instead of sending people
+-- hunting through the chat config. These are GLOBAL game settings (per
+-- character while "Character Specific Settings" is ticked), shared with
+-- Blizzard's chat narration -- always read them live, never cache.
+
+-- The blip WoW plays when ANY speech finishes (its own "Play a sound between
+-- each new message" option). It fires for addon speech too, which is the tick
+-- heard after every ArcUI alert.
+function ns.Sounds.GetLineBreakSound()
+  if not (C_TTSSettings and C_TTSSettings.GetSetting and Enum and Enum.TtsBoolSetting) then
+    return false
+  end
+  return C_TTSSettings.GetSetting(Enum.TtsBoolSetting.PlaySoundSeparatingChatLineBreaks) and true or false
+end
+
+function ns.Sounds.SetLineBreakSound(enabled)
+  if not (C_TTSSettings and C_TTSSettings.SetSetting and Enum and Enum.TtsBoolSetting) then return end
+  C_TTSSettings.SetSetting(Enum.TtsBoolSetting.PlaySoundSeparatingChatLineBreaks, enabled and true or false)
+end
+
+function ns.Sounds.GetSpeechVolume()
+  if C_TTSSettings and C_TTSSettings.GetSpeechVolume then
+    return C_TTSSettings.GetSpeechVolume() or 100
+  end
+  return 100
+end
+
+function ns.Sounds.SetSpeechVolume(v)
+  if C_TTSSettings and C_TTSSettings.SetSpeechVolume then
+    C_TTSSettings.SetSpeechVolume(v)
+  end
+end
+
+-- Opens Blizzard's own Text to Speech panel (chat config, TTS tab).
+function ns.Sounds.OpenBlizzardTTSOptions()
+  if ToggleTextToSpeechFrame then ToggleTextToSpeechFrame() end
+end
+
 -- Text-to-speech wrapper
-function ns.Sounds.SpeakText(text, voiceID)
+function ns.Sounds.SpeakText(text, voiceID, rate)
   if not text or text == "" then return end
   if not C_VoiceChat or not C_VoiceChat.SpeakText then return end
   -- SpeakText(voiceID, text, rate, volume, overlap): rate 0 = normal speed,
   -- overlap is a BOOL. (Was passing Enum.TtsVoiceType.Standard as the rate
   -- and 100 as the overlap flag — Cooldown Reminder had it right.)
-  C_VoiceChat.SpeakText(voiceID or 0, text, 0, 100, false)
+  -- Volume follows the player's own TTS slider instead of a hardcoded 100.
+  local v = voiceID
+  if v == nil then v = ns.Sounds.GetTTSVoiceID() end
+  local r = rate
+  if r == nil then r = ns.Sounds.GetTTSRate() end
+  local volume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume
+    and C_TTSSettings.GetSpeechVolume()) or 100
+  C_VoiceChat.SpeakText(v or 0, text, r or 0, volume, false)
 end
 
 -- Get dropdown values for sound selection
@@ -230,7 +323,8 @@ function ns.Sounds.ParseSoundKey(key)
   if key:match("^lsm:") then
     return { soundType = "lsm", lsmSound = key:gsub("^lsm:", "") }
   elseif key:match("^soundkit:") then
-    return { soundType = "soundkit", soundKitID = tonumber(key:gsub("^soundkit:", "")) }
+    -- extra parens: gsub's second return (count) must not become tonumber's base
+    return { soundType = "soundkit", soundKitID = tonumber((key:gsub("^soundkit:", ""))) }
   end
   
   return nil

@@ -65,6 +65,15 @@ local function DispatchFrameRebind(frame, oldCdID, newCdID)
     -- Synchronous dispatch — runs in same tick as CDM's SetCooldownID.
     -- Subscribers do their own targeted cleanup; failures in one
     -- subscriber don't affect others.
+    if ns.TraceTap then
+        ns.TraceTap("FC", string.format("REBIND cd %s -> %s (subs=%d)",
+            tostring(oldCdID), tostring(newCdID), #frameRebindSubscribers))
+    end
+    -- every rebind = CDM still moving frames: push the FrameActive resync
+    -- pulse back so it only sweeps once the shuffle goes quiet
+    if ns.FrameActive and ns.FrameActive.PokeResync then
+        ns.FrameActive.PokeResync("rebind")
+    end
     for i = 1, #frameRebindSubscribers do
         local cb = frameRebindSubscribers[i]
         if cb then cb(frame, oldCdID, newCdID) end

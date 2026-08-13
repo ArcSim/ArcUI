@@ -482,6 +482,12 @@ local function EnsureOverlayInfra(f)
       cont:SetPoint("CENTER", f, "CENTER", 0, 0)
       cont:SetSize(1, 1)
       cont:Show()
+      -- Show Icon off (force-hide) holds the frame at alpha 0 and floats the
+      -- text widgets — a container born AFTER the toggle must float too, or
+      -- the count is invisible until the next full style pass
+      if f._arcForceHideActive and cont.SetIgnoreParentAlpha then
+        cont:SetIgnoreParentAlpha(true)
+      end
       f[ckey] = cont   -- _arc* field on a Blizzard frame: taint-safe
     end
     local key = "arcscov_" .. unit

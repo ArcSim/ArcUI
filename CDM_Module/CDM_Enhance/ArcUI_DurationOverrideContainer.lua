@@ -29,8 +29,11 @@ ns.DurationOverrideContainer = DOC
 local PREFIX = "|cff33ff99[ArcDurOvC]|r "
 DOC.debug = false
 local function Log(fmt, ...)
-    if not DOC.debug then return end
+    local tap = ns.TraceTap
+    if not DOC.debug and not tap then return end
     local msg = (select("#", ...) > 0) and fmt:format(...) or fmt
+    if tap then tap("DOC", msg) end
+    if not DOC.debug then return end
     print(PREFIX .. msg)
 end
 
@@ -47,7 +50,6 @@ if not IS_121 then
 end
 
 -- ── state ────────────────────────────────────────────────────────────────────
-local containers = {}   -- [unit] -> AuraContainer frame
 local attached   = {}   -- [targetFrame] -> { slot, unit, spellID, key, container }
 local pending    = {}   -- [targetFrame] -> { spellID, unit } (combat-deferred, flushed on regen)
 local slotSeq    = 0
@@ -90,20 +92,24 @@ end
 -- remains only for older 12.1 builds (pre-PTR7 creation is a Lua error).
 local COMBAT_CREATE_OK = (tonumber((select(2, GetBuildInfo()))) or 0) > 68675
 
--- One AuraContainer per unit (player buffs vs target debuffs live separately).
-local function GetContainer(unit)
-    local c = containers[unit]
-    if c then return c end
+-- FRESH container per attach — THE AURA-CONTAINER LAW (aura-icons module,
+-- now enforced in every consumer): a container that has displayed secret
+-- data carries forbidden aspects, and a later AddAuraSlot into it dies
+-- inside Blizzard's frame provider. The old shared per-unit container was
+-- re-slotted on every attach — combat re-attaches (CDM frame rebinds) died
+-- after the first fight. One container, ONE AddAuraSlot, ever; Detach
+-- retires it. The leaked invisible frame per attach cycle is the accepted
+-- cost everywhere else in the addon.
+local function CreateContainer(unit)
     if InCombatLockdown() and not COMBAT_CREATE_OK then
         Log("cannot create a container in combat — try again out of combat.")
         return nil
     end
-    c = CreateFrame("AuraContainer", "ArcDurOvContainer_" .. unit, UIParent, "CustomAuraContainerTemplate")
+    local c = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
     if c.SetUnit then c:SetUnit(unit) end
     if c.SetEnabled then c:SetEnabled(true) end
     c:Show()
-    containers[unit] = c
-    Log("created AuraContainer for unit=%s", unit)
+    Log("created fresh AuraContainer for unit=%s", unit)
     return c
 end
 
@@ -114,21 +120,21 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
     unit = unit or "player"
     if attached[targetFrame] then DOC.Detach(targetFrame) end
 
-    local c = GetContainer(unit)
+    local c = CreateContainer(unit)
     if not c or not c.AddAuraSlot then
-        -- Reload mid-combat lands here: container CREATION is hard combat-
-        -- locked by Blizzard, so showing the overlay DURING that combat is
-        -- impossible. Queue it -- the regen flush below re-attaches the moment
-        -- combat drops (and eager creation at login covers every later fight).
+        -- Pre-PTR7 reload mid-combat lands here: container CREATION was hard
+        -- combat-locked. Queue it -- the regen flush below re-attaches the
+        -- moment combat drops.
         pending[targetFrame] = { spellID = auraSpellID, unit = unit }
         Log("no container yet (combat?) -> queued for regen (spellID=%s).", tostring(auraSpellID))
         return nil
     end
     pending[targetFrame] = nil
 
-    -- spellID filtering is only valid for HELPFUL on assistable units, HARMFUL on non-assistable.
-    local assist = (unit == "player") or (UnitCanAssist and UnitCanAssist("player", unit))
-    local filter = assist and "HELPFUL" or "HARMFUL"
+    -- Filter by LANE SEMANTICS, never live unit state: UnitCanAssist on a
+    -- transient friendly target (or a not-yet-summoned pet) returns the
+    -- wrong filter and it gets baked into the slot for good (the BD bug).
+    local filter = (unit == "target") and "HARMFUL" or "HELPFUL"
 
     slotSeq = slotSeq + 1
     local key = "arcdo" .. slotSeq
@@ -196,6 +202,9 @@ function DOC.Detach(targetFrame)
         a.container:SetAuraSlotCandidateFilters(a.key, { includeSpellIDs = { [0] = true } })
         if a.container.UpdateAllAuras then a.container:UpdateAllAuras() end
     end
+    -- retire the per-attach container (fresh-container law): hiding stops
+    -- its processing and the button is its child. It is never re-slotted.
+    if a.container and a.container.Hide then a.container:Hide() end
     Log("detached: key=%s", a.key)
 end
 
@@ -216,8 +225,7 @@ ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:SetScript("OnEvent", function()
     if InCombatLockdown() then return end
-    GetContainer("player")
-    GetContainer("target")
+    -- (containers are per-attach now — nothing to pre-create)
     if next(pending) then
         local q = pending
         pending = {}

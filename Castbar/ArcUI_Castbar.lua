@@ -714,6 +714,17 @@ function ns.Castbar.ApplyAppearance()
     for _, sb in ipairs(mainFrame.stageSegBars) do sb:SetStatusBarTexture(texPath) end
   end
 
+  -- USE TEXTURE COLORS: claim (or release) the fill tint so a colored texture
+  -- renders as authored. Set AFTER the texture so the guard binds the current
+  -- object; the cast-time color/override-texture writes below are covered too.
+  local castNatural = ns.API and ns.API.IsNaturalFill and ns.API.IsNaturalFill(cfg)
+  if ns.API and ns.API.SetNaturalFill then
+    ns.API.SetNaturalFill(mainFrame.fillBar, castNatural)
+    if mainFrame.stageSegBars then
+      for _, sb in ipairs(mainFrame.stageSegBars) do ns.API.SetNaturalFill(sb, castNatural) end
+    end
+  end
+
   -- Re-apply active cast overrides so option changes don't clobber live styling
   if castActive then
     local color, overrideTex = ResolveActiveDisplay(cfg, castActiveSpellID, castIsChannel, castIsEmpowered, castNotInterruptible)

@@ -493,10 +493,33 @@ local function EnsureShadowCooldown(frame)
     ef:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     ef:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     local _TrackEv = _G.ArcUIProfiler_Track
-    local function perFrameEventHandler(_, ev, a1, a2, a3)
+    local function perFrameEventHandler(_, ev, a1, a2, a3, a4, a5)
       if not frame._arcEnhanced then
         ef:UnregisterAllEvents()
         frame._arcPerFrameEvFrame = nil
+        return
+      end
+
+      -- ITEM ENTRIES (12.1) have no spellID to match on -- a potion entry has
+      -- none at all until CDM fills one in on first use -- so they never
+      -- reached the feed below and their state never moved. Route them here on
+      -- their own signals: SPELL_UPDATE_COOLDOWN carries
+      -- (spellID, baseSpellID, spellCategory, startRecoveryCategory, itemID),
+      -- so a3 == our spellCategoryID is exactly "this potion family just
+      -- changed". Trinkets take any cooldown event (their slot read is cheap).
+      local ciEv = frame.cooldownInfo
+      local evEquip = ciEv and ciEv.equipSlot
+      local evCat   = ciEv and ciEv.spellCategoryID
+      if evEquip or evCat then
+        if ev == "SPELL_UPDATE_COOLDOWN" then
+          local relevant = evEquip ~= nil or a1 == nil or a3 == evCat
+          if not relevant then return end
+          local cfgI = frame._arcCfg
+          if cfgI then
+            ns.CooldownState.FeedShadow(frame, cfgI)
+            DispatchAfterShadowUpdate(frame)
+          end
+        end
         return
       end
       -- Build the full set of spellIDs this frame can respond to:
@@ -645,6 +668,15 @@ local function EnsureShadowCooldown(frame)
       if not pf then return end
       if pf._arcBypassCDHook then return end
       if not pf._arcIgnoreAuraOverride then return end
+
+      -- ITEM ENTRIES: the spell durObj below is zero-span for a trinket and
+      -- absent for a potion, so re-push the item's own window instead. Same
+      -- fight, different source.
+      local ciF = pf.cooldownInfo
+      if ciF and (ciF.equipSlot or ciF.spellCategoryID) then
+        if ns.CooldownState.PushItemIAO then ns.CooldownState.PushItemIAO(pf) end
+        return
+      end
       -- wasSetFromAura=true: CDM is actively displaying aura duration on the swipe.
       -- _arcAuraActive just means an aura instance exists — CDM may not be showing it.
       local isAuraNow = (pf.wasSetFromAura == true) or (pf.totemData ~= nil)
@@ -733,21 +765,64 @@ end
 -- <= this is GCD/windup noise (real item CDs are >>1.5s). Mirrors Arc Auras' threshold.
 local ITEM_GCD_THRESHOLD = 1.5
 FeedShadowCooldown = function(frame, spellID)
-  -- 12.1 item branch: equip-slot (trinket) cooldowns are ITEM cooldowns. The spell
-  -- APIs return zero-span for them; feed the shadow from GetInventoryItemCooldown
-  -- (non-secret, in-combat-safe) via SetCooldown. Runs even with a nil spellID.
-  local eqSlot = frame.cooldownInfo and frame.cooldownInfo.equipSlot
-  if eqSlot then
+  -- 12.1 item branch: item cooldowns are not spell cooldowns, so the spell APIs
+  -- return zero-span for them. Two flavours, both keyed off cooldownInfo:
+  --
+  --   equipSlot        -> TRINKET. GetInventoryItemCooldown on the slot.
+  --   spellCategoryID  -> BAG ITEM (combat potion 4, health potion 30,
+  --                       healthstone 1711, demonic healthstone 2566). These
+  --                       entries ship with NO spellID at all -- CDM fills
+  --                       cooldownInfo.spellID / lastItemIDForCategory in
+  --                       UpdateFromSpellCategory the first time an item of
+  --                       that category is used. So: read the item's cooldown
+  --                       when we know the item, else the spell CDM learned,
+  --                       else treat as ready. (Blizzard's own item path is
+  --                       equip-slot only -- their source carries the "TODO:
+  --                       Support potions as well" note -- which is why these
+  --                       icons never dimmed or dropped their ready glow.)
+  --
+  -- Both run even with a nil spellID, which is the normal state for a potion
+  -- entry that has not been used yet this session.
+  local ci = frame.cooldownInfo
+  local eqSlot = ci and ci.equipSlot
+  local catID  = ci and ci.spellCategoryID
+  if eqSlot or catID then
     if frame._arcFeedingShadow and frame._arcFeedingShadow > 0 then return end
     frame._arcFeedingShadow = (frame._arcFeedingShadow or 0) + 1
     frame._arcLastIsOnGCD = false
     frame._arcIsChargeSpellCached = false
     local shadowCD = EnsureShadowCooldown(frame)
-    local start, dur = GetInventoryItemCooldown("player", eqSlot)
-    if shadowCD and start and dur and start > 0 and dur > ITEM_GCD_THRESHOLD then
-      shadowCD:SetCooldown(start, dur)
-    elseif shadowCD then
-      shadowCD:Clear()
+    if shadowCD then
+      local start, dur
+      if eqSlot then
+        start, dur = GetInventoryItemCooldown("player", eqSlot)
+      else
+        local itemID = ci.lastItemIDForCategory
+        if itemID and C_Item and C_Item.GetItemCooldown then
+          start, dur = C_Item.GetItemCooldown(itemID)
+        end
+      end
+      -- Keep the live window for the IAO push: these are ABSOLUTE times, so a
+      -- pair read a moment ago still describes the same cooldown exactly.
+      if start and dur and start > 0 and dur > ITEM_GCD_THRESHOLD then
+        frame._arcItemCDStart, frame._arcItemCDDur = start, dur
+      else
+        frame._arcItemCDStart, frame._arcItemCDDur = nil, nil
+      end
+      if start and dur and start > 0 and dur > ITEM_GCD_THRESHOLD then
+        shadowCD:SetCooldown(start, dur)
+      elseif catID and ci.spellID and C_Spell.GetSpellCooldownDuration then
+        -- category entry with a spell CDM resolved on first use: the durObj is
+        -- the secret-safe read (ignoreGCD so a bare GCD never reads as a CD)
+        local durObj = C_Spell.GetSpellCooldownDuration(ci.spellID, true)
+        if durObj then
+          shadowCD:SetCooldownFromDurationObject(durObj, true)
+        else
+          shadowCD:Clear()
+        end
+      else
+        shadowCD:Clear()
+      end
     end
     frame._arcFeedingShadow = frame._arcFeedingShadow - 1
     return
@@ -1106,17 +1181,46 @@ local function ApplyReadyGlow(frame, stateVisuals)
 end
 
 -- ═══════════════════════════════════════════════════════════════════
--- 12.1 ITEM COOLDOWN STATE (equip-slot / trinket cooldowns)
+-- 12.1 ITEM COOLDOWN STATE
+--   trinkets        -> cooldownInfo.equipSlot
+--   potions/stones  -> cooldownInfo.spellCategoryID (bag items)
 -- Spell cooldown APIs return zero-span for item cooldowns, so we feed the shadow from
--- GetInventoryItemCooldown (non-secret, in-combat-safe) and apply ICON-only state
+-- the item APIs (non-secret, in-combat-safe) and apply ICON-only state
 -- visuals (alpha/desat/ready-glow). We deliberately do NOT call DecideAndApplySwipeEdge
 -- — CDM owns the visible swipe for item cooldowns.
 -- ═══════════════════════════════════════════════════════════════════
-local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals)
+-- IGNORE AURA OVERRIDE on an item icon: while the item's BUFF is up, CDM
+-- pushes the aura's duration onto the swipe (CheckCacheCooldownValuesFromAura
+-- wins over the cooldown source, in ITEM_AURA_COLOR). With the option on the
+-- user wants the item's COOLDOWN there instead, so re-push our own window.
+-- Item cooldowns are plain non-secret numbers, so SetCooldown is legal here
+-- (the 12.0.1 ban is on feeding it SECRET values).
+local function PushItemIAO(frame)
+  local cd = frame.Cooldown
+  if not cd then return end
+  if frame._arcBypassCDHook then return end
+  -- only fight while CDM is actually showing the aura on the swipe
+  if frame.wasSetFromAura ~= true then return end
+  local st, du = frame._arcItemCDStart, frame._arcItemCDDur
+  frame._arcBypassCDHook = true
+  cd:SetUseAuraDisplayTime(false)
+  if st and du then
+    cd:SetCooldown(st, du)
+  else
+    -- buff up, item not on cooldown: showing nothing beats showing the
+    -- duration the option exists to hide
+    cd:Clear()
+  end
+  frame._arcBypassCDHook = false
+end
+ns.CooldownState.PushItemIAO = PushItemIAO
+
+local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals, ignoreAuraOverride)
   if not stateVisuals then return end
   iconTex = iconTex or frame.Icon
   FeedShadowCooldown(frame, nil)
   local isOnCooldown = GetBinaryCooldownState(frame)
+  if ignoreAuraOverride then PushItemIAO(frame) end
   if isOnCooldown then
     ApplyCooldownAlpha(frame, stateVisuals)
     ApplyCooldownDesat(frame, iconTex, stateVisuals, false, false)
@@ -1129,7 +1233,17 @@ local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals)
     -- that should desaturate a trinket. Cleared again the moment it goes on real CD.
     frame._arcForceDesatValue = 0
   end
-  ApplyReadyGlow(frame, stateVisuals)
+  -- READY GLOW IS STATE-GATED, like every other path. ApplyReadyGlow only asks
+  -- "is the glow option on?" — it does NOT look at the cooldown, so calling it
+  -- unconditionally here left the glow burning through the entire item cooldown
+  -- (the alpha/desat branches above were gated, which is why only the glow was
+  -- wrong). _arcReadyForGlow is bookkeeping the other paths also write.
+  frame._arcReadyForGlow = not isOnCooldown
+  if isOnCooldown then
+    HideReadyGlow(frame)
+  else
+    ApplyReadyGlow(frame, stateVisuals)
+  end
 end
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -1861,11 +1975,12 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
     useAuraLogic = false
   end
 
-  -- 12.1: equip-slot (trinket) cooldowns are ITEM cooldowns. Feed the shadow from
-  -- GetInventoryItemCooldown (non-secret) and apply ICON-only state visuals; never
-  -- touch the visible Cooldown (CDM owns the item swipe).
-  if frame.cooldownInfo and frame.cooldownInfo.equipSlot then
-    HandleItemCooldownState(frame, frame.Icon, cfg, stateVisuals)
+  -- 12.1: item cooldowns are not spell cooldowns. Trinkets (equipSlot) and bag
+  -- items (spellCategoryID -- potions, healthstones) both feed the shadow from
+  -- item APIs and get ICON-only state visuals; never touch the visible Cooldown
+  -- (CDM owns the item swipe).
+  if frame.cooldownInfo and (frame.cooldownInfo.equipSlot or frame.cooldownInfo.spellCategoryID) then
+    HandleItemCooldownState(frame, frame.Icon, cfg, stateVisuals, ignoreAuraOverride)
     return
   end
 

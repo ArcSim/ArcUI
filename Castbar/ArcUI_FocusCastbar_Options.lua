@@ -154,6 +154,14 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   a.fcBarColor = {
     type = "color", name = "Bar Color", order = 20.1, hasAlpha = true,
     hidden = H("colors"),
+    desc = function()
+      local c = GetDB()
+      if c and c.useTextureColor then
+        return "|cffff9900Ignored while 'Use Texture Colors' is on|r - the fill renders the texture's own colors."
+      end
+      return "Base color of the castbar fill."
+    end,
+    disabled = function() local c = GetDB(); return c and c.useTextureColor == true end,
     get = function()
       local c = GetDB(); local col = c and c.barColor or {r=1,g=0.65,b=0,a=1}
       return col.r, col.g, col.b, col.a or 1
@@ -161,6 +169,17 @@ function ns.FocusCastbarOptions.GetOptionsTable()
     set = function(_, r, g, b, a)
       local c = GetDB(); if c then c.barColor = {r=r,g=g,b=b,a=a}; Refresh() end
     end,
+  }
+
+  -- USE TEXTURE COLORS: stop tinting the fill so a colored texture shows as authored
+  a.fcUseTextureColor = {
+    type = "toggle", name = "Use Texture Colors", order = 20.15, width = 1.3,
+    hidden = H("colors"),
+    desc = "Show the fill texture's own colors instead of coloring it.\n\n"
+      .. "Turn this ON for textures that are already colored so ArcUI leaves them exactly as they are.\n\n"
+      .. "|cffff9900While this is on, Bar Color and the uninterruptible color are ignored.|r",
+    get = function() local c = GetDB(); return c and c.useTextureColor == true end,
+    set = function(_, v) local c = GetDB(); if c then c.useTextureColor = v or nil; Refresh() end end,
   }
 
   -- Uninterruptible color

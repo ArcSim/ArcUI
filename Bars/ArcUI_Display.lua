@@ -498,7 +498,16 @@ local function ApplyBarGradient(bar, barConfig, currentColor)
   
   local texture = bar:GetStatusBarTexture()
   if not texture or not texture.SetGradient then return end
-  
+
+  -- USE TEXTURE COLORS: a gradient is another multiply over the art, and even
+  -- the "solid" branch below pushes barColor through SetGradient -- both have
+  -- to become white for the texture's own colors to survive.
+  if ns.API.IsNaturalFill(cfg) then
+    local white = CreateColor(1, 1, 1, 1)
+    texture:SetGradient(cfg.gradientDirection or "VERTICAL", white, white)
+    return
+  end
+
   local useGradient = cfg.useGradient
   local direction = cfg.gradientDirection or "VERTICAL"
   local intensity = cfg.gradientIntensity or 0.5
@@ -2180,8 +2189,12 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     if frames then frames._arcHideWhenInactivePending = nil end
   end
   
-  -- Early exit if bar shouldn't show and options not open
-  if not shouldShow and not optionsOpen then
+  -- Early exit if bar shouldn't show and options not open.
+  -- NOT during the prebuild: this return sits BEFORE the engine attach, and
+  -- with Hide When Inactive on (aura down at login) it would swallow the
+  -- bar's only chance to create its engine slot — the same trap the
+  -- duration-bar path already guards. The prebuild hides all frames after.
+  if not shouldShow and not optionsOpen and not prebuildPass then
     if deactivate then
       DeactivateBar(barNumber)
     else
@@ -3073,9 +3086,22 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   end
   
   -- Update duration text (pass secret value directly from GetText/GetValue to SetText)
+  -- 12.1 CDM-SOURCED STACK BARS: the live duration reads below are
+  -- unreadable under aura secrecy (combat/instances) -- the countdown went
+  -- blank in combat while the stack fill (secret-sink SetValue) kept
+  -- working. The duration BARS already solved this with the engine's
+  -- text-only ArcTimer binding; route these bars' countdown through the
+  -- same one (attached after this block) and skip the live machinery.
+  local engineDurText = false
+  if not isCustomAura and ns.API and ns.API.IS_121
+     and barConfig.display.showDuration and durationFrame then
+    local cd0 = barConfig.tracking.cooldownID
+    local ts0 = barConfig.tracking.trackedSpellID or barConfig.tracking.spellID
+    engineDurText = ((cd0 and cd0 > 0) or (ts0 and ts0 > 0)) and true or false
+  end
   -- CUSTOM (engine lane): the button's ArcTimer overlays the countdown -- keep
   -- the frame shown for anchoring, text clear, and skip the source machinery.
-  if isCustomAura and not showPreview and barConfig.display.showDuration and durationFrame then
+  if (isCustomAura or engineDurText) and not showPreview and barConfig.display.showDuration and durationFrame then
     if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(durationFrame.text) end
     durationFrame:SetScript("OnUpdate", nil)
     durationFrame.isActive = false
@@ -3286,7 +3312,80 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       durationFrame:Show()
     end
   end
-  
+
+  -- 12.1 CDM-SOURCED STACK BAR countdown: text-only engine binding on a
+  -- dedicated HOST frame (no .bar field, so BD creates no fill overlays --
+  -- the stack fill stays Core-driven). Same ArcTimer mechanism as the aura
+  -- duration bars and aura textures; the engine shows the countdown exactly
+  -- while the aura is up, in any context including combat and keys.
+  if engineDurText and not showPreview and ns.BarDuration and ns.BarDuration.Attach then
+    -- MODE-SWITCH hygiene: a bar flipped from DURATION mode still carries its
+    -- bar-keyed engine attach (fill overlay + countdown) — release it so the
+    -- old lane can't keep driving this bar's fill/text alongside the host
+    if ns.BarDuration.Detach then ns.BarDuration.Detach(barFrame) end
+    local host = barFrame._arcStackDurHost
+    if not host then
+      host = CreateFrame("Frame", nil, barFrame)
+      host:SetAllPoints(barFrame)
+      barFrame._arcStackDurHost = host
+    end
+    host:Show()
+    local sdUnit = "player"
+    if barConfig.tracking.trackType == "debuff" then
+      sdUnit = "target"
+    elseif barConfig.tracking.trackType == "petbuff" then
+      sdUnit = "pet"
+    end
+    local sdCd = barConfig.tracking.cooldownID
+    local sdTs = barConfig.tracking.trackedSpellID or barConfig.tracking.spellID
+    local sdFmt, sdColorKey
+    if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
+      -- persistent per-fs formatter (live band-edit application, see DT)
+      sdFmt = ns.DurationText.GetLiveSecondsColorFormatter(durationFrame and durationFrame.text,
+        barConfig.display, barConfig.display.durationDecimals or 1)
+      sdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(barConfig.display)
+    end
+    local sdFontPath = "Fonts\\FRIZQT__.TTF"
+    if LSM and barConfig.display.durationFont then
+      local ff = LSM:Fetch("font", barConfig.display.durationFont)
+      if ff and ff ~= "" then sdFontPath = ff end
+    end
+    if ns.TraceTap then ns.TraceTap("BAR", string.format(
+      "bar %s stack-durText host attach: cd=%s ts=%s unit=%s colorKey=%s tce=%s",
+      tostring(barNumber), tostring(sdCd), tostring(sdTs), sdUnit,
+      tostring(sdColorKey), tostring(barConfig.display.durationTextColorEnabled))) end
+    ns.BarDuration.Attach(host, durationFrame and durationFrame.text, sdCd, sdTs, sdUnit, {
+      showDuration = true,
+      durFontPath = sdFontPath,
+      durFontSize = barConfig.display.durationFontSize or 18,
+      durOutline = GetOutlineFlag(barConfig.display.durationOutline),
+      durDecimals = barConfig.display.durationDecimals or 1,
+      durationColor = barConfig.display.durationColor or {r=1, g=1, b=1, a=1},
+      durFormatter = sdFmt,
+      textColorEnabled = barConfig.display.durationTextColorEnabled and true or false,
+      colorKey = sdColorKey,
+    })
+    -- LIVE style re-push (the Textures pattern): the retarget path
+    -- deliberately never re-applies opts, and ApplyAppearance only styles
+    -- bar-keyed attaches — this is what makes font/decimals edits and the
+    -- seconds-color band toggle take effect without a reload (BD detects a
+    -- formatter/colorKey change and recreates the slot with the new rules).
+    if ns.BarDuration.ApplyStyle then
+      ns.BarDuration.ApplyStyle(host, durationFrame, true,
+        barConfig.display.durationDecimals or 1,
+        barConfig.display.durationColor or {r=1, g=1, b=1, a=1},
+        nil, nil, sdFmt,
+        barConfig.display.durationTextColorEnabled and true or false,
+        sdColorKey)
+    end
+  elseif barFrame._arcStackDurHost and not engineDurText then
+    -- Show Duration toggled off (or bar re-identified): release the binding
+    if ns.BarDuration and ns.BarDuration.Detach then
+      ns.BarDuration.Detach(barFrame._arcStackDurHost)
+    end
+    barFrame._arcStackDurHost:Hide()
+  end
+
   -- Update tick marks - only needed when config changes
   if needsSetup then
     UpdateTickMarks(barFrame, barConfig, maxStacks, displayMode)
@@ -3310,8 +3409,10 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     barFrame.bar:SetRotatesTexture(rotateBarTex)
     local bdUnit = (barConfig.tracking.trackType == "debuff") and "target" or "player"
     local bdDurFmt, bdColorKey
-    if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
-      bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(barConfig.display, barConfig.display.durationDecimals or 1)
+    if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
+      -- persistent per-fs formatter (live band-edit application, see DT)
+      bdDurFmt = ns.DurationText.GetLiveSecondsColorFormatter(durationFrame and durationFrame.text,
+        barConfig.display, barConfig.display.durationDecimals or 1)
       bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(barConfig.display)
     end
     local bdDurFontPath = "Fonts\\FRIZQT__.TTF"
@@ -3327,11 +3428,17 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     -- slots when any band value/color (or the base color) changes.
     local engineBaseColor = baseColor
     local applicationBands, applicationSteps, bandsKey
+    -- USE TEXTURE COLORS: the engine overlay carries a COPY of our texture, so
+    -- it needs the same white (identity) tint -- and threshold recoloring is
+    -- skipped outright, since recoloring the fill is exactly what the toggle
+    -- turns off (the panel disables those controls to match).
+    local naturalFill = ns.API.IsNaturalFill(barConfig.display)
+    if naturalFill then engineBaseColor = { r = 1, g = 1, b = 1, a = 1 } end
     do
       local list = {}
       for i = 2, 6 do
         local th = thresholds[i]
-        if th and th.enabled and th.color then
+        if th and th.enabled and th.color and not naturalFill then
           local v = GetThresholdValue(th.minValue, nil, thresholdAsPercent, maxStacks)
           v = v and math_floor(v + 0.5)
           if v and v > 1 and v <= maxStacks then list[#list + 1] = { v = v, color = th.color } end
@@ -4049,6 +4156,12 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   
   -- Get base color from config
   local baseColor = barConfig.display.barColor or {r=0, g=0.5, b=1, a=1}
+  -- USE TEXTURE COLORS: white is the identity tint, so every downstream write
+  -- (our own fill AND the engine overlay's copy of the texture) leaves the
+  -- art untouched. One substitution here covers the whole function.
+  if ns.API.IsNaturalFill(barConfig.display) then
+    baseColor = { r = 1, g = 1, b = 1, a = baseColor.a or 1 }
+  end
   
   -- Get orientation settings for duration bar
   local isDurationVertical = (barConfig.display.barOrientation == "vertical")
@@ -4319,6 +4432,15 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     -- sourceBar — the engine lane below handles the custom case; engineArm
     -- runs it while the aura is ABSENT so the slot exists before secrecy
     -- blocks creation)
+    -- MODE-SWITCH hygiene: a bar flipped from STACK mode leaves its
+    -- text-only countdown host behind — two ArcTimers would overlay the
+    -- same fontstring. Release the host; this lane owns the countdown now.
+    if barFrame._arcStackDurHost then
+      if ns.BarDuration and ns.BarDuration.Detach then
+        ns.BarDuration.Detach(barFrame._arcStackDurHost)
+      end
+      barFrame._arcStackDurHost:Hide()
+    end
     local auraID, unit
     if sourceBar and sourceBar.GetAuraInfo then
       auraID, unit = sourceBar:GetAuraInfo()
@@ -4449,9 +4571,11 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       end
       -- Colour-by-time text: reuse the LIVE approach -- seconds bands baked into the formatter,
       -- applied C-side with no durObj read -- so it survives 12.1. nil when the toggle/bands are off.
+      -- Persistent per-fs formatter: band edits rewrite its rules in place (see DT).
       local bdDurFmt, bdColorKey
-      if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
-        bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(barConfig.display, barConfig.display.durationDecimals or 1)
+      if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
+        bdDurFmt = ns.DurationText.GetLiveSecondsColorFormatter(durationFrame and durationFrame.text,
+          barConfig.display, barConfig.display.durationDecimals or 1)
         bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(barConfig.display)
       end
       -- CONDITIONAL COLOUR BY REMAINING TIME (12.1 engine lane). The fill
@@ -4464,7 +4588,8 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       --   FILL (value = elapsed, f_i mirrored to 1-f_i): pairs from the
       --     least urgent up -- TRACK(high, q_i, c_i) then STEP(low, q_i, c_i).
       local bdDurSteps, bdDurKey
-      if barConfig.display.durationColorCurveEnabled then
+      -- natural fill owns the color: no threshold recolor overlays
+      if barConfig.display.durationColorCurveEnabled and not ns.API.IsNaturalFill(barConfig.display) then
         local d, list = barConfig.display, {}
         local asSeconds = d.durationThresholdAsSeconds
         local thrMax = d.durationThresholdMaxDuration or 30
@@ -5641,7 +5766,11 @@ function ns.Display.ApplyAppearance(barNumber)
       barFrame.bar:SetStatusBarTexture(texture)
     end
   end
-  
+
+  -- USE TEXTURE COLORS: claim (or release) the fill tint. Set AFTER the
+  -- texture so the guard binds the current texture object.
+  ns.API.SetNaturalFill(barFrame.bar, ns.API.IsNaturalFill(cfg))
+
   -- Fill direction and orientation
   barFrame.bar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
   barFrame.bar:SetReverseFill(cfg.barReverseFill or false)
@@ -5909,8 +6038,11 @@ function ns.Display.ApplyAppearance(barNumber)
       and Enum.StatusBarTimerDirection.ElapsedTime or Enum.StatusBarTimerDirection.RemainingTime
     local bdDurFmt
     local bdColorKey
-    if cfg.durationTextColorEnabled and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
-      bdDurFmt = ns.DurationText.BuildSecondsColorFormatter(cfg, cfg.durationDecimals or 1)
+    if cfg.durationTextColorEnabled and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
+      -- live variant: this is the option-change path, so the rules rewrite
+      -- lands on the very object the engine binding is holding
+      bdDurFmt = ns.DurationText.GetLiveSecondsColorFormatter(durationFrame and durationFrame.text,
+        cfg, cfg.durationDecimals or 1)
       bdColorKey = ns.DurationText.SecondsColorKey and ns.DurationText.SecondsColorKey(cfg)
     end
     ns.BarDuration.ApplyStyle(barFrame, durationFrame, cfg.showDuration, cfg.durationDecimals or 1, cfg.durationColor, cfg.barColor, bdDir, bdDurFmt, cfg.durationTextColorEnabled and true or false, bdColorKey)
@@ -6299,6 +6431,13 @@ function ns.Display.EnginePrebuild()
       local cfgT = cfg.tracking
       if cfgT.useDurationBar then
         ns.Display.UpdateDurationBar(barNumber, 0, 0, false, nil, nil,
+          cfgT.iconTextureID, cfgT.buffName)
+      else
+        -- STACK BARS arm here too: the custom-lane fill binding and the
+        -- CDM-sourced countdown (text-only ArcTimer host) are both
+        -- create-time engine work with the same one-chance-per-session
+        -- constraint as the duration bars above.
+        ns.Display.UpdateBar(barNumber, 0, cfgT.maxStacks or 10, false, nil,
           cfgT.iconTextureID, cfgT.buffName)
       end
     end

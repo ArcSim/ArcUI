@@ -211,3 +211,14 @@ end
 
 _G.ArcUI_Public = Public
 ns.PublicAPI = Public
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DEV TRACE TAP (consumed by the ArcUI_Tracer addon, which is NEVER shipped).
+-- A loaded tracer registers a sink here; instrumented points inside ArcUI
+-- call ns.TraceTap(tag, msg). Cost when unregistered: one nil-check per tap
+-- site. The sink receives plain strings only — tap sites must never format
+-- secret values.
+-- ═══════════════════════════════════════════════════════════════════════════
+function _G.ArcUI_SetTraceTap(fn)
+  ns.TraceTap = (type(fn) == "function") and fn or nil
+end

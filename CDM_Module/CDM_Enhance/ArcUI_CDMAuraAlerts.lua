@@ -26,16 +26,17 @@ local function Settled()
     return GetTime() >= settledAt
 end
 
--- the dropdown stores EITHER this sentinel (speak the paired line) or an LSM
--- sound name — one action per edge
+-- Legacy sentinel: the edge used to be ONE dropdown holding either a sound or
+-- "speak the paired line". Sound and speech are now independent controls, so
+-- this only survives as a value to IGNORE on old configs.
 local ALERT_TTS = "__tts__"
 
+-- Sound and speech are independent: either, both, or neither can be set.
 local function PlayAlert(choice, ttsText)
-    if type(choice) ~= "string" or choice == "" or choice == "None" then return end
-    if choice == ALERT_TTS then
-        if type(ttsText) == "string" and ttsText ~= "" and ns.Sounds and ns.Sounds.SpeakText then
-            ns.Sounds.SpeakText(ttsText)
-        end
+    if type(ttsText) == "string" and ttsText ~= "" and ns.Sounds and ns.Sounds.SpeakText then
+        ns.Sounds.SpeakText(ttsText)
+    end
+    if type(choice) ~= "string" or choice == "" or choice == "None" or choice == ALERT_TTS then
         return
     end
     local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
@@ -80,8 +81,13 @@ function CAA.Sweep()
     local frames = ns.CDMEnhance and ns.CDMEnhance.GetEnhancedFrames
         and ns.CDMEnhance.GetEnhancedFrames()
     if not frames then return end
-    for frame in pairs(frames) do
-        if type(frame) == "table" and frame.Applications ~= nil then
+    -- The registry is [cooldownID] = { frame =, viewerType =, ... }. Walking it
+    -- as a frame list (`for frame in pairs`) yielded the NUMERIC KEYS, so the
+    -- table check below never passed and NOTHING was ever hooked -- the whole
+    -- feature was inert from day one. Iterate the values.
+    for _, data in pairs(frames) do
+        local frame = type(data) == "table" and data.frame or nil
+        if frame and frame.Applications ~= nil then
             CAA.Hook(frame)
         end
     end
@@ -97,12 +103,27 @@ function CAA.QueueSweep(delay)
     end)
 end
 
+-- CDM creates/rebinds item frames as viewers grow and on every rebuild (all
+-- the time in dungeons). The login sweeps only cover frames that already
+-- exist, so ride the controller's rebind callback for the rest. Hook is
+-- idempotent per frame; the settle window still guards the bind storm.
+local rebindHooked = false
+local function ArmRebind()
+    if rebindHooked then return end
+    if not (ns.FrameController and ns.FrameController.OnFrameRebind) then return end
+    rebindHooked = true
+    ns.FrameController.OnFrameRebind(function(frame)
+        if frame and frame.Applications ~= nil then CAA.Hook(frame) end
+    end)
+end
+
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 ev:SetScript("OnEvent", function()
     -- hold alerts through the bind storm, then start listening
     settledAt = GetTime() + 5
+    ArmRebind()
     CAA.QueueSweep(2)
     CAA.QueueSweep(6)
 end)

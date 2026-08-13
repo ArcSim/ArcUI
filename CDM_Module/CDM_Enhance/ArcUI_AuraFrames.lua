@@ -396,6 +396,11 @@ function AF.UpdateAuraFrame(frame)
   local currentAuraActive = HasAuraInstanceID(frame.auraInstanceID)
                          or (ns.FrameActive and ns.FrameActive.IsActive(frame)) or false
   local cdID          = frame.cooldownID
+  -- tracer: log only TRANSITIONS (this runs per aura event; steady state is noise)
+  if ns.TraceTap and lastAuraActive ~= currentAuraActive then
+    ns.TraceTap("AF", string.format("cd=%s visualAuraActive %s -> %s",
+      tostring(cdID), tostring(lastAuraActive), tostring(currentAuraActive)))
+  end
 
   local hasDelay = frame._arcDelayAlphaUntil and now < frame._arcDelayAlphaUntil
   if ns.DynamicLayoutDebug and ns.DynamicLayoutDebug.IsAlphaTraceEnabled

@@ -3918,9 +3918,24 @@ end
 
 -- Save current layout to a profile
 function ns.CDMGroups.SaveCurrentToProfile(profileName)
-    
+
     if not profileName or profileName == "" then return false end
-    
+
+    -- tracer: snapshot what is ABOUT to be persisted — the slot-ratchet
+    -- evidence (a save carrying more members than the user configured is
+    -- the smoking gun for "5 slots became 8 after reload")
+    if ns.TraceTap then
+        local parts = {}
+        for gname, g in pairs(ns.CDMGroups.groups or {}) do
+            local n = 0
+            for _ in pairs(g.members or {}) do n = n + 1 end
+            parts[#parts + 1] = tostring(gname) .. "=" .. n
+        end
+        table.sort(parts)
+        ns.TraceTap("GRP", "SAVE -> " .. tostring(profileName)
+            .. "  members: " .. table.concat(parts, " "))
+    end
+
     -- CRITICAL: Don't save during restoration/transitions
     if IsRestoring() then
         PrintMsg("Cannot save profile during restoration - please wait")
@@ -4143,9 +4158,22 @@ end
 
 -- Load a profile's layout
 function ns.CDMGroups.LoadProfile(profileName, skipActivation)
-    
+
     if not profileName or profileName == "" then return false end
-    
+
+    if ns.TraceTap then
+        local parts = {}
+        for gname, g in pairs(ns.CDMGroups.groups or {}) do
+            local n = 0
+            for _ in pairs(g.members or {}) do n = n + 1 end
+            parts[#parts + 1] = tostring(gname) .. "=" .. n
+        end
+        table.sort(parts)
+        ns.TraceTap("GRP", "LOAD " .. tostring(profileName)
+            .. " skipActivation=" .. tostring(skipActivation)
+            .. "  pre-load members: " .. table.concat(parts, " "))
+    end
+
     -- Prevent re-entry during load
     if ns.CDMGroups.profileLoadInProgress then
         return false

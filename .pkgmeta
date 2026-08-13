@@ -22,3 +22,9 @@ ignore:
   - package.ps1
   - CHANGELOG_*.md
   - "*.bak"
+  # Community bar textures/fonts: the registration file is not in the toc, so
+  # nothing here is reachable in game. Kept in the repo, left out of the zip
+  # until the feature is switched back on (re-add the toc line + drop these
+  # two entries to ship it).
+  - CustomTextures
+  - Utilities/ArcUI_CustomTextures.lua

@@ -1886,5 +1886,81 @@ function ns.API.ApplyGlobalFontTexture(font, texture)
 end
 
 -- ===================================================================
+-- NATURAL FILL ("Use Texture Colors")
+--
+-- Bar textures are TINTED by StatusBar:SetStatusBarColor and by the fill
+-- texture's own SetVertexColor -- both multiply the art, so white (1,1,1) is
+-- the identity that lets a texture's own colors show through.
+--
+-- Every bar module writes that tint from many paths (base color, threshold
+-- colors, color curves, per-slot colors, gradients, engine overlays), so the
+-- toggle is enforced at the WIDGET rather than at each writer: one hook per
+-- StatusBar rewrites any non-white tint back to white. Same single-writer
+-- authority pattern the CDM modules use for alpha/desaturation. Recursion is
+-- self-limiting -- the corrective call is white, which passes the guard.
+-- ===================================================================
+
+-- Is the natural-fill toggle on for this bar's display config?
+function ns.API.IsNaturalFill(displayCfg)
+  return displayCfg ~= nil and displayCfg.useTextureColor == true
+end
+
+-- Hook the CURRENT fill texture. Re-called after every SetStatusBarTexture:
+-- a texture swap can hand back a different object, and the fresh one carries
+-- no hook (the flag lives on the object, so re-hooking is idempotent).
+local function HookNaturalFillTexture(statusBar)
+  local tex = statusBar.GetStatusBarTexture and statusBar:GetStatusBarTexture()
+  if not tex or not tex.SetVertexColor or tex._arcNaturalTexHooked then return tex end
+  tex._arcNaturalTexHooked = true
+  tex._arcNaturalOwner = statusBar
+  hooksecurefunc(tex, "SetVertexColor", function(self, r, g, b, a)
+    local owner = self._arcNaturalOwner
+    if not (owner and owner._arcNaturalFill) then return end
+    -- guard the compare: engine-driven bars can hand us secret values
+    if issecretvalue and (issecretvalue(r) or issecretvalue(g) or issecretvalue(b)) then return end
+    if r ~= 1 or g ~= 1 or b ~= 1 then
+      self:SetVertexColor(1, 1, 1, a or 1)
+    end
+  end)
+  return tex
+end
+
+-- enabled = true  -> the bar renders its texture's own colors
+-- enabled = false -> release; the caller's next appearance pass repaints
+function ns.API.SetNaturalFill(statusBar, enabled)
+  if not statusBar or not statusBar.SetStatusBarColor then return end
+
+  if not enabled then
+    statusBar._arcNaturalFill = nil
+    return
+  end
+
+  if not statusBar._arcNaturalFillHooked then
+    statusBar._arcNaturalFillHooked = true
+    hooksecurefunc(statusBar, "SetStatusBarColor", function(self, r, g, b, a)
+      if not self._arcNaturalFill then return end
+      if issecretvalue and (issecretvalue(r) or issecretvalue(g) or issecretvalue(b)) then return end
+      if r ~= 1 or g ~= 1 or b ~= 1 then
+        self:SetStatusBarColor(1, 1, 1, a or 1)
+      end
+    end)
+    if statusBar.SetStatusBarTexture then
+      hooksecurefunc(statusBar, "SetStatusBarTexture", function(self)
+        if not self._arcNaturalFill then return end
+        local t = HookNaturalFillTexture(self)
+        if t and t.SetVertexColor then t:SetVertexColor(1, 1, 1, 1) end
+        self:SetStatusBarColor(1, 1, 1, 1)
+      end)
+    end
+  end
+
+  statusBar._arcNaturalFill = true
+  HookNaturalFillTexture(statusBar)
+  statusBar:SetStatusBarColor(1, 1, 1, 1)
+  local tex = statusBar.GetStatusBarTexture and statusBar:GetStatusBarTexture()
+  if tex and tex.SetVertexColor then tex:SetVertexColor(1, 1, 1, 1) end
+end
+
+-- ===================================================================
 -- END OF ArcUI_DB.lua
 -- ===================================================================

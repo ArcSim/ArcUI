@@ -128,10 +128,12 @@ local function BuildDesired()
                 end
             end
             -- TTS lookup: keyed by the spell IDs, matched against the
-            -- player's own cast events. Only when the GAINED edge is set to
-            -- speech (the dropdown is one-action-per-edge).
+            -- player's own cast events. Speech is its own field now (sound and
+            -- speech are independent), so the line being filled in IS the
+            -- switch -- it no longer waits for the sound slot to hold the old
+            -- "__tts__" sentinel.
             local text = alerts.gainedTTS
-            if alerts.gainedSound == ALERT_TTS and type(text) == "string" and text ~= "" then
+            if type(text) == "string" and text ~= "" then
                 for _, spellID in ipairs(ids) do
                     tts[spellID] = tts[spellID] or {}
                     table.insert(tts[spellID], { text = text, arcID = arcID })

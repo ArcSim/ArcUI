@@ -1401,8 +1401,9 @@ function Textures.UpdateTexture(num)
       -- it is only the outer mask anchor + the drain-region rect now. Attach
       -- once per texture; the engine re-drives on every aura (re)apply,
       -- combat included.
+      -- spellID fallback: raw-spell-ID textures carry no cooldownID/trackedSpellID
       local cdID = cfg.tracking and cfg.tracking.cooldownID
-      local tsID = cfg.tracking and cfg.tracking.trackedSpellID
+      local tsID = cfg.tracking and (cfg.tracking.trackedSpellID or cfg.tracking.spellID)
       -- DIRECTION MODEL (lab-proven): StandardNoRangeFill only pins the art on
       -- NON-reversed fills. Non-reversed directions (TOP_TO_BOTTOM,
       -- RIGHT_TO_LEFT) = BRIGHT mode: the art is the fill, shrinking with
@@ -1554,17 +1555,32 @@ function Textures.UpdateTexture(num)
       local unit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
       local secret = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit)
       if optionsOpen then
-        if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(dtf) end
+        -- NEVER Detach here (tracer-proven bug): the panel-open Detach threw
+        -- away the live engine binding, and re-creation is impossible under
+        -- secrecy — so the fight AFTER any options visit had no countdown
+        -- until combat ended ("works, then doesn't, then works"). The style
+        -- sample renders on OUR fontstring without touching the binding; if
+        -- the aura happens to be up, the engine's ArcTimer overlays the real
+        -- value, which previews styling just as well.
+        if ns.TraceTap then ns.TraceTap("TEX", string.format(
+          "tex %s durText: OPTIONS-OPEN -> sample (binding KEPT)", tostring(num))) end
         if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(dtext) end
         dtext:SetText("12.3")
         dtf:Show()
       elseif secret then
         -- 12.1: durObj is unreadable, so drive the countdown via the AuraButton engine (text-only,
         -- no bar) exactly like the aura duration bars. The engine's ArcTimer overlays our dtext.
+        -- spellID fallback: textures added by RAW SPELL ID carry no cooldownID and
+        -- no trackedSpellID -- without this the attach silently skipped and the
+        -- countdown never existed (both bar lanes already had the fallback).
         local cdID = cfg.tracking and cfg.tracking.cooldownID
-        local tsID = cfg.tracking and cfg.tracking.trackedSpellID
+        local tsID = cfg.tracking and (cfg.tracking.trackedSpellID or cfg.tracking.spellID)
         -- arm during the prebuild too: this binding is the texture's one
         -- chance per session, same as the drain engine above
+        if ns.TraceTap then ns.TraceTap("TEX", string.format(
+          "tex %s durText: SECRET branch active=%s prebuild=%s cd=%s ts=%s",
+          tostring(num), tostring(active), tostring(Textures._prebuild),
+          tostring(cdID), tostring(tsID))) end
         if (active or Textures._prebuild) and ns.BarDuration and ns.BarDuration.Attach and ((cdID and cdID > 0) or (tsID and tsID > 0)) then
           local dOutline = DUR_OUTLINE[d.durationOutline or "THICKOUTLINE"] or "THICKOUTLINE"
           local dFontPath = "Fonts\\FRIZQT__.TTF"
@@ -1572,8 +1588,10 @@ function Textures.UpdateTexture(num)
           local dec = tonumber(d.durationDecimals) or 1
           local tce = d.durationTextColorEnabled and true or false
           local dFmt
-          if tce and ns.DurationText and ns.DurationText.BuildSecondsColorFormatter then
-            dFmt = ns.DurationText.BuildSecondsColorFormatter(d, dec)
+          if tce and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
+            -- persistent per-fs formatter: band edits rewrite its rules in
+            -- place — mid-combat edits can recolor without a slot recreate
+            dFmt = ns.DurationText.GetLiveSecondsColorFormatter(dtext, d, dec)
           end
           ns.BarDuration.Attach(dtf, dtext, cdID, tsID, unit, {
             showDuration = true, durFontPath = dFontPath, durFontSize = tonumber(d.durationFontSize) or 18,
@@ -1586,10 +1604,14 @@ function Textures.UpdateTexture(num)
           dtext:SetText("")   -- our own fontstring stays blank; the engine ArcTimer shows the countdown
           dtf:Show()
         else
+          if ns.TraceTap then ns.TraceTap("TEX", string.format(
+            "tex %s durText: SECRET but NO ATTACH (inactive, no ids, or BD gone) -> Detach + hide", tostring(num))) end
           if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(dtf) end
           dtext:SetText(""); dtf:Hide()
         end
       else
+        if ns.TraceTap then ns.TraceTap("TEX", string.format(
+          "tex %s durText: LIVE branch (auras not secret) active=%s", tostring(num), tostring(active))) end
         local durObj = active and GetDurObjFor(cfg, activeFrame)
         -- unit + auraInstanceID drive the optional threshold colour ticker (mirrors
         -- GetDurObjFor's resolution); `d` opts the duration text into colouring.

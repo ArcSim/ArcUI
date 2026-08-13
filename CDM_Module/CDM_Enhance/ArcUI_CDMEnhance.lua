@@ -2535,6 +2535,11 @@ local function ApplyForceHideText(frame, hide)
   ipa(frame._arcChargeText)
   ipa(frame._arcSingleStackContainer)
   ipa(frame._arcStackBandContainer)
+  -- 12.1 count overlay (show-at-1 / band colors): the engine containers are
+  -- CHILDREN of the frame — without the float the stack count sank with the
+  -- alpha-0 frame the moment Show Icon was turned off
+  ipa(frame._arcSCOv_player)
+  ipa(frame._arcSCOv_target)
   -- Edit / drag overlay ("DRAG" button) — keep it usable while the icon is
   -- held at preview opacity in the options panel. (UpdateOverlayState still
   -- governs whether it's shown at all, so this is a no-op outside edit mode.)
@@ -3713,9 +3718,21 @@ ApplyIconStyle = function(frame, cdID)
           local pf = self._arcParentFrame
           if not pf then return end
           if pf._arcBypassTextureHook then return end
-          
-          -- CUSTOM ICON OVERRIDE: Always enforce if set (highest priority)
-          local customID = pf._arcCustomIconID
+
+          -- CUSTOM ICON OVERRIDE: Always enforce if set (highest priority).
+          -- LIVE lookup by the frame's CURRENT occupant — _arcCustomIconID is
+          -- a style-time bake, and CDM reassigns frames across cooldownIDs on
+          -- rebuilds (constantly in dungeons): the stale bake put the custom
+          -- icon on the WRONG spell while the custom spell's new frame showed
+          -- its default, alternating as CDM refreshed ("icons switching
+          -- between them in combat"). CDM fires RefreshSpellTexture right
+          -- after every cooldownID assignment, so this hook self-heals each
+          -- rebind. cooldownID is a plain non-secret read; GetIconSettings is
+          -- the cached merge.
+          local cdID2 = pf.cooldownID
+          local cfg2 = cdID2 and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings
+            and ns.CDMEnhance.GetIconSettings(cdID2)
+          local customID = cfg2 and cfg2.customIconID
           if customID then
             -- Try as spell ID first, fall back to direct texture file ID
             local texture = C_Spell.GetSpellTexture(customID) or customID
@@ -3727,8 +3744,12 @@ ApplyIconStyle = function(frame, cdID)
             return
           end
           
-          -- Only enforce when ignoreAuraOverride is active AND aura is up
-          if pf._arcIgnoreAuraOverride then
+          -- Only enforce when ignoreAuraOverride is active AND aura is up.
+          -- Same live-lookup rule as above: the baked _arcIgnoreAuraOverride
+          -- goes stale when CDM moves this frame to another cooldownID.
+          local iao2 = cfg2 and ((cfg2.cooldownSwipe and cfg2.cooldownSwipe.ignoreAuraOverride)
+            or (cfg2.auraActiveState and cfg2.auraActiveState.ignoreAuraOverride))
+          if iao2 then
             local auraActive = pf._arcAuraActive == true
             if auraActive then
               -- Get current override spell from cooldownInfo (updates dynamically based on talents)

@@ -34,11 +34,13 @@ local cooldownFilterMode = "all"
 -- Collapsible sections (shared between aura and cooldown options display)
 local collapsedSections = {
   globalOptions = true,
+  autoTrackSlots = true,   -- Auto-Track Trinket Slots (unified panel, under Global Options)
   keybinds = true,
   iconAppearance = true,
   position = true,
   arcLoadConditions = true,
   arcIconSettings = true,
+  arcSpellOverride = true,   -- Arc spell icons: override-form behaviour
   arcTimerSettings = true,
   activeState = true,      -- For auras
   inactiveState = true,    -- For auras
@@ -663,22 +665,22 @@ local function AlertSoundNames()
   return (lsm and lsm:HashTable("sound")) or {}
 end
 
-local function AlertChoiceValues(edge)
+-- LSM30_Sound picker list. The media widget displays the KEYS and uses the
+-- values only to preview the file, so this must stay name -> path (an
+-- ordinary select would render those paths as labels, which is exactly how
+-- these dropdowns ended up showing "Interface\AddOns\...ogg" and bare file
+-- IDs). "None" is a real entry so a sound can be cleared from the list.
+local function AlertChoiceValues()
   local out = { None = "None" }
-  if AlertTTSAllowed(edge) then out[ALERT_TTS] = "|cff66ccffText to Speech|r" end
   for k, v in pairs(AlertSoundNames()) do out[k] = v end
   return out
 end
 
--- explicit order: None, Text to Speech, then the sounds alphabetically
-local function AlertChoiceSorting(edge)
-  local names = {}
-  for k in pairs(AlertSoundNames()) do names[#names + 1] = k end
-  table.sort(names)
-  local out = { "None" }
-  if AlertTTSAllowed(edge) then out[#out + 1] = ALERT_TTS end
-  for _, n in ipairs(names) do out[#out + 1] = n end
-  return out
+-- Old configs stored "__tts__" in the sound slot back when one dropdown held
+-- both actions; speech is its own field now, so show those as no sound.
+local function AlertSoundGet(stored)
+  if stored == nil or stored == ALERT_TTS then return "None" end
+  return stored
 end
 
 
@@ -2108,7 +2110,9 @@ local function GetUnifiedFilterValues()
     ["arc"] = "|cffffcc00Arc Icons|r",
     ["arcspell"] = "|cff88ccffArc Spells|r",
     ["arctimer"] = "|cffffcc00Custom Timers|r",
-    ["autotrack"] = "|cff88ff88Auto-Track Slots|r",
+    -- "autotrack" filter RETIRED: the auto-track controls now live in their
+    -- own collapsible section under Global Options (Arc's call — reachable
+    -- without hunting through the filter)
   }
   
   if ns.CDMGroups and ns.CDMGroups.groups then
@@ -3425,7 +3429,10 @@ function ns.GetCDMAuraIconsOptionsTable()
         return ""
       end,
       set = function(_, v)
-        local id = tonumber((v or ""):gsub("[^%d]", ""))
+        -- extra parens REQUIRED: gsub returns (string, count) and an
+        -- unparenthesized call feeds the count into tonumber as its BASE
+        -- argument -> "base out of range" error on every entry
+        local id = tonumber(((v or ""):gsub("[^%d]", "")))
         local arcID = GetSingleSelectedArcIcon()
         if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.ApplyArcIconOverride then
           ns.ArcAurasOptions.ApplyArcIconOverride(arcID, id, arcIconIDType)
@@ -5455,21 +5462,21 @@ function ns.GetCDMAuraIconsOptionsTable()
         return HideAuraAlertEvents() or not IsCurrentAuraSelectionAllArcAura()
       end,
     },
-    -- Each edge is ONE dropdown: None / Text to Speech / a sound. Picking
-    -- Text to Speech reveals the line to speak. One control per row so the
-    -- section never reflows oddly at narrow panel widths.
+    -- Two independent controls per edge: a sound picker (the LSM media widget,
+    -- same one the Pings panel uses -- names, speaker preview, scroll) and a
+    -- line to speak. Either, both or neither.
     alertGained = {
       type = "select",
+      dialogControl = "LSM30_Sound",
       name = "When Gained",
-      desc = "What happens when this aura appears on you (or on your target, for debuff icons).",
+      desc = "Sound played when this aura appears on you (or on your target, for debuff icons).",
       order = 109.63,
-      width = "full",
-      values = function() return AlertChoiceValues("gained") end,
-      sorting = function() return AlertChoiceSorting("gained") end,
+      width = 1.6,
+      values = AlertChoiceValues,
       hidden = HideAuraAlertEvents,
       get = function()
         local c = GetAuraCfg()
-        return (c and c.auraAlerts and c.auraAlerts.gainedSound) or "None"
+        return AlertSoundGet(c and c.auraAlerts and c.auraAlerts.gainedSound)
       end,
       set = function(_, v)
         ApplyAuraSetting(function(c)
@@ -5486,16 +5493,15 @@ function ns.GetCDMAuraIconsOptionsTable()
       name = "Say When Gained",
       desc = function()
         if IsCurrentAuraSelectionAllArcAura() then
-          return "Spoken when you cast this spell yourself.\n\n|cff888888The game never tells addons that an aura landed, so speech can only ride your own cast. Pick a sound instead for procs or buffs cast on you by someone else.|r"
+          return "Spoken when you cast this spell yourself. Leave empty for no speech.\n\n|cff888888The game never tells addons that an aura landed, so speech can only ride your own cast. Pick a sound instead for procs or buffs cast on you by someone else.|r"
         end
-        return "Spoken when this aura appears."
+        return "Spoken when this aura appears. Leave empty for no speech."
       end,
       order = 109.635,
-      width = "full",
+      width = 1.6,
       hidden = function()
         if HideAuraAlertEvents() then return true end
-        local c = GetAuraCfg()
-        return (c and c.auraAlerts and c.auraAlerts.gainedSound) ~= ALERT_TTS
+        return not AlertTTSAllowed("gained")
       end,
       get = function()
         local c = GetAuraCfg()
@@ -5511,19 +5517,19 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     alertStacks = {
       type = "select",
+      dialogControl = "LSM30_Sound",
       name = "When Stacks Increase",
       desc = "Sound played each time this aura gains a stack.",
       order = 109.64,
-      width = "full",
-      values = function() return AlertChoiceValues("stacks") end,
-      sorting = function() return AlertChoiceSorting("stacks") end,
+      width = 1.6,
+      values = AlertChoiceValues,
       -- engine-only trigger: CDM application counts are secret
       hidden = function()
         return HideAuraAlertEvents() or not IsCurrentAuraSelectionAllArcAura()
       end,
       get = function()
         local c = GetAuraCfg()
-        return (c and c.auraAlerts and c.auraAlerts.stacksSound) or "None"
+        return AlertSoundGet(c and c.auraAlerts and c.auraAlerts.stacksSound)
       end,
       set = function(_, v)
         ApplyAuraSetting(function(c)
@@ -5535,16 +5541,16 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     alertRemoved = {
       type = "select",
+      dialogControl = "LSM30_Sound",
       name = "When It Drops",
-      desc = "What happens when this aura is removed or expires.",
+      desc = "Sound played when this aura is removed or expires.",
       order = 109.65,
-      width = "full",
-      values = function() return AlertChoiceValues("removed") end,
-      sorting = function() return AlertChoiceSorting("removed") end,
+      width = 1.6,
+      values = AlertChoiceValues,
       hidden = HideAuraAlertEvents,
       get = function()
         local c = GetAuraCfg()
-        return (c and c.auraAlerts and c.auraAlerts.removedSound) or "None"
+        return AlertSoundGet(c and c.auraAlerts and c.auraAlerts.removedSound)
       end,
       set = function(_, v)
         ApplyAuraSetting(function(c)
@@ -5559,13 +5565,12 @@ function ns.GetCDMAuraIconsOptionsTable()
     alertRemovedTTS = {
       type = "input",
       name = "Say When It Drops",
-      desc = "Spoken when this aura is removed or expires.",
+      desc = "Spoken when this aura is removed or expires. Leave empty for no speech.",
       order = 109.655,
-      width = "full",
+      width = 1.6,
       hidden = function()
         if HideAuraAlertEvents() then return true end
-        local c = GetAuraCfg()
-        return (c and c.auraAlerts and c.auraAlerts.removedSound) ~= ALERT_TTS
+        return not AlertTTSAllowed("removed")
       end,
       get = function()
         local c = GetAuraCfg()
@@ -5576,6 +5581,121 @@ function ns.GetCDMAuraIconsOptionsTable()
           c.auraAlerts = c.auraAlerts or {}
           c.auraAlerts.removedTTS = (v ~= "") and v or nil
         end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+      end,
+    },
+    -- VOICE: shared by every speaking feature in ArcUI (see ns.Sounds), so it
+    -- is deliberately NOT per-icon. Same setting the Cooldown Reminder panel
+    -- edits; changing it in either place changes both.
+    alertVoiceNote = {
+      type = "description",
+      name = "|cff888888Speech settings below are shared: the voice and rate apply to all ArcUI speech, and volume plus the between-messages sound are WoW's own text to speech settings.|r",
+      order = 109.656,
+      width = "full",
+      fontSize = "small",
+      hidden = HideAuraAlertEvents,
+    },
+    alertTTSVoice = {
+      type = "select",
+      name = "Voice",
+      desc = "Default uses the voice picked in WoW's own options (Esc > Options > Accessibility > Text to Speech). Male/Female picks a matching voice from your system list instead.",
+      order = 109.657,
+      width = 1.2,
+      values = {
+        ["default"] = "Default (WoW setting)",
+        ["male"]    = "Male",
+        ["female"]  = "Female",
+      },
+      sorting = { "default", "male", "female" },
+      hidden = HideAuraAlertEvents,
+      get = function()
+        local cfg = ns.Sounds and ns.Sounds.GetTTSConfig and ns.Sounds.GetTTSConfig()
+        return (cfg and cfg.ttsVoiceOverride) or "default"
+      end,
+      set = function(_, v)
+        local cfg = ns.Sounds and ns.Sounds.GetTTSConfig and ns.Sounds.GetTTSConfig()
+        if cfg then cfg.ttsVoiceOverride = v end
+      end,
+    },
+    alertTTSRate = {
+      type = "range",
+      name = "Speech Rate",
+      desc = "How fast the line is spoken. 0 follows WoW's own speech-rate setting.",
+      order = 109.658,
+      width = 1.4,
+      min = -10, max = 10, step = 1,
+      hidden = HideAuraAlertEvents,
+      get = function()
+        local cfg = ns.Sounds and ns.Sounds.GetTTSConfig and ns.Sounds.GetTTSConfig()
+        if cfg and cfg.ttsRateOverride ~= nil then return tonumber(cfg.ttsRateOverride) or 0 end
+        return (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
+      end,
+      set = function(_, v)
+        local cfg = ns.Sounds and ns.Sounds.GetTTSConfig and ns.Sounds.GetTTSConfig()
+        if cfg then cfg.ttsRateOverride = math.floor(v + 0.5) end
+      end,
+    },
+    -- WoW's own speech volume, editable here so nobody has to go hunting for
+    -- the chat config to make an alert audible.
+    alertTTSVolume = {
+      type = "range",
+      name = "Speech Volume",
+      desc = "How loud spoken lines are. This is WoW's own text to speech volume, so it also applies to chat narration.",
+      order = 109.6585,
+      width = 1.4,
+      min = 0, max = 100, step = 1,
+      hidden = HideAuraAlertEvents,
+      get = function()
+        return (ns.Sounds and ns.Sounds.GetSpeechVolume and ns.Sounds.GetSpeechVolume()) or 100
+      end,
+      set = function(_, v)
+        if ns.Sounds and ns.Sounds.SetSpeechVolume then
+          ns.Sounds.SetSpeechVolume(math.floor(v + 0.5))
+        end
+      end,
+    },
+    -- THE TICK: WoW plays a blip whenever ANY speech finishes, addon speech
+    -- included. Surfaced here because it is the single most annoying part of
+    -- using speech alerts and it is otherwise buried in the chat config.
+    alertTTSLineBreakSound = {
+      type = "toggle",
+      name = "Sound Between Messages",
+      desc = "WoW plays a short tick when a spoken line finishes (its |cffffd700Play a sound between each new message|r option).\n\n"
+        .. "It fires for ArcUI speech too, so turn this OFF to lose the tick after every alert.\n\n"
+        .. "|cffff9900This is WoW's own setting: it also affects chat narration.|r",
+      order = 109.6586,
+      width = 1.6,
+      hidden = HideAuraAlertEvents,
+      get = function()
+        return (ns.Sounds and ns.Sounds.GetLineBreakSound and ns.Sounds.GetLineBreakSound()) or false
+      end,
+      set = function(_, v)
+        if ns.Sounds and ns.Sounds.SetLineBreakSound then ns.Sounds.SetLineBreakSound(v) end
+      end,
+    },
+    alertTTSPreview = {
+      type = "execute",
+      name = "Test Voice",
+      desc = "Speaks the gained line for the selected icon (or a sample line if it is empty).",
+      order = 109.659,
+      width = 0.9,
+      hidden = HideAuraAlertEvents,
+      func = function()
+        local c = GetAuraCfg()
+        local line = c and c.auraAlerts and (c.auraAlerts.gainedTTS or c.auraAlerts.removedTTS)
+        if not line or line == "" then line = "Arc U I text to speech test" end
+        if ns.Sounds and ns.Sounds.SpeakText then ns.Sounds.SpeakText(line) end
+      end,
+    },
+    alertTTSOpenBlizzard = {
+      type = "execute",
+      name = "WoW Speech Options",
+      desc = "Opens WoW's own Text to Speech panel for the full voice list and per-channel chat narration settings.",
+      order = 109.6595,
+      width = 1.4,
+      hidden = HideAuraAlertEvents,
+      func = function()
+        if ns.Sounds and ns.Sounds.OpenBlizzardTTSOptions then ns.Sounds.OpenBlizzardTTSOptions() end
       end,
     },
 
@@ -7367,7 +7487,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return ""
       end,
       set = function(_, v)
-        local id = tonumber((v or ""):gsub("[^%d]", ""))
+        -- extra parens REQUIRED: gsub returns (string, count) and an
+        -- unparenthesized call feeds the count into tonumber as its BASE
+        -- argument -> "base out of range" error on every entry
+        local id = tonumber(((v or ""):gsub("[^%d]", "")))
         local arcID = GetSingleSelectedArcIcon()
         if arcID and ns.ArcAurasOptions and ns.ArcAurasOptions.ApplyArcIconOverride then
           ns.ArcAurasOptions.ApplyArcIconOverride(arcID, id, arcIconIDType)
@@ -15196,24 +15319,38 @@ function ns.GetCDMIconsOptionsTable()
   }
 
   -- ─────────────────────────────────────────────────────────────────
-  -- FILTER-CONTEXT CONTROLS (the Icons-workspace direction): the
-  -- Auto-Track Slots filter surfaces the auto-track configuration; the
-  -- Arc Icons filter surfaces bulk management. Same operations as the
-  -- Arc Icons tab (shared through ns.ArcAurasOptions).
+  -- AUTO-TRACK TRINKET SLOTS — its own collapsible section directly
+  -- under Global Options (was: only visible via the retired Auto-Track
+  -- Slots filter — too buried, Arc's call). Same operations as the Arc
+  -- Icons tab (shared through ns.ArcAurasOptions). The Arc Icons filter
+  -- still surfaces bulk management below.
   -- ─────────────────────────────────────────────────────────────────
-  local function HideUnlessAutoTrackFilter()
-    return unifiedFilterMode ~= "autotrack"
+  local function HideAutoTrackSection()
+    return collapsedSections.autoTrackSlots
   end
   local function HideUnlessArcFilter()
     return unifiedFilterMode ~= "arc"
   end
+  args.autoTrackSectionToggle = {
+    type = "toggle",
+    name = "Auto-Track Trinket Slots",
+    desc = "Click to expand/collapse.\n\nAutomatically track your equipped trinkets — the icons follow the SLOT and update when you swap gear.",
+    dialogControl = "CollapsibleHeader",
+    order = 8,
+    width = "full",
+    get = function() return not collapsedSections.autoTrackSlots end,
+    set = function(_, v)
+      collapsedSections.autoTrackSlots = not v
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
   args.autoTrackFilterMaster = {
     type = "toggle",
     name = "|TInterface\\Icons\\INV_Misc_Bag_10:16|t  Enable Auto-Track Equipped Trinkets",
     desc = "Master toggle for auto-tracking equipped trinkets. The frames track the SLOT — icons update automatically when you swap gear.",
-    order = 62,
+    order = 8.05,
     width = "full",
-    hidden = HideUnlessAutoTrackFilter,
+    hidden = HideAutoTrackSection,
     get = function()
       return ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
         and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled()
@@ -15233,10 +15370,10 @@ function ns.GetCDMIconsOptionsTable()
     type = "toggle",
     name = "|TInterface\\Icons\\Spell_Nature_Lightning:16|t  Only Track On-Use Trinkets",
     desc = "Passive trinkets (no on-use effect) are skipped when this is on.",
-    order = 62.1,
+    order = 8.1,
     width = "full",
     hidden = function()
-      if HideUnlessAutoTrackFilter() then return true end
+      if HideAutoTrackSection() then return true end
       return not (ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
         and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled())
     end,
@@ -15272,10 +15409,10 @@ function ns.GetCDMIconsOptionsTable()
         return string.format("|cffffd700%s:|r |cff666666(Empty)|r", slotName)
       end,
       desc = "Toggle auto-tracking for this trinket slot.",
-      order = 62.2 + (slotID - 13) * 0.01,
+      order = 8.2 + (slotID - 13) * 0.01,
       width = "full",
       hidden = function()
-        if HideUnlessAutoTrackFilter() then return true end
+        if HideAutoTrackSection() then return true end
         return not (ns.ArcAuras and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled
           and ns.ArcAuras.IsAutoTrackEquippedTrinketsEnabled())
       end,
@@ -15424,15 +15561,35 @@ function ns.GetCDMIconsOptionsTable()
   local function HideArcLoadCondBody()     -- children: selection + collapse
     return GetSingleArcConfig() == nil or collapsedSections.arcLoadConditions
   end
+  -- AUTO-TRACK SLOT ICONS are managed by the Auto-Track Trinket Slots
+  -- section: they are RECREATED from the slot config at every login, so a
+  -- per-icon Remove or enabled=false silently reverts on reload ("I removed
+  -- it and it came back"). The honest controls are the SLOT toggles — the
+  -- Remove button hides for them and Enabled below drives the slot toggle.
+  local function GetSingleArcAutoTrackSlot()
+    local cfg = GetSingleArcConfig()
+    if cfg and cfg.isAutoTrackSlot and cfg.slotID then return cfg.slotID end
+    return nil
+  end
+  local function SelectionHasAutoTrack()
+    local list = GetArcSelectionList()
+    if not list then return false end
+    if not (ns.ArcAurasOptions and ns.ArcAurasOptions.GetArcConfigByID) then return false end
+    for _, id in ipairs(list) do
+      local cfg = ns.ArcAurasOptions.GetArcConfigByID(id)
+      if cfg and cfg.isAutoTrackSlot then return true end
+    end
+    return false
+  end
   args.arcRemoveSelected = {
     type = "execute",
     name = "|cffff6666Remove Arc Icon(s)|r",
-    desc = "Untrack the selected Arc icon(s) entirely (items, spells, timers, aura icons; totem slots are disabled).",
+    desc = "Untrack the selected Arc icon(s) entirely (items, spells, timers, aura icons; totem slots are disabled).\n\nAuto-tracked trinkets cannot be removed here — untick their slot in Auto-Track Trinket Slots instead.",
     order = 99.2,
     width = 1.0,
     confirm = true,
     confirmText = "Remove the selected Arc icon(s) from tracking?",
-    hidden = function() return GetArcSelectionList() == nil end,
+    hidden = function() return GetArcSelectionList() == nil or SelectionHasAutoTrack() end,
     func = function()
       local list = GetArcSelectionList()
       if list and ns.ArcAurasOptions and ns.ArcAurasOptions.RemoveArcIcons then
@@ -15572,6 +15729,71 @@ function ns.GetCDMIconsOptionsTable()
   -- (Aura Group assignment lives in the GROUPS tab: create a Spell-ID Aura
   -- Group with "+ Aura Group" and drag aura icons into it like any group.)
 
+  -- ══ SPELL OVERRIDE (Arc SPELL icons) ══════════════════════════════
+  -- Its own section, not a Load Condition: this is about WHICH SPELL the
+  -- icon reports, not whether the icon loads. Room to grow -- per-form
+  -- visuals (glow/colour while the override is active) belong here too.
+  local function IsSingleArcSpellKind()
+    local id = GetSingleArcID()
+    return (id and id:match("^arc_spell_")) and true or false
+  end
+  local function HideArcOverride()
+    return not IsSingleArcSpellKind()
+  end
+  local function HideArcOverrideBody()
+    return HideArcOverride() or collapsedSections.arcSpellOverride
+  end
+  args.arcOverrideHeader = {
+    type = "toggle",
+    name = "Spell Override",
+    desc = "Click to expand/collapse.\n\nHow this icon behaves when talents or procs replace the spell with another form.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not collapsedSections.arcSpellOverride end,
+    set = function(_, v) collapsedSections.arcSpellOverride = not v end,
+    order = 107.9491,
+    width = "full",
+    hidden = HideArcOverride,
+  }
+  args.arcOverrideDesc = {
+    type = "description",
+    name = "|cffaaaaaaSome spells are swapped for another form: Stormstrike becomes Windstrike during Ascendance, Flame Shock becomes Voltaic Blaze. By default this icon follows that form - its icon art and its cooldown.|r",
+    order = 107.9492,
+    width = "full",
+    fontSize = "small",
+    hidden = HideArcOverrideBody,
+  }
+  args.arcIgnoreSpellOverride = {
+    type = "toggle",
+    name = "Ignore Spell Overrides",
+    desc = "Track only the spell you added, ignoring the replacement form.\n\n"
+      .. "|cff888888Off (default):|r the icon follows the live form - that form's icon AND that form's cooldown.\n\n"
+      .. "|cff88ff88On:|r the icon always shows the base spell's own icon and its own cooldown, exactly as it did before override tracking existed.",
+    order = 107.9493,
+    width = 1.6,
+    hidden = HideArcOverrideBody,
+    get = function()
+      local cfg = GetSingleArcConfig()
+      return cfg and cfg.ignoreSpellOverride or false
+    end,
+    set = function(_, val)
+      local cfg = GetSingleArcConfig()
+      if not cfg then return end
+      cfg.ignoreSpellOverride = val or nil
+      -- the icon art is change-detected against the last displayed form, so
+      -- clear it to force the swap back (or forward) on the next feed
+      local id = GetSingleArcID()
+      local fd = id and ns.ArcAurasCooldown and ns.ArcAurasCooldown.spellData
+        and ns.ArcAurasCooldown.spellData[id]
+      if fd then fd._arcDisplayedSID = nil end
+      if ns.ArcAuras and ns.ArcAuras.InvalidateSettingsCache then
+        ns.ArcAuras.InvalidateSettingsCache()
+      end
+      if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals and id then
+        ns.ArcAurasCooldown.RefreshSpellVisuals(id)
+      end
+    end,
+  }
+
   -- ── ARC ICON SETTINGS (enable / hide-unequipped / icon override) ──
   local function IsSingleArcItemKind()
     local id = GetSingleArcID()
@@ -15599,17 +15821,48 @@ function ns.GetCDMIconsOptionsTable()
   args.arcSettingsEnable = {
     type = "toggle",
     name = "Enabled",
-    desc = "Disable to keep the icon tracked but hidden.",
+    desc = function()
+      if GetSingleArcAutoTrackSlot() then
+        return "Disable to stop auto-tracking this trinket slot.\n\nThis is the same setting as the slot toggle in Auto-Track Trinket Slots — a per-icon disable would be recreated at the next login."
+      end
+      return "Disable to keep the icon tracked but hidden."
+    end,
     order = 99.84,
     width = 0.6,
     hidden = function()
       return HideArcSettingsBody() or not IsSingleArcItemKind()
     end,
     get = function()
+      -- auto-track icons: reflect the SLOT toggle (the per-icon flag is
+      -- rebuilt from it at login — reading it desynced after reloads)
+      local slotID = GetSingleArcAutoTrackSlot()
+      if slotID then
+        return ns.ArcAuras and ns.ArcAuras.IsAutoTrackSlotEnabled
+          and ns.ArcAuras.IsAutoTrackSlotEnabled(slotID)
+      end
       local cfg = GetSingleArcConfig()
       return cfg and cfg.enabled ~= false
     end,
     set = function(_, val)
+      local slotID = GetSingleArcAutoTrackSlot()
+      if slotID then
+        if ns.ArcAuras and ns.ArcAuras.SetAutoTrackSlotEnabled then
+          ns.ArcAuras.SetAutoTrackSlotEnabled(slotID, val)
+          if not val then
+            -- the icon disappears with the slot: drop the dead selection
+            selectedAuraIcon = nil
+            selectedCooldownIcon = nil
+            wipe(selectedAuraIcons)
+            wipe(selectedCooldownIcons)
+          end
+          if ns.ArcAurasOptions and ns.ArcAurasOptions.InvalidateCache then
+            ns.ArcAurasOptions.InvalidateCache()
+          end
+          ns.CDMEnhanceOptions.InvalidateCache()
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end
+        return
+      end
       local id = GetSingleArcID()
       if id and ns.ArcAuras and ns.ArcAuras.SetTrackedItemEnabled then
         ns.ArcAuras.SetTrackedItemEnabled(id, val)

@@ -815,6 +815,12 @@ function ns.Glows.Start(frame, key, glowType, opts)
     if not frame or not key or not glowType then return end
     opts = opts or {}
 
+    if ns.TraceTap then
+        ns.TraceTap("GLOW", string.format("START %s type=%s cd=%s",
+            tostring(key), tostring(glowType),
+            tostring(frame.cooldownID or frame._arcAuraID or (frame.GetName and frame:GetName()) or "?")))
+    end
+
     -- Normalize "blizzard" → "proc" (merged — both use LCG ProcGlow)
     if glowType == "blizzard" then glowType = "proc" end
 
@@ -956,6 +962,11 @@ function ns.Glows.Stop(frame, key)
 
     local entry = frameGlows[key]
     if not entry then return end
+
+    if ns.TraceTap then
+        ns.TraceTap("GLOW", string.format("STOP %s cd=%s", tostring(key),
+            tostring(frame.cooldownID or frame._arcAuraID or (frame.GetName and frame:GetName()) or "?")))
+    end
 
     local glowType = entry.type
 

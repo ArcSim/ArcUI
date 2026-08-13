@@ -126,6 +126,11 @@ local function ApplyActive(entry, frame, newActive)
     local wasActive = entry.isActive
     if newActive == wasActive then return end
     entry.isActive = newActive
+    if ns.TraceTap then
+        ns.TraceTap("FA", string.format("cd=%s active %s -> %s",
+            tostring(frame and (frame.cooldownID or frame._arcAuraID)),
+            tostring(wasActive), tostring(newActive)))
+    end
     FireChanged(entry, frame, newActive, wasActive)
 end
 
@@ -196,6 +201,7 @@ end
 local function OnAII_Set(frame)
     local entry = entries[frame]
     if not entry then return end
+    if ns.TraceTap then ns.TraceTap("FAS", "AII-Set cd=" .. tostring(frame.cooldownID or frame._arcAuraID)) end
 
     -- Pending inactive dispatch from same-tick AII-Cleared? Cancel it.
     if entry.pendingClearDispatch then
@@ -218,6 +224,7 @@ end
 local function OnAII_Cleared(frame)
     local entry = entries[frame]
     if not entry then return end
+    if ns.TraceTap then ns.TraceTap("FAS", "AII-Cleared cd=" .. tostring(frame.cooldownID or frame._arcAuraID)) end
 
     UpdateAID(entry, frame)
 
@@ -272,6 +279,7 @@ end
 local function OnCD_Show(frame)
     local entry = entries[frame]
     if not entry then return end
+    if ns.TraceTap then ns.TraceTap("FAS", "CD-Show cd=" .. tostring(frame.cooldownID or frame._arcAuraID)) end
     ApplyActive(entry, frame, true)
 end
 
@@ -280,6 +288,7 @@ end
 local function OnCD_Hide(frame)
     local entry = entries[frame]
     if not entry then return end
+    if ns.TraceTap then ns.TraceTap("FAS", "CD-Hide cd=" .. tostring(frame.cooldownID or frame._arcAuraID)) end
     local active = AuraPresent(frame.auraInstanceID) or frame.totemData ~= nil
     ApplyActive(entry, frame, active and true or false)
 end
@@ -542,3 +551,89 @@ rebindBoot:SetScript("OnEvent", function(self, event, addon)
         self:UnregisterEvent("ADDON_LOADED")
     end
 end)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PULSE RESYNC (Arc's call, 2026-08-13 — the spec-swap phantom-active bug).
+-- FrameActive is EVENT-FED, and a lost deactivation event (an OnHide on a
+-- secret-aspected widget during combat, group-container churn during profile
+-- load) latches entry.isActive forever — /afi-proven: cd 175622 stuck active
+-- with every live signal false. This re-derives every entry from the LIVE
+-- signals at settle moments and fires OnChanged for any mismatch, so every
+-- downstream consumer (glows, aura visuals, dynamic layout) self-heals.
+-- Event-driven with periodic truth reconciliation, never blind event trust.
+-- Desk-time only: IsShown on a secret-aspected widget yields a secret
+-- boolean (boolean-testing it throws); every trigger below is a settle
+-- moment, and the pulse skips itself under aura secrecy.
+-- ═══════════════════════════════════════════════════════════════════════════
+function FA.ResyncAll(reason)
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return
+    end
+    local fixed, total = 0, 0
+    for frame, entry in pairs(entries) do
+        total = total + 1
+        -- refresh aid bookkeeping first (no-op when unchanged)
+        UpdateAID(entry, frame)
+        local live = false
+        local cd = frame.Cooldown
+        if cd and cd.IsShown then
+            local shown = cd:IsShown()
+            if not (issecretvalue and issecretvalue(shown)) and shown then
+                live = true
+            end
+        end
+        if not live and AuraPresent(frame.auraInstanceID) then live = true end
+        if not live and frame.totemData ~= nil then live = true end
+        if entry.isActive ~= live then
+            fixed = fixed + 1
+            if ns.TraceTap then
+                ns.TraceTap("FA", string.format("RESYNC FIX cd=%s %s -> %s (%s)",
+                    tostring(frame.cooldownID or frame._arcAuraID),
+                    tostring(entry.isActive), tostring(live), tostring(reason)))
+            end
+            ApplyActive(entry, frame, live)
+        end
+    end
+    if ns.TraceTap then
+        ns.TraceTap("FA", string.format("RESYNC done (%s): %d corrected of %d entries",
+            tostring(reason), fixed, total))
+    end
+    return fixed
+end
+
+-- Settle triggers — TRAILING debounce: CDM has NO "shuffle done" signal
+-- (source-checked: viewers rebuild off CooldownViewerSettings.OnDataChanged
+-- + deferred MarkDirty; nothing terminal), so QUIESCENCE is the settle
+-- signal. Every churn marker PUSHES the timer back and the pulse fires only
+-- after 1.5s of silence — never mid-shuffle. Churn markers: spec/talent/
+-- zone/regen events, CDM's own data-changed callback, and every
+-- FrameController REBIND (each one is literally CDM moving a frame; FC
+-- calls PokeResync directly). Zero idle CPU — one-shot timers only.
+local resyncGen = 0
+function FA.PokeResync(reason)
+    resyncGen = resyncGen + 1
+    local myGen = resyncGen
+    C_Timer_After(1.5, function()
+        if myGen ~= resyncGen then return end   -- superseded: churn continued
+        FA.ResyncAll(reason)
+    end)
+end
+
+local resyncEv = CreateFrame("Frame")
+resyncEv:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+resyncEv:RegisterEvent("TRAIT_CONFIG_UPDATED")
+resyncEv:RegisterEvent("PLAYER_ENTERING_WORLD")
+resyncEv:RegisterEvent("PLAYER_REGEN_ENABLED")
+if C_EventUtils and C_EventUtils.IsEventValid
+   and C_EventUtils.IsEventValid("COOLDOWN_VIEWER_DATA_LOADED") then
+    resyncEv:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+end
+resyncEv:SetScript("OnEvent", function(_, event)
+    FA.PokeResync(event)
+end)
+-- CDM's data-provider change callback — the exact signal its own viewers
+-- rebuild from (EventRegistry is Blizzard's addon-safe pub-sub)
+if EventRegistry and EventRegistry.RegisterCallback then
+    EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", function()
+        FA.PokeResync("CDMDataChanged")
+    end, "ArcUIFrameActiveResync")
+end

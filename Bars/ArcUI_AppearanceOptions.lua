@@ -3464,7 +3464,17 @@ function ns.AppearanceOptions.GetOptionsTable()
       useGradient = {
         type = "toggle",
         name = "Gradient",
-        desc = "Apply a gradient effect to bar fill (darker/lighter edges).\n\n|cffff9900Note:|r Gradient is disabled when Conditional Color thresholds are active (WoW API limitation).",
+        desc = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display and cfg.display.useTextureColor then
+            return "|cffff9900Ignored while 'Use Texture Colors' is on|r - a gradient would tint the texture."
+          end
+          return "Apply a gradient effect to bar fill (darker/lighter edges).\n\n|cffff9900Note:|r Gradient is disabled when Conditional Color thresholds are active (WoW API limitation)."
+        end,
+        disabled = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display and cfg.display.useTextureColor == true
+        end,
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.useGradient
@@ -4111,10 +4121,18 @@ function ns.AppearanceOptions.GetOptionsTable()
           return "Base Bar Color"
         end,
         desc = function()
+          local cfg = GetSelectedConfig()
+          if cfg and cfg.display and cfg.display.useTextureColor then
+            return "|cffff9900Ignored while 'Use Texture Colors' is on|r - the fill renders the texture's own colors."
+          end
           if IsChargeBar() then
             return "Color of the charge bars (both recharging and full unless 'Different Full Color' is enabled)"
           end
           return "Primary bar color"
+        end,
+        disabled = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display and cfg.display.useTextureColor == true
         end,
         hasAlpha = true,
         get = function()
@@ -4205,9 +4223,38 @@ function ns.AppearanceOptions.GetOptionsTable()
           return false
         end
       },
-      
-      
-      
+
+      -- USE TEXTURE COLORS: stop tinting the fill so a colored texture renders
+      -- as authored. ArcUI's color writes become white (the identity tint), so
+      -- base color, gradient and threshold recoloring all step aside.
+      useTextureColor = {
+        type = "toggle",
+        name = "Use Texture Colors",
+        desc = "Show the fill texture's own colors instead of coloring it.\n\n"
+          .. "Turn this ON for textures that are already colored (rainbows, gradients, artwork) so ArcUI leaves them exactly as they are.\n\n"
+          .. "|cffff9900While this is on, Base Bar Color, Gradient and any threshold/conditional fill colors are ignored.|r",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display and cfg.display.useTextureColor == true
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            -- nil instead of false keeps SavedVariables clean (DataRepair strips defaults)
+            cfg.display.useTextureColor = value or nil
+            RefreshBar()
+          end
+        end,
+        order = 30.205,
+        width = 1.2,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.colorOptions then return true end
+          -- segmented / fragmented / icon modes drive their own per-part colors
+          if IsNonContinuousMode() then return true end
+          return false
+        end,
+      },
+
       -- Per-Slot Colors toggle (Charge bars only - right of barColor)
       usePerSlotColors = {
         type = "toggle",

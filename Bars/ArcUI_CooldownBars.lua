@@ -5304,7 +5304,11 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
   if barData.bar then
     local texturePath = GetTexturePath(display.texture or "Blizzard")
     barData.bar:SetStatusBarTexture(texturePath)
-    
+
+    -- USE TEXTURE COLORS: claim (or release) the fill tint. Set AFTER the
+    -- texture so the guard binds the current texture object.
+    ns.API.SetNaturalFill(barData.bar, ns.API.IsNaturalFill(display))
+
     local barColor = display.barColor or {r = 1, g = 0.5, b = 0.2, a = 1}
     local r = barColor.r or 1
     local g = barColor.g or 0.5
@@ -5763,8 +5767,12 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
         fullBarColor = slotFillColor
       end
       
+      -- USE TEXTURE COLORS: charge slots are fills too -- claim them the same
+      -- way (set after each SetStatusBarTexture so the guard binds the object)
+      local slotNatural = ns.API.IsNaturalFill(display)
       if slot.fullBar then
         slot.fullBar:SetStatusBarTexture(texturePath)
+        ns.API.SetNaturalFill(slot.fullBar, slotNatural)
         slot.fullBar:SetStatusBarColor(fullBarColor.r, fullBarColor.g, fullBarColor.b, (fullBarColor.a or 1) * opacity)
         slot.fullBar:SetReverseFill(reverseFill)
         -- Update orientation when settings change
@@ -5774,6 +5782,7 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
       end
       if slot.rechargeBar then
         slot.rechargeBar:SetStatusBarTexture(texturePath)
+        ns.API.SetNaturalFill(slot.rechargeBar, slotNatural)
         slot.rechargeBar:SetStatusBarColor(slotFillColor.r, slotFillColor.g, slotFillColor.b, (slotFillColor.a or 1) * opacity)
         slot.rechargeBar:SetReverseFill(reverseFill)
         -- Update orientation when settings change

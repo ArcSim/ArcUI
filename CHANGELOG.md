@@ -1,3 +1,28 @@
+## 3.7.11
+
+### New Features
+
+- **Use Texture Colors** — A new toggle on aura, stack, duration, cooldown, charge, and resource bars plus both castbars: show your fill texture's own colors (gradients, rainbows, artwork) instead of tinting it with the bar color. Color controls that no longer apply gray out and say why.
+- **One voice for the whole addon** — Everything that speaks (Cooldown Reminder, CDM aura alerts, Arc icon alerts) now shares one Voice and Speech Rate setting and respects your Text-to-Speech volume. New speech controls include a Test Voice button, the "sound between messages" tick toggle, and a shortcut to WoW's own speech options.
+- **Ignore Spell Overrides for Arc spell icons** — A new per-icon toggle that keeps an Arc spell icon on its base spell's cooldown, artwork, and glows even while the spell is temporarily overridden.
+
+### Improvements
+
+- **Auto-Track Trinket Slots got their own section** — The trinket auto-track controls moved out of the filter dropdown into a collapsible section right under Global Options, and an auto-tracked icon's Enabled toggle now drives the slot setting itself, so turning one off finally sticks across reloads.
+- **Proper alert sound pickers** — CDM aura alert dropdowns now show sound names with a preview button instead of raw file paths, and sound and speech can be set independently for every alert.
+- **Icons stay honest through spec changes** — An icon could keep an "aura active" look or a stuck ready glow after changing specs; ArcUI now re-checks every icon once the Cooldown Manager finishes shuffling and clears anything stale automatically.
+
+### Bug Fixes
+
+- **CDM aura alerts fire again** — The alert feature was silently broken, and it now also covers icons the Cooldown Manager creates mid-session in dungeons.
+- **Potions and healthstones get cooldown visuals** — Bag-item icons in the Cooldown Manager never dimmed or dropped their ready glow. Item icons' ready glow also no longer stays on through the whole cooldown, and Ignore Aura Override now works on them.
+- **Custom Icon field works again** — Entering a spell, item, or icon ID in the Custom Icon box threw an error on every keystroke.
+- **Custom icons stop flickering in combat** — A custom icon could snap back to the original artwork and flip between the two mid-fight, especially in dungeons.
+- **Stack bars show their countdown in combat** — A stack bar's duration text went blank the moment combat started.
+- **Settings apply without a reload** — Changing countdown color thresholds, visiting the options panel, or flipping a bar between Stacks and Duration mode could silently kill a bar or texture countdown until a reload, especially after a fight.
+- **Textures added by spell ID count down** — Their duration text and drain never attached at all.
+- **Hiding an icon keeps its texts** — With Show Icon off, the stack count and countdown vanished along with the icon art instead of floating on their own.
+
 ## 3.7.10.d
 
 ### Improvements

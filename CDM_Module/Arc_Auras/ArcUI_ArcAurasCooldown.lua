@@ -159,6 +159,21 @@ local function EffectiveSID(spellID)
 end
 ArcAurasCooldown.EffectiveSID = EffectiveSID
 
+-- PER-ICON OPT-OUT ("Ignore Spell Overrides"): report the BASE spell for every
+-- override-aware read on this icon -- cooldown, icon art and proc glows all go
+-- through here -- so the icon behaves the way it did before override-following
+-- existed: whatever cooldown the base spell has, and its own art. Default off,
+-- so every existing icon keeps following overrides.
+local function EffectiveSIDFor(fd)
+    local sid = fd and fd.spellID
+    if not sid then return sid end
+    local db = GetDB()
+    local cfg = db and db.trackedSpells and db.trackedSpells[fd.arcID]
+    if cfg and cfg.ignoreSpellOverride then return sid end
+    return EffectiveSID(sid)
+end
+ArcAurasCooldown.EffectiveSIDFor = EffectiveSIDFor
+
 -- Reverse map: live override id -> arcID. Built lazily whenever a feed sees an
 -- override form, so event handlers (cast success, proc glows) that receive the
 -- OVERRIDE id can find the tracked base icon. Stale entries are harmless (a
@@ -243,7 +258,7 @@ local function FeedShadows(fd)
 
     -- Read the cooldown off the LIVE form (override-aware): the cooldown lives
     -- on the override spell for proc/replacement/transform spells.
-    local sid = EffectiveSID(fd.spellID)
+    local sid = EffectiveSIDFor(fd)
     if sid ~= fd.spellID then ArcAurasCooldown.overrideToArc[sid] = fd.arcID end
 
     if C_Spell.GetSpellCooldownDuration then
@@ -1002,7 +1017,7 @@ _FeedCooldownFn = function(fd)
     -- OVERRIDE-AWARE: every API read below queries the LIVE casting form.
     -- The cooldown for proc/replacement/transform spells lives on the
     -- override id; base-only reads left those icons stuck "never on CD".
-    local spellID = EffectiveSID(fd.spellID)
+    local spellID = EffectiveSIDFor(fd)
     if spellID ~= fd.spellID then ArcAurasCooldown.overrideToArc[spellID] = fd.arcID end
     UpdateOverrideIcon(fd, spellID)
     local isChargeSpell = fd.isChargeSpell
@@ -1287,7 +1302,7 @@ UpdateProcGlow = function(fd, forceShow)
     if not fd or not fd.frame then return end
 
     -- Overlay procs fire for the OVERRIDE form (Voltaic Blaze, not Flame Shock)
-    local spellID = EffectiveSID(fd.spellID)
+    local spellID = EffectiveSIDFor(fd)
     local isOverlayed = forceShow
 
     -- When we weren't told the state (forceShow == nil), query it directly.

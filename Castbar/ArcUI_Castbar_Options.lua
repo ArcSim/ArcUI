@@ -509,10 +509,17 @@ function ns.CastbarOptions.GetOptionsTable()
       barColor = {
         type     = "color",
         name     = "Bar Color",
-        desc     = "Bar color for the selected Cast Type Profile. When Colors is shared (Auto Share), every cast type uses this; otherwise it's per-type.",
+        desc     = function()
+          local c = GetCastbarDB()
+          if c and PGet(c, "useTextureColor") then
+            return "|cffff9900Ignored while 'Use Texture Colors' is on|r - the fill renders the texture's own colors."
+          end
+          return "Bar color for the selected Cast Type Profile. When Colors is shared (Auto Share), every cast type uses this; otherwise it's per-type."
+        end,
         order    = 40.1,
         hasAlpha = true,
         hidden   = H("colorOptions"),
+        disabled = function() local c = GetCastbarDB(); return c and PGet(c, "useTextureColor") == true end,
         get      = function()
           local c = GetCastbarDB(); if not c then return 0.2, 0.8, 1, 1 end
           return PGetColor(c, "barColor", 0.2, 0.8, 1, 1)
@@ -520,6 +527,20 @@ function ns.CastbarOptions.GetOptionsTable()
         set = function(_, r, g, b, a)
           local c = GetCastbarDB(); if c then PSetColor(c, "barColor", r, g, b, a); Refresh() end
         end,
+      },
+
+      -- USE TEXTURE COLORS: stop tinting the fill so a colored texture shows as authored
+      useTextureColor = {
+        type   = "toggle",
+        name   = "Use Texture Colors",
+        desc   = "Show the fill texture's own colors instead of coloring it.\n\n"
+          .. "Turn this ON for textures that are already colored so ArcUI leaves them exactly as they are.\n\n"
+          .. "|cffff9900While this is on, Bar Color and Conditional Color are ignored.|r",
+        order  = 40.15,
+        width  = 1.3,
+        hidden = H("colorOptions"),
+        get    = function() local c = GetCastbarDB(); return c and PGet(c, "useTextureColor") end,
+        set    = function(_, v) local c = GetCastbarDB(); if c then PSet(c, "useTextureColor", v or nil); Refresh() end end,
       },
 
       conditionalColorEnabled = {
