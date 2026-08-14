@@ -109,9 +109,16 @@ local DEFAULT_GROUPS = {
 
 -- UI STATE FOR OPTIONS (ns.CDMGroups.selectedGroup stored globally)
 
+-- Which scope the New Icons section is WRITING to. MUST live at file scope:
+-- GetOptionsTable() rebuilds its entire closure on every panel refresh, so a
+-- local inside it was recreated as "account" the moment the picker fired
+-- NotifyChange, and the selection snapped back every time.
+local routingEditScope = "account"
+
 local collapsedSections = {
     groupLayouts = true,   -- Load Group Layout - start collapsed
     placeholders = true,   -- Placeholders section - start collapsed
+    newIcons = true,       -- New Icon Routing section - start collapsed
     globalOptions = true,
     grid = false,
     layout = false,
@@ -235,6 +242,80 @@ local function GetOptionsTable()
     end
     
     -- Rename a group (in current spec)
+    -- ── NEW ICON ROUTING helpers ─────────────────────────────────────────
+    -- Destinations are stored as a group's STABLE ID (never its name), so a
+    -- rename cannot silently redirect or orphan the routing. "default" is the
+    -- sentinel for "unset", because a select cannot carry a nil value.
+    local ROUTING_DEFAULT = "default"
+    local ROUTING_INHERIT = "inherit"
+
+    -- routingEditScope lives at FILE scope (see its declaration): it is a UI
+    -- mode, not a setting, so it is never captured into a scope, but it also
+    -- must survive the table rebuild that every panel refresh performs.
+
+    local function BuildRoutingValues()
+        local values = {
+            [ROUTING_DEFAULT] = "|cff888888Default (shipped group)|r",
+            free = "Free Position",
+        }
+        -- Below the account scope, a category can also simply INHERIT, which
+        -- clears the patch instead of pinning a value here.
+        if routingEditScope ~= "account" then
+            values[ROUTING_INHERIT] = "|cff888888Inherit|r"
+        end
+        if ns.CDMGroups and ns.CDMGroups.groups and ns.CDMGroups.GetGroupID then
+            for groupName in pairs(ns.CDMGroups.groups) do
+                local id = ns.CDMGroups.GetGroupID(groupName)
+                if id then values[id] = groupName end
+            end
+        end
+        return values
+    end
+
+    -- Shows the value stored AT the scope being edited (not the resolved one),
+    -- so selecting a scope previews that layer rather than whatever currently
+    -- wins. Without this, editing "All Characters" while a spec patch existed
+    -- looked like nothing happened.
+    local function GetRoutingValue(categoryKey)
+        if not (ns.CDMGroups and ns.CDMGroups.GetIconRoutingAtScope) then return ROUTING_DEFAULT end
+        local v = ns.CDMGroups.GetIconRoutingAtScope(categoryKey, routingEditScope)
+        if v == "none" then v = nil end   -- retired option
+        if v == nil then
+            return (routingEditScope == "account") and ROUTING_DEFAULT or ROUTING_INHERIT
+        end
+        return v
+    end
+
+    local function SetRoutingValue(categoryKey, v)
+        if not (ns.CDMGroups and ns.CDMGroups.SetIconRoutingAtScope) then return end
+        if v == ROUTING_INHERIT then v = nil end
+        if v == ROUTING_DEFAULT then
+            -- "Default" at the account scope means no value anywhere; below it,
+            -- it is a real choice that must OVERRIDE an inherited destination.
+            v = (routingEditScope == "account") and nil or ROUTING_DEFAULT
+        end
+        ns.CDMGroups.SetIconRoutingAtScope(categoryKey, routingEditScope, v)
+    end
+
+    -- One line describing what the icons will ACTUALLY do right now, resolved
+    -- through every layer, so the scope picker can never mislead.
+    local function RoutingEffectiveText()
+        if not (ns.CDMGroups and ns.CDMGroups.GetIconRouting) then return "" end
+        local labels = BuildRoutingValues()
+        local parts = {}
+        for _, pair in ipairs({ { "essential", "Essential" }, { "utility", "Utility" }, { "buffs", "Buffs" } }) do
+            local v = ns.CDMGroups.GetIconRouting(pair[1])
+            local text
+            if v == nil or v == ROUTING_DEFAULT or v == "none" then
+                text = "Default"
+            else
+                text = labels[v] or "|cffff6666missing group -> Free Position|r"
+            end
+            parts[#parts + 1] = pair[2] .. ": " .. text
+        end
+        return "|cff888888In effect now:|r " .. table.concat(parts, "   |cff444444|||r   ")
+    end
+
     local function RenameGroup(oldName, newName)
         if not oldName or not newName or oldName == "" or newName == "" then return false end
         if oldName == newName then return false end
@@ -266,6 +347,30 @@ local function GetOptionsTable()
             end
         end
         
+        -- ── NAME-KEYED STATE HAND-OFF (must run while groups[oldName] lives) ──
+        -- A group is identified by its display NAME in several modules that keep
+        -- their own name-keyed tables. Renaming only the group table ORPHANS that
+        -- state under a name no longer in ns.CDMGroups.groups, and nothing ever
+        -- visits it again: the Edit Mode drag wrapper keeps rendering (its enabled
+        -- flag is PERSISTED, so it returns every login), the container-sync flag
+        -- keeps a viewer bound to a dead name, and the slot badges keep floating
+        -- (they live on UIParent at FULLSCREEN_DIALOG / level 10000, so nothing can
+        -- cover them). That is the ghost group that cannot be selected or deleted.
+        -- Retire the old name's state here, re-apply it under the new name below.
+        local emcWasEnabled = ns.EditModeContainers and ns.EditModeContainers.IsEnabled
+            and ns.EditModeContainers.IsEnabled(oldName) or false
+        local syncWasEnabled = ns.CDMContainerSync and ns.CDMContainerSync.IsEnabled
+            and ns.CDMContainerSync.IsEnabled(oldName) or false
+        if emcWasEnabled and ns.EditModeContainers.SetEnabled then
+            ns.EditModeContainers.SetEnabled(oldName, false)
+        end
+        if syncWasEnabled and ns.CDMContainerSync.SetEnabled then
+            ns.CDMContainerSync.SetEnabled(oldName, false)
+        end
+        if ns.CDMGroups.Placeholders and ns.CDMGroups.Placeholders.ClearSlotBadges then
+            ns.CDMGroups.Placeholders.ClearSlotBadges(oldName)
+        end
+
         -- Update the actual runtime group object
         local group = ns.CDMGroups.groups[oldName]
         group.name = newName
@@ -311,9 +416,19 @@ local function GetOptionsTable()
             end
         end
         
+        -- Re-apply the captured name-keyed state under the NEW name, so a renamed
+        -- group keeps its Edit Mode wrapper and container sync instead of losing
+        -- them to the orphan above.
+        if emcWasEnabled and ns.EditModeContainers and ns.EditModeContainers.SetEnabled then
+            ns.EditModeContainers.SetEnabled(newName, true)
+        end
+        if syncWasEnabled and ns.CDMContainerSync and ns.CDMContainerSync.SetEnabled then
+            ns.CDMContainerSync.SetEnabled(newName, true)
+        end
+
         -- Update selection
         ns.CDMGroups.selectedGroup = newName
-        
+
         -- Trigger auto-save to linked template
         if ns.CDMGroups.TriggerTemplateAutoSave then
             ns.CDMGroups.TriggerTemplateAutoSave()
@@ -931,6 +1046,93 @@ local function GetOptionsTable()
             },
             
             -- ════════════════════════════════════════════════════════════════
+            -- ════════════════════════════════════════════════════════════════
+            -- NEW ICON ROUTING SECTION (collapsible)
+            -- Where icons land when the Cooldown Manager hands them over and
+            -- no saved position exists. Destinations are stored as the group's
+            -- STABLE ID, so renaming the destination never breaks the routing.
+            -- ════════════════════════════════════════════════════════════════
+            newIconsToggle = {
+                type = "toggle",
+                name = "New Icons",
+                desc = "Click to expand/collapse",
+                dialogControl = "CollapsibleHeader",
+                disabled = function() return not IsCDMEnabled() end,
+                order = 4.95,
+                width = "full",
+                get = function() return not collapsedSections.newIcons end,
+                set = function(_, v) collapsedSections.newIcons = not v end,
+            },
+            newIconsDesc = {
+                type = "description",
+                name = "|cff888888Where icons go when the Cooldown Manager adds them and they have no saved position.|r",
+                order = 4.951,
+                width = "full",
+                hidden = function() return collapsedSections.newIcons end,
+            },
+            newIconsScope = {
+                type = "select",
+                name = "Editing",
+                desc = "Which characters the settings below apply to.\n\n|cffffd700All Characters|r is the shared base.\n|cffffd700This Character|r and |cffffd700This Spec|r store only what you change here, on top of that base.\n\nAnything left on Inherit keeps following the level above it, including later changes to it.",
+                order = 4.9515,
+                width = 1.0,
+                hidden = function() return collapsedSections.newIcons end,
+                values = function()
+                    return {
+                        account = "All Characters",
+                        char    = "This Character",
+                        spec    = "This Spec",
+                    }
+                end,
+                sorting = function() return { "account", "char", "spec" } end,
+                get = function() return routingEditScope end,
+                set = function(_, v)
+                    routingEditScope = v
+                    LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+                end,
+            },
+            newIconsEffective = {
+                type = "description",
+                name = function() return RoutingEffectiveText() end,
+                order = 4.9518,
+                width = "full",
+                hidden = function() return collapsedSections.newIcons end,
+            },
+            newIconRoutingEssential = {
+                type = "select",
+                name = "Essential Icons",
+                desc = "Destination for NEW Essential cooldown icons.\n\n|cffffd700Default|r keeps the current behaviour (the Essential group).\n|cffffd700Free Position|r drops them in as free icons you can place anywhere.\n|cffffd700Nowhere|r leaves them unassigned.\n\nThe destination is remembered by group, not by name, so renaming that group keeps working.",
+                order = 4.952,
+                width = 1.0,
+                hidden = function() return collapsedSections.newIcons end,
+                values = function() return BuildRoutingValues() end,
+                get = function() return GetRoutingValue("essential") end,
+                set = function(_, v) SetRoutingValue("essential", v) end,
+            },
+            newIconRoutingUtility = {
+                type = "select",
+                name = "Utility Icons",
+                desc = "Destination for NEW Utility cooldown icons.\n\n|cffffd700Default|r keeps the current behaviour (the Utility group).\n|cffffd700Free Position|r drops them in as free icons you can place anywhere.\n|cffffd700Nowhere|r leaves them unassigned.\n\nThe destination is remembered by group, not by name, so renaming that group keeps working.",
+                order = 4.953,
+                width = 1.0,
+                hidden = function() return collapsedSections.newIcons end,
+                values = function() return BuildRoutingValues() end,
+                get = function() return GetRoutingValue("utility") end,
+                set = function(_, v) SetRoutingValue("utility", v) end,
+            },
+            newIconRoutingBuffs = {
+                type = "select",
+                name = "Buff Icons",
+                desc = "Destination for NEW tracked-buff icons.\n\n|cffffd700Default|r keeps the current behaviour (the Buffs group).\n|cffffd700Free Position|r drops them in as free icons you can place anywhere.\n|cffffd700Nowhere|r leaves them unassigned.\n\nThe destination is remembered by group, not by name, so renaming that group keeps working.",
+                order = 4.954,
+                width = 1.0,
+                hidden = function() return collapsedSections.newIcons end,
+                values = function() return BuildRoutingValues() end,
+                get = function() return GetRoutingValue("buffs") end,
+                set = function(_, v) SetRoutingValue("buffs", v) end,
+            },
+
+            -- ════════════════════════════════════════════════════════════════
             -- LOAD GROUP LAYOUT SECTION
             -- ════════════════════════════════════════════════════════════════
             groupLayoutsToggle = {
@@ -1377,6 +1579,22 @@ local function GetOptionsTable()
                     end
                 end,
             },
+            showIconIDs = {
+                type = "toggle",
+                name = "Show IDs on Hover",
+                desc = "Adds an ID block to the tooltip of any icon ArcUI can identify.\n\n"
+                    .. "|cffffd100Cooldown Manager icons:|r cooldown ID, spell ID, override and linked spells, equip slot, spell category (combat potion, healthstone) and the last item used for that category.\n"
+                    .. "|cffffd100Arc icons:|r the arcID.\n"
+                    .. "Both also show the icon's texture file ID - the number the Custom Icon box takes.\n\n"
+                    .. "|cffaaaaaaSame setting as in the CDM Icons panel.|r",
+                order = 16.3,
+                width = 1.2,
+                hidden = function() return collapsedSections.globalOptions end,
+                get = function() return ns.IconIDs and ns.IconIDs.IsEnabled() or false end,
+                set = function(_, val)
+                    if ns.IconIDs then ns.IconIDs.SetEnabled(val) end
+                end,
+            },
             containerSyncHeader = {
                 type = "description",
                 name = "\n|cff88ffffContainer Sync|r - Anchor CDM viewers to ArcUI group positions",
@@ -1798,6 +2016,26 @@ local function GetOptionsTable()
                 fontSize = "small",
                 hidden = function()
                     return HideIfNoGroup() or collapsedSections.grid or not IsAuraGroupSelected()
+                end,
+            },
+            groupPingable = {
+                type = "toggle",
+                name = "Icons Pingable",
+                desc = "Let every icon in this group receive pings. Turn OFF and pings pass straight through them to the world, instead of announcing whichever spell your cursor happens to be over."
+                    .. "\n\n|cff8298b4A per-icon setting overrides this.|r",
+                order = 35.5,
+                width = 1.0,
+                hidden = function() return HideIfNoGroup() end,
+                get = function()
+                    local g = GetSelectedGroup()
+                    return not (g and g.noPing)
+                end,
+                set = function(_, val)
+                    local g = GetSelectedGroup()
+                    if not g then return end
+                    g.noPing = (not val) and true or nil
+                    if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+                    if ns.Pings and ns.Pings.RefreshPingable then ns.Pings.RefreshPingable() end
                 end,
             },
             autoReflow = {

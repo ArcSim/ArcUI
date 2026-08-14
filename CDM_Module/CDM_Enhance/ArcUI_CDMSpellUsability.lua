@@ -245,7 +245,11 @@ function ns.CDMSpellUsability.OnRefreshIconColor(frame, cfg, spellID, isUsable, 
     -- on-CD → CD tint only. Ready → usability tints.
     -- When called from hook, isUsable/notEnoughMana are pre-computed.
     if isUsable == nil then
-        isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
+        -- SECRECY: item entries (potions) return SECRET usability booleans to
+        -- our tainted stack; testing one throws. nil = unreadable -> leave the
+        -- icon exactly as CDM tinted it.
+        isUsable, notEnoughMana = ns.API.SafeIsSpellUsable(spellID)
+        if isUsable == nil then return end
     end
 
     if isUsable then
@@ -418,7 +422,8 @@ function ns.CDMSpellUsability.HookFrame(frame)
 
                 if state == "NOT_RANGE" then
                     if spellID then
-                        local usable = C_Spell.IsSpellUsable(spellID)
+                        -- secret-safe: nil (item entries) simply skips the alpha push
+                        local usable = ns.API.SafeIsSpellUsable(spellID)
                         if usable and ns.CooldownState and ns.CooldownState.ApplyUsabilityAlpha then
                             ns.CooldownState.ApplyUsabilityAlpha(frame, cfg)
                         end
@@ -517,10 +522,12 @@ function ns.CDMSpellUsability.UpdateGlow(frame, cfg, spellID, isUsable, allDeple
                 elseif cdmState == "NOT_MANA" or cdmState == "NOT_USABLE" then
                     isUsable = false
                 elseif cdmState == "NOT_RANGE" then
-                    -- Out of range doesn't mean not resource-usable — check actual state
-                    isUsable = spellID and C_Spell.IsSpellUsable(spellID) or false
+                    -- Out of range doesn't mean not resource-usable — check actual state.
+                    -- SECRET-SAFE: nil (unreadable, e.g. item entries) -> treat as
+                    -- not usable rather than testing a secret boolean, which throws.
+                    isUsable = (spellID and ns.API.SafeIsSpellUsable(spellID)) or false
                 elseif spellID then
-                    isUsable = C_Spell.IsSpellUsable(spellID)
+                    isUsable = ns.API.SafeIsSpellUsable(spellID) or false
                 end
             end
 

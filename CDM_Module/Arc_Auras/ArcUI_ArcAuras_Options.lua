@@ -510,7 +510,9 @@ local function SubmitAddAura(val)
 end
 
 local function SubmitAddTimer(idVal, durVal)
-    local spellID = tonumber((idVal or ""):gsub("[^%d]", ""))
+    -- extra parens: gsub returns (string, count) and an unparenthesized
+    -- second return lands in tonumber's BASE argument ("base out of range")
+    local spellID = tonumber(((idVal or ""):gsub("[^%d]", "")))
     local dur = tonumber(durVal or "")
     if not spellID or spellID <= 0 then return false, "Invalid spell ID" end
     if not dur or dur <= 0 then return false, "Duration must be a positive number" end

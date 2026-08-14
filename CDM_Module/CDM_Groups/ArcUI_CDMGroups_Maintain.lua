@@ -60,15 +60,26 @@ end
 
 local function OnSetScale(self, scale)
     if self._cdmgSettingScale then return end
-    
+
     -- Skip Arc Aura frames - they manage their own scale via ArcAuras.ApplySettingsToFrame
     if self._arcAuraID then return end
-    
+
     local parent = self:GetParent()
     -- Check if in container OR if it's a free icon (check frame flag directly, not cdID lookup)
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
-    
+
+    -- STALE FREE-FLAG HEAL: don't force scale 1 on a plain viewer icon that
+    -- only LOOKS free via a leftover recycled-frame flag (see OnSetSize)
+    if isFreeIcon and not isInContainer then
+        local frameID = Shared.GetFrameID and Shared.GetFrameID(self) or self.cooldownID
+        if not (frameID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[frameID]) then
+            self._cdmgIsFreeIcon = nil
+            self._cdmgFreeTargetSize = nil
+            isFreeIcon = false
+        end
+    end
+
     if not isInContainer and not isFreeIcon then return end
     
     -- Force scale to 1 (both container and free icons)
@@ -81,18 +92,38 @@ end
 
 local function OnSetSize(self, w, h)
     if self._cdmgSettingSize then return end
-    
+
     local parent = self:GetParent()
     -- Check if in container OR if it's a free icon (check frame flag directly)
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
-    
+
     -- Arc Aura frames: Only enforce size if they're in a group container
     -- Free Arc Auras manage their own size via ArcAuras.ApplySettingsToFrame
     if self._arcAuraID and not isInContainer then return end
-    
+
     if not isInContainer and not isFreeIcon then return end
-    
+
+    -- STALE FREE-FLAG HEAL: CDM's pool recycles item frames across occupants
+    -- and never clears our fields, so a frame that WAS a free icon can carry
+    -- _cdmgIsFreeIcon/_cdmgFreeTargetSize into a grouped/viewer role — the
+    -- free sizing below would then stamp the OLD occupant's size onto the new
+    -- icon (the intermittent giant/mis-sized icon reports). A frame inside a
+    -- group container is by definition not free (see the move-to-group paths
+    -- that clear this flag for exactly that reason); a frame whose current
+    -- occupant has no freeIcons entry isn't free either. Clear and fall back
+    -- to the legitimate owner.
+    if isFreeIcon then
+        local frameID = Shared.GetFrameID and Shared.GetFrameID(self) or self.cooldownID
+        local freeData = frameID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[frameID]
+        if isInContainer or not freeData then
+            self._cdmgIsFreeIcon = nil
+            self._cdmgFreeTargetSize = nil
+            isFreeIcon = false
+            if not isInContainer then return end   -- plain viewer icon: CDM owns its size
+        end
+    end
+
     -- Get target size - for free icons, get from freeIcons table using frame ID
     local targetW, targetH
     if isFreeIcon then
@@ -151,6 +182,12 @@ local function OnSetSize(self, w, h)
         end
     end
     
+    -- CORRUPTION GUARD: never stamp a nonsensical size onto a frame — a
+    -- nil/NaN/absurd target means our bookkeeping is wrong, and skipping the
+    -- correction is strictly safer than enforcing garbage.
+    if not (targetW and targetW == targetW and targetW > 0 and targetW <= 512) then return end
+    if not (targetH and targetH == targetH and targetH > 0 and targetH <= 512) then return end
+
     -- Use 0.5 pixel tolerance (tight like reference CDMGroups)
     if math.abs((w or 0) - targetW) > 0.5 or math.abs((h or 0) - targetH) > 0.5 then
         self._cdmgSettingSize = true

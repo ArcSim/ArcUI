@@ -1192,21 +1192,26 @@ function ns.CDMGroups.SetupFreeIconDrag(cooldownID)
     local frame = data.frame
     
     -- Helper to disable mouse on ALL descendants recursively
+    -- Forbidden descendants (AuraContainer slot buttons that have displayed
+    -- secret aura data, e.g. the stack-count overlay's) throw on ANY method
+    -- call from addon code; they are mouse-disabled at creation, so skip them.
     local function DisableAllChildMouse(f)
         for _, child in pairs({f:GetChildren()}) do
-            if child.EnableMouse then
-                child:EnableMouse(false)
+            if not (child.IsForbidden and child:IsForbidden()) then
+                if child.EnableMouse then
+                    child:EnableMouse(false)
+                end
+                if child.SetMovable then
+                    child:SetMovable(false)
+                end
+                if child.RegisterForDrag then
+                    child:RegisterForDrag()
+                end
+                DisableAllChildMouse(child)
             end
-            if child.SetMovable then
-                child:SetMovable(false)
-            end
-            if child.RegisterForDrag then
-                child:RegisterForDrag()
-            end
-            DisableAllChildMouse(child)
         end
     end
-    
+
     -- CRITICAL: Disable mouse on ALL children FIRST
     DisableAllChildMouse(frame)
     
@@ -2295,14 +2300,23 @@ function ns.CDMGroups.AutoAssignNewIcons()
                                         assigned = assigned + 1
                                     end
                                 else
-                                    -- No saved position - add to default group
+                                    -- No saved position - honour the per-category
+                                    -- routing (group by stable id / free / none),
+                                    -- falling back to the shipped default group.
                                     local defaultGroup = viewerInfo.defaultGroup or "Essential"
-                                    local group = ns.CDMGroups.groups[defaultGroup]
-                                    if group and group.AddMember then
+                                    local kind, group = ns.CDMGroups.ResolveNewIconDestination(defaultGroup)
+                                    if kind == "free" then
+                                        if ns.CDMGroups.TrackFreeIcon then
+                                            local ffx, ffy = ns.CDMGroups.NextFreeDropPosition(36)
+                                            ns.CDMGroups.TrackFreeIcon(cdID, ffx, ffy, 36)
+                                            assigned = assigned + 1
+                                        end
+                                    elseif kind == "group" and group and group.AddMember then
                                         if group:AddMember(cdID) then
                                             assigned = assigned + 1
                                         end
                                     end
+                                    -- kind == "none" (or nothing resolved): leave it be
                                 end
                             end
                         end
@@ -2701,9 +2715,19 @@ end
 
 -- Serialize group to LAYOUT DATA ONLY (no runtime data like grid/members)
 -- This is what gets saved to profile.groupLayouts
+-- Forward declaration: the stable-id helper needs GetGroupLayoutFromProfile
+-- (defined below), but the serializer below needs the helper, so the body is
+-- assigned further down. See the STABLE GROUP IDs block.
+local EnsureGroupID
+
 local function SerializeGroupToLayoutData(group)
     if not group then return nil end
     return {
+        -- Stable identity. SaveGroupLayoutToProfile REPLACES the stored table
+        -- wholesale, so a nil here would erase an already-assigned id and the
+        -- group would silently get a new identity on the next save; fall back
+        -- to the assigning accessor rather than writing nil.
+        id = group.id or (group.name and EnsureGroupID and EnsureGroupID(group.name)) or nil,
         -- Position
         position = group.position and { x = group.position.x, y = group.position.y },
         -- Grid settings
@@ -2806,6 +2830,298 @@ local function GetGroupLayoutFromProfile(groupName, specData)
     end
     if not profile.groupLayouts then return nil end
     return profile.groupLayouts[groupName]
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- STABLE GROUP IDs
+-- A group's NAME is its storage key, so a rename used to break every
+-- reference to it: name-keyed state was orphaned (the ghost group that
+-- could not be selected or deleted) and the by-name base-group lookup in
+-- FrameController rebuilt a fresh "Utility" every login because the one
+-- the user renamed no longer answered to that name.
+-- Each group therefore also carries an `id` that NEVER changes. Renames
+-- move the name; the id stays put, so anything that must survive a rename
+-- (icon routing, "is this the Essential group?") references the id.
+-- The three shipped groups get WELL-KNOWN ids, so a renamed default is
+-- still recognised as that default instead of being duplicated.
+-- Ids live in the group's layout data and are assigned on first use, so
+-- existing installs adopt them with no migration and no rewrite of any
+-- existing key: the name remains the storage key exactly as before.
+-- ═══════════════════════════════════════════════════════════════════
+local WELL_KNOWN_GROUP_IDS = {
+    Essential = "arc_essential",
+    Utility   = "arc_utility",
+    Buffs     = "arc_buffs",
+}
+ns.CDMGroups.WELL_KNOWN_GROUP_IDS = WELL_KNOWN_GROUP_IDS
+
+-- assigns the forward-declared local (see the top of this section)
+EnsureGroupID = function(groupName, specData)
+    if not groupName then return nil end
+    local group = ns.CDMGroups.groups and ns.CDMGroups.groups[groupName]
+    if group and group.id then return group.id end
+
+    -- layoutData is a LIVE reference into the saved variables, so writing the
+    -- id here persists it without any extra save call.
+    local layoutData = GetGroupLayoutFromProfile(groupName, specData)
+    local id = layoutData and layoutData.id
+    if not id then
+        id = WELL_KNOWN_GROUP_IDS[groupName]
+            or string.format("g%d_%d",
+                math.floor((GetTime() or 0) * 1000) % 100000000,
+                math.random(1000, 9999))
+        if layoutData then layoutData.id = id end
+    end
+    if group then group.id = id end
+    return id
+end
+
+-- Public: stable id for a group NAME (assigns one on first use).
+function ns.CDMGroups.GetGroupID(groupName, specData)
+    return EnsureGroupID(groupName, specData)
+end
+
+-- Public: resolve a stable id back to whichever group currently owns it.
+-- Returns group, groupName (nil, nil when that group no longer exists).
+function ns.CDMGroups.FindGroupByID(id)
+    if not id or not ns.CDMGroups.groups then return nil, nil end
+    for groupName, group in pairs(ns.CDMGroups.groups) do
+        if EnsureGroupID(groupName) == id then
+            return group, groupName
+        end
+    end
+    return nil, nil
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- NEW-ICON ROUTING
+-- Where an icon goes when CDM hands it to us and we have NO saved
+-- position for it. Per CDM category, the user picks a destination:
+--   <stable group id>  send them to that group (survives renames)
+--   "free"             drop them in as free-position icons
+--   "none"             leave them alone, no destination
+--   nil (default)      the shipped group for that category
+-- Stored per layout profile, so switching profiles switches routing.
+-- Unset by default: existing setups keep their exact current behaviour.
+-- ═══════════════════════════════════════════════════════════════════
+local ROUTING_CATEGORY = {
+    Essential = "essential",
+    Utility   = "utility",
+    Buffs     = "buffs",
+}
+ns.CDMGroups.ROUTING_CATEGORY = ROUTING_CATEGORY
+
+-- ── SCOPED STORAGE (same model as Arc Pings) ────────────────────────────
+-- ONE account-wide base plus SPARSE per-character and per-spec patches:
+--
+--   global.iconRouting          = the base values, shared by every character
+--   global.iconRouting._ov[key] = only the categories you changed there
+--
+-- A patch is not a copy of the config, it is the one or two categories you
+-- wanted different here, so a dozen specs cost a dozen tiny tables. Anything
+-- you never touch keeps following the account value, including later changes
+-- to it. Resolution runs most specific first: this char + this spec, then
+-- this char, then the account base, then the shipped default (nil).
+local ROUTING_SCOPE_ACCOUNT, ROUTING_SCOPE_CHAR, ROUTING_SCOPE_SPEC = "account", "char", "spec"
+ns.CDMGroups.ROUTING_SCOPE_ACCOUNT = ROUTING_SCOPE_ACCOUNT
+ns.CDMGroups.ROUTING_SCOPE_CHAR    = ROUTING_SCOPE_CHAR
+ns.CDMGroups.ROUTING_SCOPE_SPEC    = ROUTING_SCOPE_SPEC
+
+local function RoutingCharKey()
+    local n = UnitName("player") or "?"
+    local r = (GetRealmName and GetRealmName()) or "?"
+    return n .. "-" .. r
+end
+
+-- Derived from the Blizzard API rather than this file's internal spec key, so
+-- the patch keys match Arc Pings exactly and do not move if ArcUI ever changes
+-- its own "class_X_spec_Y" key format (which WOULD orphan every patch).
+local function RoutingSpecKey()
+    if not (GetSpecialization and GetSpecializationInfo) then return nil end
+    local i = GetSpecialization()
+    local id = i and GetSpecializationInfo(i)
+    if not id then return nil end
+    return RoutingCharKey() .. "|" .. id
+end
+
+-- The account-wide base table. Also folds forward the original per-layout-profile
+-- storage this feature shipped with, so an early setting is not silently lost.
+local function RoutingBase(create)
+    if not (ns.db and ns.db.global) then return nil end
+    local base = ns.db.global.iconRouting
+    if not base then
+        if not create then return nil end
+        base = {}
+        ns.db.global.iconRouting = base
+        local profile = GetActiveProfile()
+        local legacy = profile and profile.iconRouting
+        if legacy then
+            for k, v in pairs(legacy) do base[k] = v end
+            profile.iconRouting = nil
+        end
+    end
+    return base
+end
+
+local function RoutingScopeKey(scope)
+    if scope == ROUTING_SCOPE_CHAR then return RoutingCharKey() end
+    if scope == ROUTING_SCOPE_SPEC then return RoutingSpecKey() end
+    return nil   -- account = the base table itself
+end
+
+-- create=false is the READ path: never spawn empty patch tables just by looking
+local function RoutingOv(scope, create)
+    local base = RoutingBase(create)
+    if not base then return nil end
+    local key = RoutingScopeKey(scope)
+    if not key then return nil end
+    if not base._ov then
+        if not create then return nil end
+        base._ov = {}
+    end
+    local t = base._ov[key]
+    if not t and create then t = {}; base._ov[key] = t end
+    return t
+end
+
+-- RUNTIME resolution: most specific wins. Never previews an edit scope, so what
+-- the icons actually do can never disagree with what the game is doing.
+function ns.CDMGroups.GetIconRouting(categoryKey)
+    if not categoryKey then return nil end
+    local spec = RoutingOv(ROUTING_SCOPE_SPEC, false)
+    if spec and spec[categoryKey] ~= nil then return spec[categoryKey] end
+    local char = RoutingOv(ROUTING_SCOPE_CHAR, false)
+    if char and char[categoryKey] ~= nil then return char[categoryKey] end
+    local base = RoutingBase(false)
+    if base and base[categoryKey] ~= nil then return base[categoryKey] end
+    return nil
+end
+
+-- Raw value stored AT one scope (nil = inherits from the scope above it).
+function ns.CDMGroups.GetIconRoutingAtScope(categoryKey, scope)
+    if not categoryKey then return nil end
+    if scope == ROUTING_SCOPE_ACCOUNT then
+        local base = RoutingBase(false)
+        return base and base[categoryKey] or nil
+    end
+    local t = RoutingOv(scope, false)
+    return t and t[categoryKey] or nil
+end
+
+-- value == nil CLEARS the patch at that scope (back to inheriting).
+function ns.CDMGroups.SetIconRoutingAtScope(categoryKey, scope, value)
+    if not categoryKey then return false end
+    if scope == ROUTING_SCOPE_ACCOUNT then
+        local base = RoutingBase(true)
+        if not base then return false end
+        base[categoryKey] = value
+        return true
+    end
+    local t = RoutingOv(scope, value ~= nil)
+    if not t then return value == nil end
+    t[categoryKey] = value
+    -- drop the patch table entirely once nothing is overridden there
+    if value == nil then
+        local empty = true
+        for _ in pairs(t) do empty = false break end
+        if empty then
+            local base = RoutingBase(false)
+            local key = RoutingScopeKey(scope)
+            if base and base._ov and key then base._ov[key] = nil end
+        end
+    end
+    return true
+end
+
+-- Whole-table access for import/export.
+function ns.CDMGroups.GetIconRoutingStore()
+    return RoutingBase(false)
+end
+
+function ns.CDMGroups.SetIconRoutingStore(store)
+    if type(store) ~= "table" then return false end
+    if not (ns.db and ns.db.global) then return false end
+    ns.db.global.iconRouting = DeepCopy(store)
+    return true
+end
+
+-- Apply an imported set of category values at the CURRENT spec scope. Import
+-- lands here (not on the account base) so pulling somebody's layout cannot
+-- silently rewrite the routing on every other character you own.
+function ns.CDMGroups.ApplyImportedIconRouting(values)
+    if type(values) ~= "table" then return false end
+    for _, categoryKey in pairs(ROUTING_CATEGORY) do
+        local v = values[categoryKey]
+        ns.CDMGroups.SetIconRoutingAtScope(categoryKey, ROUTING_SCOPE_SPEC, v)
+    end
+    return true
+end
+
+-- The EFFECTIVE routing for this spec, for exports.
+function ns.CDMGroups.GetEffectiveIconRouting()
+    local out, any = {}, false
+    for _, categoryKey in pairs(ROUTING_CATEGORY) do
+        local v = ns.CDMGroups.GetIconRouting(categoryKey)
+        if v ~= nil then out[categoryKey] = v; any = true end
+    end
+    if not any then return nil end
+    return out
+end
+
+-- Drop point for icons routed to "free": the MIDDLE of the screen, fanned out
+-- in a small grid so a whole batch does not land in one unreadable stack.
+-- Free icons are anchored SetPoint("CENTER", UIParent, "CENTER", x, y), so these
+-- are offsets FROM SCREEN CENTRE. Never feed a frame's own GetCenter() in here:
+-- that returns ABSOLUTE screen coordinates, and used as a centre-offset it flings
+-- the icon off the top-right corner (which is exactly what it did).
+local freeDropIndex = 0
+local FREE_DROP_PER_ROW = 8
+local FREE_DROP_ROWS    = 4
+function ns.CDMGroups.NextFreeDropPosition(iconSize)
+    local step = (iconSize or 36) + 8
+    local i = freeDropIndex
+    freeDropIndex = freeDropIndex + 1
+    local col = i % FREE_DROP_PER_ROW
+    local row = math.floor(i / FREE_DROP_PER_ROW) % FREE_DROP_ROWS
+    -- centre the whole block on the screen centre
+    local x = (col - (FREE_DROP_PER_ROW - 1) / 2) * step
+    local y = ((FREE_DROP_ROWS - 1) / 2 - row) * step
+    return x, y
+end
+
+-- Returns: "group", group, groupName | "free" | "none" | nil (nothing exists)
+function ns.CDMGroups.ResolveNewIconDestination(defaultGroupName)
+    local categoryKey = defaultGroupName and ROUTING_CATEGORY[defaultGroupName]
+    local choice = categoryKey and ns.CDMGroups.GetIconRouting(categoryKey) or nil
+
+    if choice == "none" then choice = nil end       -- retired option, treat as unset
+    -- "default" is a REAL stored choice below the account scope: it means
+    -- "use the shipped group here" and exists to override an inherited value.
+    if choice == "default" then choice = nil end
+    if choice == "free" then return "free" end
+    if choice then
+        local group, groupName = ns.CDMGroups.FindGroupByID(choice)
+        if group then return "group", group, groupName end
+        -- The chosen group does not exist in THIS profile/spec (group ids are
+        -- per layout profile, so a destination picked elsewhere may not resolve
+        -- here). Free position is the backup: visible and movable, rather than
+        -- silently dumping the icons into a group the user did not pick.
+        return "free"
+    end
+
+    if defaultGroupName then
+        -- Resolve the shipped group by its STABLE id FIRST, so a default the
+        -- user RENAMED is still found. Looking it up by name was what made
+        -- FrameController rebuild a fresh empty "Utility" every single login.
+        local wellKnown = WELL_KNOWN_GROUP_IDS[defaultGroupName]
+        if wellKnown then
+            local group, groupName = ns.CDMGroups.FindGroupByID(wellKnown)
+            if group then return "group", group, groupName end
+        end
+        local group = ns.CDMGroups.groups and ns.CDMGroups.groups[defaultGroupName]
+        if group then return "group", group, defaultGroupName end
+    end
+    return nil
 end
 
 -- Get the current spec KEY (class-specific to prevent cross-class contamination)
@@ -11662,21 +11978,26 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         
         -- Helper to disable mouse on ALL descendants recursively
         -- This is CRITICAL for aura icons which have Applications subframes at high frame levels
+        -- Forbidden descendants (AuraContainer slot buttons that have displayed
+        -- secret aura data, e.g. the stack-count overlay's) throw on ANY method
+        -- call from addon code; they are mouse-disabled at creation, so skip them.
         local function DisableAllChildMouse(f)
             for _, child in pairs({f:GetChildren()}) do
-                if child.EnableMouse then
-                    child:EnableMouse(false)
+                if not (child.IsForbidden and child:IsForbidden()) then
+                    if child.EnableMouse then
+                        child:EnableMouse(false)
+                    end
+                    if child.SetMovable then
+                        child:SetMovable(false)
+                    end
+                    if child.RegisterForDrag then
+                        child:RegisterForDrag()
+                    end
+                    DisableAllChildMouse(child)
                 end
-                if child.SetMovable then
-                    child:SetMovable(false)
-                end
-                if child.RegisterForDrag then
-                    child:RegisterForDrag()
-                end
-                DisableAllChildMouse(child)
             end
         end
-        
+
         -- CRITICAL: Disable mouse on ALL children FIRST before enabling parent
         DisableAllChildMouse(frame)
         

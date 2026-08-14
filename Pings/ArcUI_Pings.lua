@@ -153,6 +153,7 @@ local ARC_SOUND_FILES = {
     ["ArcUI: Banana Peel Slip"] = "BananaPeelSlip.ogg", ["ArcUI: Batman Punch"] = "BatmanPunch.ogg",
     ["ArcUI: Blast"] = "Blast.ogg", ["ArcUI: Boxing Arena"] = "BoxingArenaSound.ogg",
     ["ArcUI: Double Whoosh"] = "DoubleWhoosh.ogg", ["ArcUI: Heartbeat"] = "HeartbeatSingle.ogg",
+    ["ArcUI: Kaching"] = "Kaching.ogg",
     ["ArcUI: Sharp Punch"] = "SharpPunch.ogg", ["ArcUI: Shotgun"] = "Shotgun.ogg",
     ["ArcUI: Squeaky Toy"] = "SqueakyToyShort.ogg", ["ArcUI: Squish"] = "SquishFart.ogg",
     ["ArcUI: Torch"] = "Torch.ogg", ["ArcUI: Water Drop"] = "WaterDrop.ogg",
@@ -1551,36 +1552,77 @@ local function PKList()
     return db.pkSpells
 end
 
--- Blizzard's action buttons carry `bindingAction` (set in ActionButton.lua), so
--- read the LIVE frames rather than hardcoding a slot->command table: paging and
--- bar layout stay Blizzard's problem. Third-party bars (ElvUI, Bartender) name
--- their buttons differently and simply won't resolve -- that is what the manual
--- per-spell key override is for.
-local PK_BARS = {
-    "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
-    "MultiBarRightButton", "MultiBarLeftButton", "MultiBar5Button",
-    "MultiBar6Button", "MultiBar7Button",
-}
+-- ── WHICH BINDING COMMAND DOES THIS BUTTON ANSWER TO? ───────────────────────
+-- There is no single field. Reading only `bindingAction/commandName/
+-- keyBoundTarget` is why Bartender4 never worked: BT4 hands its binding command
+-- to LibActionButton as `buttonConfig.keyBoundTarget`, and LAB DEEP-COPIES that
+-- into `button.config.keyBoundTarget` (Generic:UpdateConfig) -- the plain
+-- `button.keyBoundTarget` field is never written, so every BT4 button resolved
+-- to nil and silently armed nothing.
+--
+-- And even config.keyBoundTarget is not enough: BT4 only maps bars
+-- 1,3,4,5,6,13,14,15 to ACTIONBUTTON-style commands. Bars 2 and 7-10 leave it
+-- FALSE and are reachable only as "CLICK BT4Button<n>:Keybind".
+--
+-- So: build every command this button could answer to, most authoritative
+-- first, and take the first one the game has a key for. The order mirrors
+-- LibActionButton's own GetHotkey (keyBoundTarget, then the CLICK form), so we
+-- agree with the bar addon by construction instead of by guess.
+local PKKeyForButton
+do
+    local function PushCmd(t, seen, v)
+        if type(v) ~= "string" or v == "" or seen[v] then return end
+        seen[v] = true
+        t[#t + 1] = v
+    end
 
+    local function ButtonCommands(btn)
+        if not btn then return nil end
+        local out, seen = {}, {}
+        local cfg = type(btn.config) == "table" and btn.config or nil
+        -- LibActionButton's own answer. Gated on cfg so we never call the method
+        -- on a Blizzard frame that happens to have a same-named field.
+        if cfg and type(btn.GetBindingAction) == "function" then
+            PushCmd(out, seen, btn:GetBindingAction())
+        end
+        PushCmd(out, seen, btn.bindingAction)          -- Blizzard
+        PushCmd(out, seen, btn.commandName)            -- Blizzard bar init, EllesmereUI
+        PushCmd(out, seen, btn.keyBoundTarget)         -- ElvUI (direct field)
+        PushCmd(out, seen, cfg and cfg.keyBoundTarget) -- LAB config (Bartender4, ElvUI)
+        local name = btn.GetName and btn:GetName()
+        if name then
+            local cb = (cfg and type(cfg.keyBoundClickButton) == "string")
+                       and cfg.keyBoundClickButton
+            PushCmd(out, seen, ("CLICK %s:%s"):format(name, cb or "Keybind"))
+            PushCmd(out, seen, ("CLICK %s:Keybind"):format(name))
+            PushCmd(out, seen, ("CLICK %s:LeftButton"):format(name))
+        end
+        return out
+    end
+
+    -- key, command. Returns the command even when unbound, so callers can store
+    -- a stable one to re-resolve against later.
+    function PKKeyForButton(btn)
+        local cmds = ButtonCommands(btn)
+        if not cmds or #cmds == 0 then return nil, nil end
+        for i = 1, #cmds do
+            local k = GetBindingKey(cmds[i])
+            if k and k ~= "" then return k, cmds[i] end
+        end
+        return nil, cmds[1]
+    end
+end
+
+-- Fallback for entries with no source button (Add-By-ID) or whose button moved:
+-- find the spell on ANY discovered bar button and read that button's key.
 local function PKAutoKey(spellID)
-    for _b = 1, #PK_BARS do
-        for i = 1, 12 do
-            local btn = _G[PK_BARS[_b] .. i]
-            local slot = btn and btn.action
-            if slot and HasAction(slot) then
-                local aType, id = GetActionInfo(slot)
-                local sid
-                if aType == "spell" then
-                    sid = id
-                elseif aType == "macro" then
-                    sid = GetMacroSpell(id)
-                end
-                if sid == spellID then
-                    local cmd = btn.bindingAction or btn.commandName
-                    local k = cmd and GetBindingKey(cmd)
-                    if k then return k end
-                end
-            end
+    local btns = PKCollectButtons and PKCollectButtons()
+    if not btns then return nil end
+    for i = 1, #btns do
+        local sid = PKButtonSubject(btns[i])
+        if sid == spellID then
+            local k = PKKeyForButton(btns[i])
+            if k then return k end
         end
     end
     return nil
@@ -1596,10 +1638,29 @@ end
 -- any more: the per-spell override is a PING key (which modifier key activates
 -- this spell), not a spell key. Overriding the spell key silently disconnected
 -- the real bar key, which is the bug Arc hit.
+-- A stored button name can point at a frame a bar addon has since REPLACED:
+-- still in _G, but statehidden with a frozen .action. Reading it yields a stale
+-- spell, and GetBindingKey on its command yields a real key for the WRONG
+-- spell. Treat it as gone so the fallback chain finds the live button instead.
+local function PKLiveButton(name)
+    local btn = name and _G[name]
+    if type(btn) ~= "table" then return nil end
+    if btn.GetAttribute and btn:GetAttribute("statehidden") then return nil end
+    return btn
+end
+
+-- LIVE BUTTON FIRST. The stored command is a snapshot taken when the spell was
+-- picked; the button itself is the bar addon's current truth, so a rebind, a
+-- bar reconfigure or a profile switch is picked up for free.
 local function PKKeyFor(entry)
+    local btn = PKLiveButton(entry.btn)
+    if btn then
+        local k = PKKeyForButton(btn)
+        if k then return k end
+    end
     if entry.cmd then
         local k = GetBindingKey(entry.cmd)
-        if k then return k end
+        if k and k ~= "" then return k end
     end
     return PKAutoKey(entry.id)
 end
@@ -1621,8 +1682,8 @@ end
 -- that already matched on spell id.
 local function PKEntryMatchesBar(entry)
     if not entry then return false end
-    local btn = entry.btn and _G[entry.btn]
-    if not btn then return true end
+    local btn = PKLiveButton(entry.btn)
+    if not btn then return true end   -- no live source button = nothing to verify
     local sid = PKButtonSubject(btn)
     if not sid then return false end            -- slot emptied in this spec
     if sid == entry.id then return true end
@@ -2131,7 +2192,7 @@ local function PKArmAnySpell(h)
     for i = 1, #btns do
         if n >= PK_ALL_MAX then break end
         local sid, cmd, kind = PKButtonSubject(btns[i])
-        local k = cmd and GetBindingKey(cmd)
+        local k = PKKeyForButton(btns[i])
         -- one relay per KEY, not per button: two buttons sharing a key would
         -- otherwise fight over the same binding
         if sid and k and not seen[k] then
@@ -2263,39 +2324,76 @@ end
 local pkSel = { on = false, overlays = {}, buttons = {}, banner = nil }
 local PKSelRefresh   -- fwd
 
--- bar button name prefixes, richest first. LibActionButton bars (ElvUI,
--- Bartender4) replace Blizzard's entirely, so if one is present we use it and
--- skip the Blizzard names.
-local PK_BTN_SETS = {
-    { probe = "ElvUI_Bar1Button1", names = function(list)
-        for bar = 1, 15 do
+-- Every action button we can find, UNIONED. This used to return on the first
+-- matching probe, which dropped Blizzard's bars wholesale the moment Bartender4
+-- was installed -- wrong for anyone running a third-party addon for only some
+-- of their bars.
+local PK_BTN_NAMES = {
+    -- ElvUI: bars 11/12 do not exist
+    function(list)
+        for _, bar in ipairs({ 1,2,3,4,5,6,7,8,9,10,13,14,15 }) do
             for i = 1, 12 do list[#list + 1] = ("ElvUI_Bar%dButton%d"):format(bar, i) end
         end
-    end },
-    { probe = "BT4Button1", names = function(list)
-        for i = 1, 120 do list[#list + 1] = "BT4Button" .. i end
-    end },
-    { probe = "ActionButton1", names = function(list)
-        for _b = 1, #PK_BARS do
-            for i = 1, 12 do list[#list + 1] = PK_BARS[_b] .. i end
+    end,
+    -- Bartender4 numbers by ABSOLUTE slot: bars 13/14/15 live at 145..180, so a
+    -- 1..120 sweep missed three whole bars.
+    function(list)
+        for i = 1, 180 do list[#list + 1] = "BT4Button" .. i end
+    end,
+    -- EllesmereUI, also absolute-slot named
+    function(list)
+        for i = 1, 180 do list[#list + 1] = "EABButton" .. i end
+    end,
+    -- Blizzard
+    function(list)
+        local bars = {
+            "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
+            "MultiBarRightButton", "MultiBarLeftButton", "MultiBar5Button",
+            "MultiBar6Button", "MultiBar7Button",
+        }
+        for _b = 1, #bars do
+            for i = 1, 12 do list[#list + 1] = bars[_b] .. i end
         end
-    end },
+    end,
 }
 
 PKCollectButtons = function()
-    local out = {}
-    for _s = 1, #PK_BTN_SETS do
-        local set = PK_BTN_SETS[_s]
-        if _G[set.probe] then
-            local names = {}
-            set.names(names)
-            for i = 1, #names do
-                local f = _G[names[i]]
-                if f and f.GetObjectType then out[#out + 1] = f end
+    local out, seen = {}, {}
+    local function take(f)
+        if type(f) ~= "table" or seen[f] or not f.GetObjectType then return end
+        -- Every bar addon marks the Blizzard buttons it replaced with
+        -- statehidden. Those frames keep a STALE .action, so without this filter
+        -- they produce catalog entries for the wrong spell on a real key --
+        -- the nastiest phantom available, since GetBindingKey("ACTIONBUTTON1")
+        -- still answers under Bartender4. LAB never sets it on its own buttons.
+        if f.GetAttribute and f:GetAttribute("statehidden") then return end
+        seen[f] = true
+        out[#out + 1] = f
+    end
+
+    -- 1. LibActionButton's OWN registry: covers every LAB-based bar, present and
+    --    future, with no name guessing. Bartender4 and ElvUI ship separate
+    --    copies under different major strings, so enumerate rather than hardcode.
+    if LibStub and type(LibStub.libs) == "table" then
+        for major, lib in pairs(LibStub.libs) do
+            if type(major) == "string" and major:find("^LibActionButton%-1%.0")
+               and type(lib) == "table" and type(lib.GetAllButtons) == "function" then
+                for b in pairs(lib:GetAllButtons()) do take(b) end
             end
-            return out
         end
     end
+    -- 2. known names, for bars that are not LAB-based (Blizzard, EllesmereUI)
+    local names = {}
+    for i = 1, #PK_BTN_NAMES do PK_BTN_NAMES[i](names) end
+    for i = 1, #names do take(_G[names[i]]) end
+
+    -- the LAB registry is a SET, so its iteration order changes between reloads.
+    -- Sort by name or the catalog's first-come-wins dedupe is nondeterministic.
+    table.sort(out, function(a, b)
+        local an = (a.GetName and a:GetName()) or ""
+        local bn = (b.GetName and b:GetName()) or ""
+        return an < bn
+    end)
     return out
 end
 
@@ -2343,8 +2441,9 @@ PKButtonSubject = function(btn)
         if type(s) == "number" and s > 0 then kind, sid = "spell", s end
     end
     if not sid then return nil end
-    -- keyBoundTarget is LibActionButton's binding command (ElvUI/Bartender)
-    local cmd = btn.bindingAction or btn.commandName or btn.keyBoundTarget
+    -- the command that actually resolves right now (falls back to the first
+    -- candidate when the button is simply unbound) -- see PKKeyForButton
+    local _k, cmd = PKKeyForButton(btn)
     return sid, cmd, kind, btn.GetName and btn:GetName() or nil
 end
 
@@ -2421,14 +2520,14 @@ local function PKBuildCatalog()
             local e = { id = id, kind = kind or "spell", cmd = cmd, btn = bname }
             local nm, icon = PKSubjectInfo(e)
             e.name, e.icon = nm, icon
-            e.key = cmd and GetBindingKey(cmd) or nil
+            e.key = PKKeyForButton(btn)
             pkCatalog[#pkCatalog + 1] = e
         elseif id and seen[id] then
             -- same subject on two bars: keep whichever copy actually has a key
             for j = 1, #pkCatalog do
                 local c = pkCatalog[j]
-                if c.id == id and not c.key and cmd then
-                    local k = GetBindingKey(cmd)
+                if c.id == id and not c.key then
+                    local k = PKKeyForButton(btn)
                     if k then c.key, c.cmd, c.btn = k, cmd, bname end
                     break
                 end
@@ -2447,7 +2546,8 @@ local function PKBuildCatalog()
             local e = { id = t.id, kind = t.kind or "spell", cmd = t.cmd, btn = t.btn, offBar = true }
             local nm, icon = PKSubjectInfo(e)
             e.name, e.icon = nm, icon
-            e.key = (t.cmd and GetBindingKey(t.cmd)) or t.ownKey or nil
+            e.key = (t.btn and PKKeyForButton(_G[t.btn]))
+                    or (t.cmd and GetBindingKey(t.cmd)) or t.ownKey or nil
             pkCatalog[#pkCatalog + 1] = e
         end
     end
@@ -2922,6 +3022,7 @@ local function PKDebugDump()
 end
 _G.ArcUI_PingDebug = PKDebugDump
 
+local pkRebindQueued = false
 local pkEv = CreateFrame("Frame")
 pkEv:RegisterEvent("PLAYER_REGEN_ENABLED")
 pkEv:RegisterEvent("UPDATE_BINDINGS")
@@ -2954,7 +3055,25 @@ pkEv:SetScript("OnEvent", function(_, ev)
     -- auto-resolved keys move when the user rebinds or drags a spell to another
     -- slot; re-arm on those, and flush anything deferred out of combat
     if ev == "PLAYER_REGEN_ENABLED" and not pkDirty then return end
-    if Cfg("pkEnabled") or pkDirty then PKApply() end
+    if not (Cfg("pkEnabled") or pkDirty) then return end
+    -- UPDATE_BINDINGS: bar addons re-apply their OWN override bindings on this
+    -- same event, and handler order between addons is undefined. Ours are
+    -- priority overrides and theirs are not, but priority turned out to be
+    -- recency here, not strict precedence: hold mode worked (it binds inside a
+    -- snippet at key-down, after everyone) while always mode lost the key
+    -- whenever the bar addon happened to run second. Deferring one frame puts
+    -- us last deterministically.
+    if ev == "UPDATE_BINDINGS" then
+        if not pkRebindQueued then
+            pkRebindQueued = true
+            C_Timer.After(0, function()
+                pkRebindQueued = false
+                if Cfg("pkEnabled") or pkDirty then PKApply() end
+            end)
+        end
+        return
+    end
+    PKApply()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -2963,19 +3082,84 @@ end)
 
 local pingableCount = 0
 
-local function MakePingable(frame, getTargetInfo)
+-- ── "DON'T PING THIS ICON" ──────────────────────────────────────────────────
+-- Hovering a pingable icon HIJACKS the ping: instead of pinging the world you
+-- announce whatever is under the cursor. The opt-out is the `ping-receiver`
+-- ATTRIBUTE, never GetIsPingable.
+--
+-- GetIsPingable() = false is the wrong lever and does the opposite of what it
+-- reads like: PingManager treats "frame found but not pingable" as BLOCKING UI
+-- and fails the ping outright rather than falling through to the world
+-- (Blizzard_PingManager.lua, the frameFound branch). Only a MISSING attribute
+-- makes a frame invisible to C_PingSecure.GetTargetPingReceiver. Blizzard use
+-- exactly this to let pings pass through empty action buttons
+-- (PingableType_ActionButtonMixin:UpdatePingAttributes).
+--
+-- Safe on Blizzard's own CDM frames, verified in source and in game:
+--   * the attribute is set DECLARATIVELY in XML (PingReceiverAttributeTemplate
+--     via CooldownViewerEssential/UtilityItemTemplate), and
+--     PingableTypeMixin:UpdatePingAttributes is an empty stub that the CDM mixin
+--     does NOT override -- so nothing ever re-asserts it and a one-time clear
+--     sticks. No refresh fight.
+--   * CDM has no OnAttributeChanged handler, so nothing reacts to the write.
+--   * CDM item frames report IsProtected() == false, so the write is legal in
+--     combat too.
+-- It does NOT survive a reload (XML re-applies it), which is fine: the sweep
+-- below re-runs on login and on every rebind.
+--
+-- Note click-through does NOT help here: CDM icons report mouse disabled and
+-- are still ping receivers, so the hit test does not consult mouse state.
+local function SetPingReceiver(frame, on)
+    if not (frame and frame.SetAttribute) then return end
+    if on then
+        frame:SetAttribute("ping-receiver", true)
+    else
+        frame:ClearAttribute("ping-receiver")
+    end
+end
+
+-- Should this icon accept pings? Per-icon wins, then its group, then the global
+-- default. Every layer stores the OPT-OUT (noPing), so an absent value means
+-- "pingable" and existing setups are unchanged.
+function Pings.IconAcceptsPings(cdID)
+    if not cdID then return true end
+    local CE = ns.CDMEnhance
+    -- 1. THIS icon, read SPARSE. The merged read cannot tell "set on this icon"
+    --    apart from "inherited from the global defaults", and using it here let
+    --    a global default shadow the group layer entirely.
+    local raw = CE and CE.GetRawIconSettings and CE.GetRawIconSettings(cdID)
+    if raw and raw.noPing ~= nil then return raw.noPing ~= true end
+
+    -- 2. its group
+    if ns.CDMGroups and ns.CDMGroups.GetGroupNameForIcon then
+        local gname = ns.CDMGroups.GetGroupNameForIcon(cdID)
+        local g = gname and ns.CDMGroups.groups and ns.CDMGroups.groups[gname]
+        if g and g.noPing ~= nil then return g.noPing ~= true end
+    end
+
+    -- 3. the global default (the merged read folds defaults + global in)
+    local S = CE and CE.GetIconSettings and CE.GetIconSettings(cdID)
+    if S and S.noPing ~= nil then return S.noPing ~= true end
+
+    local db = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
+    if db and db.noPingAll ~= nil then return db.noPingAll ~= true end
+    return true
+end
+
+local function MakePingable(frame, cdID, getTargetInfo)
     if not (frame and getTargetInfo and PingableTypeMixin) then return end
-    if frame._arcPingable then return end
-    frame._arcPingable = true
-    Mixin(frame, PingableTypeMixin)
-    -- live-read the setting: toggling OFF disables pings without a reload
-    -- always pingable: this is a passive receive-side feature with no cost until
-    -- something actually pings it, so there is nothing worth a toggle
-    frame.GetIsPingable = function() return true end
-    frame.GetAllowRadialWheel = function() return false end
-    frame.GetTargetInfo = getTargetInfo
-    frame:SetAttribute("ping-receiver", true)
-    pingableCount = pingableCount + 1
+    if not frame._arcPingable then
+        frame._arcPingable = true
+        Mixin(frame, PingableTypeMixin)
+        -- always TRUE: see the note above -- false would make this a ping
+        -- blocker rather than letting the ping through to the world
+        frame.GetIsPingable = function() return true end
+        frame.GetAllowRadialWheel = function() return false end
+        frame.GetTargetInfo = getTargetInfo
+    end
+    local accepts = Pings.IconAcceptsPings(cdID)
+    SetPingReceiver(frame, accepts)
+    if accepts then pingableCount = pingableCount + 1 end
 end
 
 -- Sweep every ArcUI-created icon: SPELL + TIMER icons ping their spell
@@ -2985,17 +3169,79 @@ end
 -- icons are skipped (a slot has no stable ping subject). Blizzard CDM
 -- frames are never touched: Essential/Utility are natively pingable and
 -- attribute writes on Blizzard frames are not worth the taint surface.
+-- Blizzard's CDM icons are pingable NATIVELY (Essential and Utility inherit
+-- PingReceiverAttributeTemplate; the Buff viewers do not). We never make one
+-- pingable -- it already is -- we only ever honour an opt-out by clearing the
+-- attribute, and put it back when the opt-out is removed.
+--
+-- READS ONLY apart from that attribute: no CooldownViewer METHOD calls. Calling
+-- a CDM object method from addon code runs Blizzard's Lua on our tainted stack
+-- and can bake taint into shared CDM state, which is what bricks CDM in M+.
+-- Enumerate through ArcUI's OWN registry, keyed by cooldownID and holding the
+-- frame wherever it currently lives.
+--
+-- Walking `viewer:GetChildren()` is WRONG here and is why the toggle only took
+-- effect after a reload: ArcUI REPARENTS CDM icons into its own group and free
+-- containers, so once groups are built the viewers no longer own them. At login
+-- the sweep ran before reparenting and appeared to work; every later call found
+-- nothing to update. (Same trap the CDM hide-icon bug hit -- never sweep CDM by
+-- viewer children.)
+--
+-- Reads only, plus the attribute write. No CooldownViewer method calls.
+local function RefreshCDMPingable()
+    local CE = ns.CDMEnhance
+    local frames = CE and CE.GetEnhancedFrames and CE.GetEnhancedFrames()
+    if type(frames) ~= "table" then return end
+    for cdID, data in pairs(frames) do
+        local f = type(data) == "table" and data.frame or data
+        if cdID and type(f) == "table" and f.SetAttribute and f.GetAttribute then
+            -- Remember whether Blizzard made THIS frame a receiver, the first
+            -- time we ever touch it. Essential/Utility inherit the attribute
+            -- from XML; the Buff viewers do NOT. Without this we would ADD the
+            -- attribute to buff icons on the way back and make them pingable
+            -- when Blizzard never intended them to be.
+            if f._arcPingNative == nil then
+                f._arcPingNative = (f:GetAttribute("ping-receiver") == true)
+            end
+            if f._arcPingNative then
+                SetPingReceiver(f, Pings.IconAcceptsPings(cdID))
+            end
+        end
+    end
+end
+
+-- CDM recreates and REBINDS its item frames (spec change, talent change, a CDM
+-- rebuild), and a rebound frame carries a different cooldownID -- so the
+-- opt-out has to be re-resolved for it. FrameController is the single authority
+-- for that event; subscribing is idempotent.
+local pingRebindHooked = false
+local function HookPingRebind()
+    if pingRebindHooked then return end
+    local FC = ns.FrameController
+    if not (FC and FC.OnFrameRebind) then return end
+    pingRebindHooked = true
+    FC.OnFrameRebind(function(frame, _oldCdID, newCdID)
+        -- targeted: only the frame that just rebound. No CDM API calls, no
+        -- secret reads -- an attribute write and a settings lookup.
+        if frame and frame.SetAttribute and newCdID and frame._arcPingNative then
+            SetPingReceiver(frame, Pings.IconAcceptsPings(newCdID))
+        end
+    end)
+end
+
 function Pings.RefreshPingable()
+    HookPingRebind()
     pingableCount = 0
     -- NOT gated on the standalone: only ArcUI can make ArcUI icons pingable
     if not HAS_ACTION_PINGS then return end
+    RefreshCDMPingable()
     local AA = ns.ArcAuras
     if not (AA and AA.frames and AA.ParseArcID) then return end
     for arcID, frame in pairs(AA.frames) do
         local kind, id = AA.ParseArcID(arcID)
         if frame and id then
             if kind == "spell" or kind == "timer" or kind == "aura" then
-                MakePingable(frame, function()
+                MakePingable(frame, arcID, function()
                     -- cooldown pings follow the live override form
                     local sid = id
                     if C_Spell.GetOverrideSpell then
@@ -3005,9 +3251,9 @@ function Pings.RefreshPingable()
                     return { spellID = sid }
                 end)
             elseif kind == "item" then
-                MakePingable(frame, function() return { itemID = id } end)
+                MakePingable(frame, arcID, function() return { itemID = id } end)
             elseif kind == "trinket" then
-                MakePingable(frame, function()
+                MakePingable(frame, arcID, function()
                     local itemID = GetInventoryItemID("player", id)
                     if itemID then return { itemID = itemID } end
                     return {}

@@ -13,6 +13,18 @@ ns.TrackingOptions = ns.TrackingOptions or {}
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
+-- Totem / pet / ground bars are driven entirely by ArcUI off GetTotemDuration,
+-- never by the 12.1 aura-slot engine, so a custom max IS expressible for them
+-- (Display maps remaining seconds through our own curve). Every other duration
+-- bar goes through the engine timer, which takes no maximum -- those stay locked
+-- to Auto. See IsTotemLikeBar in ArcUI_Display.lua.
+local TOTEM_LIKE_TRACKTYPES = { pet = true, totem = true, ground = true }
+local function MaxDurationLocked(cfg)
+  if not (ns.API and ns.API.IS_121) then return false end
+  local tt = cfg and cfg.tracking and cfg.tracking.trackType
+  return not (tt and TOTEM_LIKE_TRACKTYPES[tt])
+end
+
 -- ===================================================================
 -- UI STATE
 -- ===================================================================
@@ -954,17 +966,35 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
-          -- Hide for duration bars with Auto enabled (Max Ticks moved to Appearance panel)
-          if cfg and cfg.tracking.useDurationBar and cfg.tracking.dynamicMaxDuration then return true end
+          -- Hide for duration bars with Auto enabled (Max Ticks moved to Appearance panel).
+          -- On 12.1 Auto is forced on, so a manual max could never apply -- do not
+          -- offer a field that does nothing.
+          if cfg and cfg.tracking.useDurationBar
+            and (cfg.tracking.dynamicMaxDuration or MaxDurationLocked(cfg)) then return true end
           return false
         end
       },
       dynamicMax = {
         type = "toggle",
         name = "Auto",
-        desc = "Automatically get max duration from the CDM bar (adapts to haste, talents, etc.). Set Max (Ticks) in the Appearance panel for tick mark positioning.",
+        -- 12.1: a custom maximum is no longer expressible. The engine timer takes
+        -- SetTimerDuration(duration, interpolation, direction) with no max, the
+        -- duration-bar options table is only {interpolation, direction}, and the
+        -- aura's real length is secret so the fraction cannot be computed either.
+        -- Locked to Auto and disclaimed rather than silently ignored. Flip these
+        -- three functions back if Blizzard restores the parameter.
+        desc = function()
+          if MaxDurationLocked(ns.API.GetBarConfig(barNum)) then
+            return "|cffff9900Locked to Auto.|r Blizzard's 12.1 aura timer no longer accepts a custom maximum, and an aura's real length is hidden from addons.\nBars fill over the aura's own full duration until Blizzard restores it."
+          end
+          return "Automatically get max duration from the CDM bar (adapts to haste, talents, etc.). Set Max (Ticks) in the Appearance panel for tick mark positioning."
+        end,
+        disabled = function()
+          return MaxDurationLocked(ns.API.GetBarConfig(barNum))
+        end,
         get = function()
           local cfg = ns.API.GetBarConfig(barNum)
+          if MaxDurationLocked(cfg) then return true end
           return cfg and cfg.tracking.dynamicMaxDuration
         end,
         set = function(info, value)
@@ -982,6 +1012,23 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
         hidden = function()
           if not expandedBars[barKey] then return true end
           local cfg = ns.API.GetBarConfig(barNum)
+          return not (cfg and cfg.tracking.useDurationBar)
+        end
+      },
+      -- The desc above can never render while the toggle is disabled: AceGUI's
+      -- checkbox is a Button and calls frame:Disable(), and a disabled Button does
+      -- not run OnEnter/OnLeave unless SetMotionScriptsWhileDisabled(true) is set
+      -- (AceGUI never does). So the disclaimer has to be visible text, not a tooltip.
+      dynamicMaxNote = {
+        type = "description",
+        name = "|cffff9900Locked to Auto.|r 12.1 removed the API for a custom maximum, so bars fill over the aura's own full duration.",
+        fontSize = "small",
+        order = 4.6,
+        width = "full",
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not MaxDurationLocked(cfg) then return true end
           return not (cfg and cfg.tracking.useDurationBar)
         end
       },

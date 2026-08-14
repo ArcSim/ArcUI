@@ -492,6 +492,9 @@ local function EnsureShadowCooldown(frame)
     frame._arcPerFrameEvFrame = ef
     ef:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     ef:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    -- bag items (potions / healthstones) need the stock count re-read when the
+    -- bags change; batched by the client, so this is a rare event
+    ef:RegisterEvent("BAG_UPDATE_DELAYED")
     local _TrackEv = _G.ArcUIProfiler_Track
     local function perFrameEventHandler(_, ev, a1, a2, a3, a4, a5)
       if not frame._arcEnhanced then
@@ -510,9 +513,14 @@ local function EnsureShadowCooldown(frame)
       local ciEv = frame.cooldownInfo
       local evEquip = ciEv and ciEv.equipSlot
       local evCat   = ciEv and ciEv.spellCategoryID
+      -- bag traffic only concerns item entries; never re-dispatch spell frames
+      if ev == "BAG_UPDATE_DELAYED" and not (evEquip or evCat) then return end
       if evEquip or evCat then
-        if ev == "SPELL_UPDATE_COOLDOWN" then
-          local relevant = evEquip ~= nil or a1 == nil or a3 == evCat
+        if ev == "SPELL_UPDATE_COOLDOWN" or ev == "BAG_UPDATE_DELAYED" then
+          -- BAG_UPDATE_DELAYED always matters here: it is how an out-of-stock
+          -- potion/healthstone flips back to in-stock (and vice versa)
+          local relevant = ev == "BAG_UPDATE_DELAYED" or evEquip ~= nil
+            or a1 == nil or a3 == evCat
           if not relevant then return end
           local cfgI = frame._arcCfg
           if cfgI then
@@ -1215,15 +1223,113 @@ local function PushItemIAO(frame)
 end
 ns.CooldownState.PushItemIAO = PushItemIAO
 
+-- Blizzard's own fallback item per bag-item category (spellCategoryMetadataLookup).
+-- Potions have none -- their identity only exists once one has been used -- so
+-- out-of-stock is only knowable for them after that.
+local CATEGORY_FALLBACK_ITEM = {
+  [1711] = 5512,    -- Healthstone
+  [2566] = 224464,  -- Demonic Healthstone
+}
+
+-- OUT OF STOCK for a CDM bag item, the same question the Arc item icons ask
+-- with GetItemCount. Returns nil when we cannot know (no item identity yet),
+-- which callers treat as "in stock" rather than dimming on a guess.
+local function ItemOutOfStock(ci)
+  if not ci then return nil end
+  local cat = ci.spellCategoryID
+  if not cat then return nil end
+  local itemID = ci.lastItemIDForCategory or CATEGORY_FALLBACK_ITEM[cat]
+  if not itemID or not GetItemCount then return nil end
+  -- includeCharges=true: a healthstone's stack is charges, not item count
+  local count = GetItemCount(itemID, false, true)
+  if type(count) ~= "number" then return nil end
+  return count <= 0
+end
+
 local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals, ignoreAuraOverride)
   if not stateVisuals then return end
   iconTex = iconTex or frame.Icon
   FeedShadowCooldown(frame, nil)
   local isOnCooldown = GetBinaryCooldownState(frame)
   if ignoreAuraOverride then PushItemIAO(frame) end
+
+  -- AURA ACTIVE, exactly as the cooldown icons read it: HasFrameAura on CDM's
+  -- own auraInstanceID (a SECRET id still means the buff EXISTS -- presence is
+  -- a nil check, never a compare). Item buffs OVERLAP their cooldown: a potion
+  -- runs a 30s buff while a 5 minute cooldown ticks, so this state has to be
+  -- evaluated ALONGSIDE the cooldown state, not instead of it. This whole path
+  -- previously returned before any aura-active work, which is why "glow when
+  -- aura active" never fired on these icons.
+  local isAuraActive = HasFrameAura(frame.auraInstanceID) or (frame.totemData ~= nil)
+
   if isOnCooldown then
-    ApplyCooldownAlpha(frame, stateVisuals)
-    ApplyCooldownDesat(frame, iconTex, stateVisuals, false, false)
+    ApplyCooldownAlpha(frame, stateVisuals)   -- already honours activeAlpha
+    if isAuraActive then
+      -- buff up = icon stays COLOURED, matching the cooldown icons' AURA_READY
+      -- rule. We own the value; desat is never released to CDM on an enhanced
+      -- frame (its writes are secret-dead and the old value would stick).
+      frame._arcDesatBranch = "ITEM_AURA_ACTIVE"
+      frame._arcForceDesatValue = 0
+      frame._arcBypassDesatHook = true
+      SetDesat(iconTex, 0)
+      frame._arcBypassDesatHook = false
+      frame._arcTargetDesat = 0
+      if ApplyBorderDesaturation then ApplyBorderDesaturation(frame, 0) end
+    else
+      ApplyCooldownDesat(frame, iconTex, stateVisuals, false, false)
+    end
+  elseif ItemOutOfStock(frame.cooldownInfo) then
+    -- ═══════════════════════════════════════════════════════════════
+    -- OUT OF STOCK STATE (bag items: potions, healthstones)
+    -- A state of its own, with its own alpha / desaturate / tint, because
+    -- "none in my bags" is not a cooldown and not an aura. Defaults keep the
+    -- long-standing Arc item behaviour: desaturated, normal alpha, no tint --
+    -- and the legacy cooldownState.dimWhenEmpty toggle still dims when set.
+    -- ═══════════════════════════════════════════════════════════════
+    local oos = (cfg and cfg.outOfStockState) or {}
+    local cs  = cfg and cfg.cooldownStateVisuals and cfg.cooldownStateVisuals.cooldownState
+
+    if oos.alphaEnabled then
+      local a = PreviewClampAlpha(oos.alpha ~= nil and oos.alpha or 1.0)
+      frame._arcEnforceReadyAlpha = false
+      frame._arcReadyAlphaValue = nil
+      frame._arcTargetAlpha = a
+      if frame._lastAppliedAlpha ~= a then
+        frame._arcBypassFrameAlphaHook = true
+        frame:SetAlpha(a)
+        frame._arcBypassFrameAlphaHook = false
+        frame._lastAppliedAlpha = a
+      end
+    elseif cs and cs.dimWhenEmpty == true then
+      ApplyCooldownAlpha(frame, stateVisuals)
+    else
+      ApplyReadyState(frame, iconTex, stateVisuals, nil, false)
+    end
+
+    local desat = (oos.desaturate ~= false)   -- default ON
+    frame._arcDesatBranch = "ITEM_OUT_OF_STOCK"
+    frame._arcForceDesatValue = desat and 1 or 0
+    frame._arcBypassDesatHook = true
+    SetDesat(iconTex, desat and 1 or 0)
+    frame._arcBypassDesatHook = false
+    frame._arcTargetDesat = desat and 1 or 0
+    if ApplyBorderDesaturation then ApplyBorderDesaturation(frame, desat and 1 or 0) end
+
+    if oos.tint and oos.tintColor then
+      local c = oos.tintColor
+      SetVertexColorSafe(frame, iconTex, c.r or 0.5, c.g or 0.5, c.b or 0.5)
+    elseif frame._arcDesiredVertexColor then
+      -- SINGLE-WRITER RULE: SetVertexColorSafe does not just paint, it STORES
+      -- the colour so the RefreshIconColor hook re-applies it after every CDM
+      -- write. Simply not painting leaves that enforcement running, which is
+      -- why the tint survived unticking the toggle. Release it AND undo our
+      -- last write. Guarded on us having set one, so no other writer's colour
+      -- is stomped.
+      frame._arcDesiredVertexColor = nil
+      if iconTex and iconTex.SetVertexColor then
+        iconTex:SetVertexColor(1, 1, 1, 1)
+      end
+    end
   else
     ApplyReadyState(frame, iconTex, stateVisuals, nil, false)
     -- 12.1: item frames — CDM desaturates the icon when the on-use spell is on the GCD.
@@ -1244,6 +1350,11 @@ local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals, ignore
   else
     ApplyReadyGlow(frame, stateVisuals)
   end
+
+  -- Aura-active glow (and glow-when-missing) — the same evaluator every
+  -- cooldown path calls. Runs last so it owns its own glow key regardless of
+  -- what the ready glow above decided.
+  EvaluateAuraActiveGlow(frame, cfg)
 end
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -1904,8 +2015,15 @@ local function NewApplyCooldownStateVisuals(frame, cfg, normalAlpha, stateVisual
                           or (cfg.cooldownText and cfg.cooldownText.enabled ~= false and cfg.cooldownText.hideWhenHasCharges)
   -- desaturateWhenInactive: aura-not-active desat is the only configured visual? still run the dispatch.
   local hasAuraInactiveDesat = cfg.auraActiveState and cfg.auraActiveState.desaturateWhenInactive
+  -- GLOW WHEN AURA ACTIVE / MISSING is its own feature: GetEffectiveStateVisuals
+  -- only reports ready/cooldown settings, so an icon configured with ONLY this
+  -- glow produced stateVisuals = nil and bailed here -- the glow never
+  -- evaluated. CDMEnhance's own gate already carries this term; this one was
+  -- missing it, which is why ticking the option alone did nothing.
+  local hasAuraActiveGlow = cfg.auraActiveState
+    and (cfg.auraActiveState.glow == true or cfg.auraActiveState.glowWhenMissing == true)
 
-  if not stateVisuals and not isGlowPreview and not isAuraGlowPreview and not ignoreAuraOverride and not hasSpellUsability and not hasNoGCDSwipe and not hasWaitFlags and not hasChargeTextFlags and not hasAuraInactiveDesat then
+  if not stateVisuals and not isGlowPreview and not isAuraGlowPreview and not ignoreAuraOverride and not hasSpellUsability and not hasNoGCDSwipe and not hasWaitFlags and not hasChargeTextFlags and not hasAuraInactiveDesat and not hasAuraActiveGlow then
     local prevBranch = frame._arcDesatBranch
     local wasManagedDesat = prevBranch ~= nil and prevBranch ~= "NO_SV_EARLY"
     frame._arcForceDesatValue = nil

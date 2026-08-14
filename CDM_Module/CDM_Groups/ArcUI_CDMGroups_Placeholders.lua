@@ -725,6 +725,19 @@ local function ReleaseSlotBadge(badge)
     table.insert(slotBadgePool, badge)
 end
 
+-- Release every slot badge held for a group name, unconditionally.
+-- Badges are parented to UIParent at FULLSCREEN_DIALOG / level 10000, so they
+-- do NOT hide with their group: once a name stops existing (rename, delete)
+-- nothing ever visits activeSlotBadges[name] again and the badges float over
+-- the whole UI until reload. Rename/delete must call this for the old name.
+local function ClearSlotBadges(groupName)
+    if not groupName or not activeSlotBadges[groupName] then return end
+    for _, badge in pairs(activeSlotBadges[groupName]) do
+        ReleaseSlotBadge(badge)
+    end
+    activeSlotBadges[groupName] = nil
+end
+
 -- Update slot badges for a group (call after Layout or after any placeholder change)
 local function UpdateSlotBadgesForGroup(groupName, group, getSlotPosition, slotW, slotH)
     if not isEditingMode then
@@ -2946,6 +2959,7 @@ ns.CDMGroups.Placeholders = {
     EnsurePlaceholderMember = EnsurePlaceholderMember,
     
     -- Display
+    ClearSlotBadges = ClearSlotBadges,
     SetEditingMode = SetEditingMode,
     RefreshAllPlaceholders = RefreshAllPlaceholders,
     ShowPlaceholder = ShowPlaceholder,

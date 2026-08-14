@@ -2607,7 +2607,12 @@ ApplyIconStyle = function(frame, cdID)
   -- for any SetAlpha during the rest of ApplyIconStyle; the hide + text float
   -- happen after the text overlays are built (post SetupCooldownText below).
   local wasForceHidden = frame._arcForceHideActive == true
-  frame._arcForceHideActive = (cfg.forceHideIcon == true)
+  -- Arc AURA icons opt out of the whole-frame hide: their duration/stack
+  -- texts live on the ENGINE BUTTON (a separate frame tree), so alpha-0 on
+  -- the holder would erase the very texts the option promises to keep.
+  -- AuraIcons.ApplySettings/StyleActiveButton own force-hide there (ghost
+  -- art + button art hide, texts survive).
+  frame._arcForceHideActive = (cfg.forceHideIcon == true) and not frame._arcIsAuraIcon
   frame._arcWasForceHidden = wasForceHidden
 
   -- NOTE: CDMGroups controls all sizing - CDMEnhance does NOT call SetScale or SetSize
@@ -4340,8 +4345,13 @@ ApplyIconStyle = function(frame, cdID)
                        or (self.cooldownInfo and (self.cooldownInfo.overrideSpellID or self.cooldownInfo.spellID))
                        or self._arcSpellID
           if spellID and self.GetIconTexture then
+            -- SECRECY: on 12.1 item entries (potions fire this every
+            -- BAG_UPDATE_COOLDOWN) the usability booleans come back SECRET,
+            -- and testing one throws. nil = unreadable: leave CDM's own tint,
+            -- which it already applied correctly a moment ago.
+            local isUsable, notEnoughMana = ns.API.SafeIsSpellUsable(spellID)
+            if isUsable == nil then return end
             local iconTexture = self:GetIconTexture()
-            local isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
             if isUsable then
               iconTexture:SetVertexColor(CooldownViewerConstants.ITEM_USABLE_COLOR:GetRGBA())
             elseif notEnoughMana then
@@ -5510,6 +5520,55 @@ ns.CDMEnhance.ApplyIconStyle = ApplyIconStyle
 -- ===================================================================
 -- TEXT DRAG OVERLAYS
 -- ===================================================================
+-- ═══════════════════════════════════════════════════════════════════
+-- HOVER TOOLTIP FORWARDING (taint-safe)
+--
+-- Our drag overlays sit ON TOP of the CDM icon, so they swallow the hover and
+-- used to hand it back with parentFrame:GetScript("OnEnter")(parentFrame) --
+-- which runs Blizzard's OnEnter ON OUR TAINTED STACK. That is fine for spell
+-- icons, but the 12.1 ITEM entries walk a tooltip path
+-- (RefreshTooltip -> CheckDisplaySpellCategoryTooltip ->
+-- GetSpellCategoryTooltipItemID -> IsOnCooldown) that boolean-tests
+-- `isOnActualCooldown`, and on those frames it is a SECRET boolean. Secure
+-- code may test it; tainted code may not -- so BLIZZARD'S OWN function threw
+-- "attempt to perform boolean test ... tainted by 'ArcUI'".
+--
+-- So for item entries we never call their mixin: we build the same tooltip
+-- ourselves from non-secret ids (equip slot / the category's last-used item),
+-- which touches no protected state at all. Spell icons keep the old forward.
+-- ═══════════════════════════════════════════════════════════════════
+local function ForwardHoverTooltip(cdmFrame)
+  if not cdmFrame then return end
+  local ci = cdmFrame.cooldownInfo
+  local eq  = ci and ci.equipSlot
+  local cat = ci and ci.spellCategoryID
+
+  if eq or cat then
+    -- honour the global Show Tooltips toggle, same as CDM's own path would
+    local db = Shared and Shared.GetCDMGroupsDB and Shared.GetCDMGroupsDB()
+    if db and db.disableTooltips then return end
+    GameTooltip:SetOwner(cdmFrame, "ANCHOR_RIGHT")
+    if eq then
+      GameTooltip:SetInventoryItem("player", eq)
+    else
+      local itemID = ci.lastItemIDForCategory
+      if itemID then
+        GameTooltip:SetItemByID(itemID)
+      elseif ci.spellID then
+        GameTooltip:SetSpellByID(ci.spellID)
+      else
+        GameTooltip:Hide()
+        return
+      end
+    end
+    GameTooltip:Show()
+    return
+  end
+
+  local script = cdmFrame:GetScript("OnEnter")
+  if script then script(cdmFrame) end
+end
+
 local function CreateTextDragOverlay(fontString, frame, cdID, textType)
   if fontString._arcDragOverlay then 
     fontString._arcDragOverlay._cdID = cdID
@@ -5536,13 +5595,10 @@ local function CreateTextDragOverlay(fontString, frame, cdID, textType)
   overlay.highlight:Hide()
   
   overlay:SetScript("OnEnter", function(self)
-    -- Propagate to grandparent (CDM icon frame) for tooltips
+    -- Propagate to grandparent (CDM icon frame) for tooltips — taint-safe
     local parentFrame = self:GetParent()
     if parentFrame then
-      local grandparent = parentFrame:GetParent()
-      if grandparent and grandparent:GetScript("OnEnter") then
-        grandparent:GetScript("OnEnter")(grandparent)
-      end
+      ForwardHoverTooltip(parentFrame:GetParent())
     end
     
     if not textDragMode then return end
@@ -5823,11 +5879,8 @@ local function CreateDragOverlay(frame, cdID)
   overlay.dragText:Hide()
   
   overlay:SetScript("OnEnter", function(self)
-    -- Always propagate OnEnter to parent frame for tooltips
-    local parentFrame = self:GetParent()
-    if parentFrame and parentFrame:GetScript("OnEnter") then
-      parentFrame:GetScript("OnEnter")(parentFrame)
-    end
+    -- Always propagate OnEnter to parent frame for tooltips — taint-safe
+    ForwardHoverTooltip(self:GetParent())
     
     if not isUnlocked then return end
     self.highlight:Show()
@@ -8191,6 +8244,13 @@ end
 
 function ns.CDMEnhance.GetIconSettings(cdID)
   return GetIconSettings(cdID)
+end
+
+-- The SPARSE per-icon entry (nil when the user never customised this icon).
+-- Needed by anything that must tell "set on THIS icon" apart from "inherited
+-- from the global defaults" -- the merged read cannot distinguish them.
+function ns.CDMEnhance.GetRawIconSettings(cdID)
+  return GetRawIconSettings(cdID)
 end
 
 -- Get effective icon settings (merged: defaults -> global -> per-icon)

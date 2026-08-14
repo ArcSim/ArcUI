@@ -220,10 +220,20 @@ local function FcOnSetScale(self, scale)
     if self._cdmgSettingScale then return end
     if self._arcAuraID then return end
     if issecretvalue and issecretvalue(scale) then return end
-    
+
     local parent = self:GetParent()
-    local isManaged = (parent and parent._isCDMGContainer) or self._cdmgIsFreeIcon
-    
+    local isInContainer = parent and parent._isCDMGContainer
+    -- STALE FREE-FLAG HEAL: don't force scale 1 on a plain viewer icon that
+    -- only LOOKS free via a leftover recycled-frame flag (see FcOnSetSize)
+    if self._cdmgIsFreeIcon and not isInContainer then
+        local cdID = self.cooldownID
+        if not (cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]) then
+            self._cdmgIsFreeIcon = nil
+            self._cdmgFreeTargetSize = nil
+        end
+    end
+    local isManaged = isInContainer or self._cdmgIsFreeIcon
+
     if isManaged and math.abs((scale or 1) - 1) > 0.01 then
         self._cdmgSettingScale = true
         self:SetScale(1)
@@ -236,15 +246,28 @@ local function FcOnSetSize(self, w, h)
     if self._cdmgSettingSize then return end
     if self._arcAuraID then return end
     if issecretvalue and (issecretvalue(w) or issecretvalue(h)) then return end
-    
+
     local parent = self:GetParent()
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
-    
-    if not isInContainer and not isFreeIcon then return end
-    
-    local targetW, targetH
     local cdID = self.cooldownID
+
+    -- STALE FREE-FLAG HEAL (mirror of Maintain's OnSetSize): CDM pool
+    -- recycling carries _cdmgIsFreeIcon/_cdmgFreeTargetSize across occupant
+    -- changes — a grouped/viewer frame with the leftover flag would get the
+    -- OLD occupant's free sizing stamped onto it (intermittent giant icons).
+    -- In-container frames are never free; occupants without a freeIcons
+    -- entry aren't free either. Clear and let the real owner size it.
+    if isFreeIcon and (isInContainer
+        or not (cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID])) then
+        self._cdmgIsFreeIcon = nil
+        self._cdmgFreeTargetSize = nil
+        isFreeIcon = false
+    end
+
+    if not isInContainer and not isFreeIcon then return end
+
+    local targetW, targetH
     
     if cdID and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings then
         local cfg = ns.CDMEnhance.GetEffectiveIconSettings(cdID)
@@ -277,6 +300,11 @@ local function FcOnSetSize(self, w, h)
         end
     end
     
+    -- CORRUPTION GUARD: never stamp a nonsensical size (nil/NaN/absurd) —
+    -- skipping the correction is strictly safer than enforcing garbage.
+    if not (targetW and targetW == targetW and targetW > 0 and targetW <= 512) then return end
+    if not (targetH and targetH == targetH and targetH > 0 and targetH <= 512) then return end
+
     if math.abs((w or 0) - targetW) > 0.5 or math.abs((h or 0) - targetH) > 0.5 then
         self._cdmgSettingSize = true
         self:SetSize(targetW, targetH)
@@ -1155,31 +1183,48 @@ local function AssignFrameToOwner(cdID, cdmData)
     -- Define base groups that should always exist
     local BASE_GROUPS = { "Essential", "Utility", "Buffs" }
     
-    -- Try to assign to default group first
-    if defaultGroup and ns.CDMGroups.groups then
-        -- If group doesn't exist but it's a base group, try to create it
-        if not ns.CDMGroups.groups[defaultGroup] then
-            for _, baseName in ipairs(BASE_GROUPS) do
-                if defaultGroup == baseName then
-                    -- Create the base group
-                    if ns.CDMGroups.CreateGroup then
-                        Debug("AssignFrameToOwner: Creating missing base group", defaultGroup)
-                        ns.CDMGroups.CreateGroup(defaultGroup)
-                    end
-                    break
-                end
+    -- Where does a brand-new icon go? The user's per-category routing decides,
+    -- and the shipped default is resolved by STABLE ID so a RENAMED default is
+    -- still its own destination. Looking the base group up by NAME here is what
+    -- rebuilt a fresh empty "Utility" every login once the user renamed theirs,
+    -- producing a duplicate that could not be selected or deleted.
+    if defaultGroup and ns.CDMGroups.ResolveNewIconDestination then
+        local kind, group, groupName = ns.CDMGroups.ResolveNewIconDestination(defaultGroup)
+
+        if kind == "none" then
+            Debug("AssignFrameToOwner: routing = none for", defaultGroup)
+            return false
+        elseif kind == "free" then
+            -- Screen CENTRE (offsets from UIParent centre), fanned out so a batch
+            -- stays readable. Must NOT use frame:GetCenter(): those are absolute
+            -- screen coordinates and land the icon off the top of the screen.
+            local fx, fy = 0, 0
+            if ns.CDMGroups.NextFreeDropPosition then
+                fx, fy = ns.CDMGroups.NextFreeDropPosition(nil)
             end
-        end
-        
-        -- Now try to add to the group
-        local group = ns.CDMGroups.groups[defaultGroup]
-        if group and group.AddMember then
-            local added = group:AddMember(cdID)
-            if added then
-                -- AddMember created the member, now assign the frame
+            Debug("AssignFrameToOwner: routing = free position for", defaultGroup)
+            return AssignFrameToFree(cdID, frame, fx, fy, nil, viewerType, viewerName)
+        elseif kind == "group" and group and group.AddMember then
+            if group:AddMember(cdID) then
                 local member = group.members[cdID]
                 if member then
-                    return AssignFrameToGroup(cdID, frame, defaultGroup, member.row, member.col, viewerType, viewerName)
+                    return AssignFrameToGroup(cdID, frame, groupName, member.row, member.col, viewerType, viewerName)
+                end
+            end
+        elseif not kind then
+            -- Nothing to route to at all (fresh setup / every base group gone):
+            -- create the shipped group for this category, as before.
+            for _, baseName in ipairs(BASE_GROUPS) do
+                if defaultGroup == baseName and ns.CDMGroups.CreateGroup then
+                    Debug("AssignFrameToOwner: Creating missing base group", defaultGroup)
+                    local created = ns.CDMGroups.CreateGroup(defaultGroup)
+                    if created and created.AddMember and created:AddMember(cdID) then
+                        local member = created.members[cdID]
+                        if member then
+                            return AssignFrameToGroup(cdID, frame, defaultGroup, member.row, member.col, viewerType, viewerName)
+                        end
+                    end
+                    break
                 end
             end
         end

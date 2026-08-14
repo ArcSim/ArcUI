@@ -395,6 +395,12 @@ function ME.Export(selectedKeys)
         exportedBy = UnitName("player") or "Unknown",
         realm = GetRealmName() or "Unknown",
         specs = {},
+        -- New Icon routing. This is an ACCOUNT-WIDE store (base values plus the
+        -- sparse per-character / per-spec patches), and a master export is by
+        -- definition an account-level export, so it travels whole rather than
+        -- being flattened per spec the way a single-spec CDM export does.
+        iconRouting = ns.CDMGroups and ns.CDMGroups.GetIconRoutingStore
+            and DeepCopy(ns.CDMGroups.GetIconRoutingStore() or {}) or nil,
     }
     
     local totalProfiles = 0
@@ -936,6 +942,17 @@ function ME.Import(data, importMode, activeOverrides, selectedProfiles)
     local cdmGroupsDB = Shared.GetCDMGroupsDB()
     if not cdmGroupsDB then return false, "CDMGroups database not available" end
     if not cdmGroupsDB.specData then cdmGroupsDB.specData = {} end
+
+    -- ─────────────────────────────────────────────────────────────────────────
+    -- NEW ICON ROUTING: account-wide store (base + per-character/spec patches).
+    -- A master export IS the whole account, so it is restored whole. The patch
+    -- keys are character/spec scoped, so an importer simply carries the source's
+    -- patches for characters they do not have; those never resolve and cost a
+    -- few bytes, which is far safer than trying to remap them onto other chars.
+    -- ─────────────────────────────────────────────────────────────────────────
+    if data.iconRouting and ns.CDMGroups and ns.CDMGroups.SetIconRoutingStore then
+        ns.CDMGroups.SetIconRoutingStore(data.iconRouting)
+    end
 
     -- ─────────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP LAYOUTS: write embedded layouts into the importer's

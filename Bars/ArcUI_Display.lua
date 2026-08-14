@@ -84,6 +84,28 @@ local math_ceil = math.ceil
 local math_max = math.max
 local math_min = math.min
 
+-- ===================================================================
+-- FILL-SEGMENT FRAME LEVELS
+-- The chrome above the fill sits at FIXED offsets from the bar frame:
+-- tick overlay +22, border +23, text frames +25. Segment frames used to
+-- take `base + i` with no cap, so any bar with more than ~21 stacks put
+-- its top segments INTO the chrome band and covered it: on a 25-stack bar
+-- the tick marks vanished at stack 23 (segment level 23 >= tick's 22) and
+-- the border at 24-25 (>= border's 23). The "At Max" bar (+21) was buried
+-- the same way. Compress the index into the reserved 1..20 band instead.
+-- Segments are cumulative (each spans 0..i) so a higher index must still
+-- draw over a lower one: the mapping is monotonic, and equal levels break
+-- ties by creation order, which is ascending by index. Bars with <= 20
+-- segments keep their exact previous levels.
+-- ===================================================================
+local SEGMENT_LEVEL_BAND = 20
+local function SegmentLevel(baseLevel, i, count)
+    if not count or count <= SEGMENT_LEVEL_BAND then
+        return baseLevel + i
+    end
+    return baseLevel + 1 + math_floor((i - 1) * (SEGMENT_LEVEL_BAND - 1) / (count - 1))
+end
+
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
 -- ===================================================================
@@ -2056,6 +2078,48 @@ end
 -- ===================================================================
 -- UPDATE SPECIFIC BAR
 -- ===================================================================
+-- TOTEM-LIKE BARS (pet / totem / ground) NEVER enter the 12.1 aura-slot engine.
+-- Nothing about them changed in 12.1: their duration comes from
+-- GetTotemDuration(slot), an ordinary duration object that aura secrecy never
+-- touched, so the pre-aura-slot path still works and is the correct one.
+--
+-- Arming the engine for them did silent damage. The attach handed OUR duration
+-- FontString to the AuraButton's own timer (BD.ApplyStyle -> SetDurationText),
+-- which then never fires because there is no aura behind a totem, and the region
+-- becomes access-constrained the moment initializeFrame returns so our own
+-- DurationTextBinding cannot drive it either. The fill kept working (that is our
+-- own StatusBar, which the engine never took) while the countdown went blank:
+-- exactly the Call Dreadstalkers report, with `Attach: retarget-only (idKey=760)`
+-- in the ArcBarDur log as the fingerprint.
+-- CUSTOM MAX for totem/pet bars. Maps remaining SECONDS to a 0..1 bar value.
+-- Aura bars cannot have a custom max on 12.1 because the engine timer takes no
+-- maximum, but these bars are ours end to end, so they can. The explicit plateau
+-- point past the max is what makes the bar sit full (drain) or empty (fill) while
+-- the totem still has longer left than the user's window, rather than trusting
+-- endpoint clamping. Cached per (max, direction) -- these are pure data.
+local totemMaxCurves = {}
+local function GetTotemMaxCurve(maxValue, fillMode)
+  if not (C_CurveUtil and C_CurveUtil.CreateCurve) then return nil end
+  if not maxValue or maxValue <= 0 then return nil end
+  local key = string_format("%s:%s", tostring(maxValue), tostring(fillMode))
+  local curve = totemMaxCurves[key]
+  if curve then return curve end
+  curve = C_CurveUtil.CreateCurve()
+  if fillMode == "fill" then
+    curve:AddPoint(0, 1); curve:AddPoint(maxValue, 0); curve:AddPoint(99999, 0)
+  else
+    curve:AddPoint(0, 0); curve:AddPoint(maxValue, 1); curve:AddPoint(99999, 1)
+  end
+  totemMaxCurves[key] = curve
+  return curve
+end
+
+local TOTEM_LIKE_TRACKTYPES = { pet = true, totem = true, ground = true }
+local function IsTotemLikeBar(barConfig)
+  local tt = barConfig and barConfig.tracking and barConfig.tracking.trackType
+  return tt ~= nil and TOTEM_LIKE_TRACKTYPES[tt] == true
+end
+
 function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFontString, iconTexture, auraName, cachedConfig)
   -- PROFILER: Track where time is spent
   local PM = ns.ProfilerMark
@@ -2645,7 +2709,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
         bar:SetReverseFill(isBarReverseFill)
         bar:SetRotatesTexture(rotateBarTex)
         bar:SetStatusBarTexture(texturePath)
-        bar:SetFrameLevel(barFrame:GetFrameLevel() + i)
+        bar:SetFrameLevel(SegmentLevel(barFrame:GetFrameLevel(), i, numBars))
         ApplyBarSmoothing(bar, enableSmooth)
         bar:ClearAllPoints()
         local barScale = barFrame:GetEffectiveScale()
@@ -2800,7 +2864,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
         bar:SetReverseFill(isBarReverseFill)
         bar:SetRotatesTexture(rotateBarTex)
         bar:SetStatusBarTexture(texturePath)
-        bar:SetFrameLevel(barFrame:GetFrameLevel() + i)
+        bar:SetFrameLevel(SegmentLevel(barFrame:GetFrameLevel(), i, numBars))
         ApplyBarSmoothing(bar, enableSmooth)
         bar:ClearAllPoints()
         if isBarVertical then
@@ -3093,7 +3157,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   -- text-only ArcTimer binding; route these bars' countdown through the
   -- same one (attached after this block) and skip the live machinery.
   local engineDurText = false
-  if not isCustomAura and ns.API and ns.API.IS_121
+  if not isCustomAura and not IsTotemLikeBar(barConfig) and ns.API and ns.API.IS_121
      and barConfig.display.showDuration and durationFrame then
     local cd0 = barConfig.tracking.cooldownID
     local ts0 = barConfig.tracking.trackedSpellID or barConfig.tracking.spellID
@@ -3933,6 +3997,7 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   -- NOTE: `active` itself is NOT forced here -- that would break Hide When
   -- Inactive and the dimmed look for CDM bars, which CAN read their state.
   local engineArm = not isCustomAura
+    and not IsTotemLikeBar(barConfig)   -- totems drive themselves, see IsTotemLikeBar
     and barConfig.tracking
     and (((barConfig.tracking.cooldownID or 0) > 0) or ((barConfig.tracking.trackedSpellID or 0) > 0))
     and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
@@ -4327,15 +4392,21 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     -- TOTEM DURATION BAR
     -- 12.0.5+: GetDurationObject() → GetTotemDuration(slot).
     -- GetTotemDuration returns nil when slot inactive, valid durObj when active.
-    -- Use SetTimerDuration for bar animation (no polling needed) and
-    -- GetRemainingDuration() in a text OnUpdate — same pattern as aura bars.
+    -- Auto max animates C-side via SetTimerDuration with no polling at all; a
+    -- custom max or threshold bands add one shared 20fps handler (see below).
+    -- Countdown text is a DurationTextBinding, also C-side.
     if barFrame.bar.SetSmoothing then
       barFrame.bar:SetSmoothing(false)
     end
 
     -- Clear any legacy polling state
     barFrame.bar.totemPollingData = nil
+    barFrame.bar.totemTickData = nil
     barFrame.bar:SetScript("OnUpdate", nil)
+
+    -- set when threshold bands are driving the fill colour, so the gradient
+    -- (which cannot take secret colours) stays off, same rule as aura bars
+    local totemCurveActive = false
 
     local durObj = sourceBar:GetDurationObject()
 
@@ -4348,8 +4419,22 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
         and Enum.StatusBarTimerDirection.ElapsedTime
         or  Enum.StatusBarTimerDirection.RemainingTime
 
+      -- MAX DURATION. Auto = SetTimerDuration, which normalises the totem's own
+      -- full span C-side for free. Manual = map remaining SECONDS through our own
+      -- plain curve: EvaluateRemainingDuration is SecretWhenCurveSecret and the
+      -- curve is ours, so the result is a NON-secret 0..1 that SetValue can take,
+      -- and the curve's shape carries fill-vs-drain. No arithmetic on a duration
+      -- anywhere, which is why this is legal where the aura lane's max was not.
+      local autoMax = barConfig.tracking.dynamicMaxDuration
+      if autoMax == nil then autoMax = true end
+      local maxCurve = (not autoMax) and GetTotemMaxCurve(maxValue, fillMode) or nil
+
       barFrame.bar:SetMinMaxValues(0, 1)
-      barFrame.bar:SetTimerDuration(durObj, Enum.StatusBarInterpolation.Linear, timerDirection)
+      if maxCurve then
+        barFrame.bar:SetValue(durObj:EvaluateRemainingDuration(maxCurve), durationInterp)
+      else
+        barFrame.bar:SetTimerDuration(durObj, Enum.StatusBarInterpolation.Linear, timerDirection)
+      end
 
       -- Duration text: poll GetRemainingDuration() on the fresh durObj each frame.
       -- GetTotemDuration returns nil (not a zero-span object) when slot gone,
@@ -4367,7 +4452,10 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
           durationFrame.isActive = false
           durationFrame.sourceBar = nil
           durationFrame:SetScript("OnUpdate", nil)
-          ns.DurationText.Bind(durationFrame.text, durObj, decimals)
+          -- pass the display config like the aura branch does, so totem bars get
+          -- the same duration-text threshold colouring instead of silently
+          -- ignoring those options
+          ns.DurationText.Bind(durationFrame.text, durObj, decimals, nil, nil, barConfig.display)
         else
           -- Fallback (pre-12.0.7): poll GetRemainingDuration on the totem durObj.
           durationFrame.storedDecimals = decimals
@@ -4402,9 +4490,85 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
 
           durationFrame:SetScript("OnUpdate", durationFrame.totemDurationOnUpdate)
         end
+      elseif durationFrame then
+        -- showDuration off: release the binding and hide, otherwise a frame shown
+        -- by an earlier config lingers with a frozen countdown
+        if ns.DurationText then ns.DurationText.Unbind(durationFrame.text) end
+        durationFrame.isActive = false
+        durationFrame.sourceBar = nil
+        durationFrame:SetScript("OnUpdate", nil)
+        durationFrame:Hide()
       end
 
-      barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+      -- FILL COLOUR THRESHOLD BANDS. A totem durObj is an ordinary duration
+      -- object, so EvaluateRemainingPercent drives the curve exactly like an aura
+      -- bar, and SetStatusBarColor is a secret-safe sink for the result. Re-read
+      -- the durObj each tick rather than closing over this one: GetTotemDuration
+      -- returns nil the moment the slot empties, which is our stop signal.
+      if useColorCurve then
+        totemCurveActive = true
+        local initialColor = durObj:EvaluateRemainingPercent(colorCurve)
+        if initialColor then
+          barFrame.bar:SetStatusBarColor(initialColor:GetRGBA())
+        else
+          barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+        end
+      else
+        barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+      end
+
+      -- ONE handler for both jobs -- a frame has a single OnUpdate script. Manual
+      -- max has to repush the value (SetValue does not animate itself the way
+      -- SetTimerDuration does); threshold bands have to re-evaluate the colour.
+      -- Both re-fetch the durObj, which doubles as the stop signal: GetTotemDuration
+      -- returns nil the instant the slot empties. Nothing is installed when neither
+      -- job is on, so the default Auto + flat colour bar stays at zero idle cost.
+      if maxCurve or useColorCurve then
+        barFrame.bar.totemTickData = {
+          sourceBar  = sourceBar,
+          maxCurve   = maxCurve,
+          colorCurve = useColorCurve and colorCurve or nil,
+          baseColor  = baseColor,
+          interp     = durationInterp,
+          elapsed    = 0,
+        }
+
+        if not barFrame.bar.totemTickOnUpdate then
+          barFrame.bar.totemTickOnUpdate = function(self, elapsed)
+            local data = self.totemTickData
+            if not data then self:SetScript("OnUpdate", nil); return end
+
+            -- throttle gate FIRST, so GetTotemDuration runs at 20fps not 200
+            data.elapsed = data.elapsed + elapsed
+            if data.elapsed < 0.05 then return end
+            data.elapsed = 0
+
+            local cur = data.sourceBar:GetDurationObject()
+            if not cur then
+              self:SetScript("OnUpdate", nil)
+              self.totemTickData = nil
+              if data.colorCurve then
+                self:SetStatusBarColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, data.baseColor.a or 1)
+              end
+              return
+            end
+
+            if data.maxCurve then
+              self:SetValue(cur:EvaluateRemainingDuration(data.maxCurve), data.interp)
+            end
+
+            if data.colorCurve then
+              local c = cur:EvaluateRemainingPercent(data.colorCurve)
+              if c then
+                self:SetStatusBarColor(c:GetRGBA())
+              else
+                self:SetStatusBarColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, data.baseColor.a or 1)
+              end
+            end
+          end
+        end
+        barFrame.bar:SetScript("OnUpdate", barFrame.bar.totemTickOnUpdate)
+      end
       barFrame.bar:SetAlpha(1)
     else
       -- No duration object — slot inactive, clear everything
@@ -4424,9 +4588,11 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       barFrame.bar:SetAlpha(1)
     end
 
-    ApplyBarGradient(barFrame.bar, barConfig, baseColor)
+    if not totemCurveActive then
+      ApplyBarGradient(barFrame.bar, barConfig, baseColor)
+    end
     barFrame.bar:Show()
-    
+
   elseif (active and ((sourceBar and sourceBar.GetAuraInfo) or isCustomAura)) or engineArm then
     -- AURA DURATION BAR (CDM-sourced, or a CUSTOM spell-ID bar with no
     -- sourceBar — the engine lane below handles the custom case; engineArm
@@ -4898,8 +5064,15 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     local barTexture = barFrame.bar:GetStatusBarTexture()
     if barTexture then barTexture:SetVertexColor(1, 1, 1, 1) end
     
-    local useDynamicMax = barConfig.tracking.dynamicMaxDuration and sourceBar.GetMinMaxValues
-    
+    -- 12.1: a manual max cannot be honoured (no max parameter exists anywhere in
+    -- the aura timer API) and taking it here was the visible bug -- the source
+    -- bar's value is on the SOURCE bar's scale, so pairing it with the user's max
+    -- made every bar read full. Always inherit the source's own min/max on 12.1;
+    -- the option is locked to Auto to match (see TrackingOptions dynamicMax).
+    local useDynamicMax = (barConfig.tracking.dynamicMaxDuration
+        or ((ns.API and ns.API.IS_121) and not IsTotemLikeBar(barConfig)))
+      and sourceBar.GetMinMaxValues
+
     if useDynamicMax then
       local _, dynamicMax = sourceBar:GetMinMaxValues()
       barFrame.bar:SetMinMaxValues(0, dynamicMax or maxValue)
@@ -5516,16 +5689,18 @@ function ns.Display.ApplyAppearance(barNumber)
   -- Apply strata/level to stacked bars (perStack/continuous modes)
   -- Levels: +1 to +20 for stack bars, +21 for maxColorBar
   if barFrame.stackedBars then
+    local nSeg = #barFrame.stackedBars
     for i, bar in ipairs(barFrame.stackedBars) do
       bar:SetFrameStrata(barStrata)
-      bar:SetFrameLevel(barLevel + i)
+      bar:SetFrameLevel(SegmentLevel(barLevel, i, nSeg))
     end
   end
   -- Apply strata/level to granular bars (perThreshold mode)
   if barFrame.granularBars then
+    local nSeg = #barFrame.granularBars
     for i, bar in ipairs(barFrame.granularBars) do
       bar:SetFrameStrata(barStrata)
-      bar:SetFrameLevel(barLevel + i)
+      bar:SetFrameLevel(SegmentLevel(barLevel, i, nSeg))
     end
   end
   if barFrame.maxColorBar then
@@ -6033,7 +6208,11 @@ function ns.Display.ApplyAppearance(barNumber)
   -- 12.1: re-push the freshly-applied fill/text style onto the engine duration overlay so
   -- option changes (bar texture, duration font/colour/decimals) take effect LIVE instead of
   -- only after a reload. No-op on live and on non-BD bars.
-  if ns.BarDuration and ns.BarDuration.ApplyStyle then
+  if ns.BarDuration and IsTotemLikeBar(barConfig) then
+    -- a bar switched TO pet/totem/ground mid-session may still be attached from
+    -- its previous type; release our duration FontString back to us
+    if ns.BarDuration.Detach then ns.BarDuration.Detach(barFrame) end
+  elseif ns.BarDuration and ns.BarDuration.ApplyStyle then
     local bdDir = (cfg.durationBarFillMode == "fill")
       and Enum.StatusBarTimerDirection.ElapsedTime or Enum.StatusBarTimerDirection.RemainingTime
     local bdDurFmt

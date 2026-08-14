@@ -63,6 +63,30 @@ end
 -- Expose for other modules
 ns.API.HasAuraInstanceID = HasAuraInstanceID
 
+-- ===================================================================
+-- SECRET-SAFE USABILITY READ (detect, don't test)
+--
+-- C_Spell.IsSpellUsable takes SecretArguments = "AllowedWhenTainted", so a
+-- secret spellID hands back SECRET BOOLEANS -- and a boolean test on a secret
+-- THROWS ("attempt to perform boolean test on a secret boolean value"). The
+-- 12.1 CDM item entries walk straight into this: a bag-item cooldown refresh
+-- (potion) runs CDM's RefreshIconColor on our tainted stack, and every hook
+-- that read usability there errored on every BAG_UPDATE_COOLDOWN.
+--
+-- Returns isUsable, insufficientPower -- or NIL when the answer is secret, so
+-- callers can simply leave whatever CDM already decided in place.
+-- ===================================================================
+function ns.API.SafeIsSpellUsable(spellID)
+  if not spellID then return nil end
+  if not (C_Spell and C_Spell.IsSpellUsable) then return nil end
+  if issecretvalue and issecretvalue(spellID) then return nil end
+  local usable, insufficientPower = C_Spell.IsSpellUsable(spellID)
+  if issecretvalue and (issecretvalue(usable) or issecretvalue(insufficientPower)) then
+    return nil
+  end
+  return usable, insufficientPower
+end
+
 -- Spec change grace period - don't hide bars due to trackingOK=false for a few seconds after spec change
 local specChangeGraceUntil = 0
 local SPEC_CHANGE_GRACE_DURATION = 3.0  -- seconds
@@ -111,6 +135,7 @@ if LSM then
     ["ArcUI: Boxing Arena"]      = "BoxingArenaSound.ogg",
     ["ArcUI: Double Whoosh"]     = "DoubleWhoosh.ogg",
     ["ArcUI: Heartbeat"]         = "HeartbeatSingle.ogg",
+    ["ArcUI: Kaching"]           = "Kaching.ogg",
     ["ArcUI: Sharp Punch"]       = "SharpPunch.ogg",
     ["ArcUI: Shotgun"]           = "Shotgun.ogg",
     ["ArcUI: Squeaky Toy"]       = "SqueakyToyShort.ogg",
@@ -694,19 +719,35 @@ local function BuildSpellToCooldownIDMapping()
       for _, cdID in ipairs(cooldownIDs) do
         local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
         if info and info.spellID and info.spellID > 0 then
-          -- Store mapping: spellID → cooldownID
-          -- Note: A spellID might map to multiple cooldownIDs (e.g., different ranks)
-          -- We store the first one found; the validation loop will find the right frame
-          if not mapping[info.spellID] then
-            mapping[info.spellID] = cdID
+          -- Store mapping: spellID → ORDERED LIST of cooldownIDs. One spellID can
+          -- legitimately produce several (the same aura listed under both
+          -- TrackedBuff and TrackedBar, ranks, variants), and keeping only the
+          -- first meant a bar whose sourceType is "bar" could resolve to the icon
+          -- entry and fail validation anyway. Callers walk the list and take the
+          -- first one that actually has a live frame.
+          local function addTo(sid)
+            if type(sid) ~= "number" or sid <= 0 then return end
+            local list = mapping[sid]
+            if not list then
+              list = {}
+              mapping[sid] = list
+            end
+            for _, existing in ipairs(list) do
+              if existing == cdID then return end
+            end
+            table.insert(list, cdID)
           end
-          
-          -- Also check linkedSpellIDs for auras that might have variant spell IDs
+
+          -- Index the FULL identity set Blizzard gives an entry, not just the base
+          -- cast spell: the buff a bar tracks frequently lives on an override or a
+          -- linked id, and a bar bound in another spec may have stored one of
+          -- those instead of the base.
+          addTo(info.spellID)
+          addTo(info.overrideSpellID)
+          addTo(info.overrideTooltipSpellID)
           if info.linkedSpellIDs then
             for _, linkedSpellID in ipairs(info.linkedSpellIDs) do
-              if linkedSpellID and linkedSpellID > 0 and not mapping[linkedSpellID] then
-                mapping[linkedSpellID] = cdID
-              end
+              addTo(linkedSpellID)
             end
           end
         end
@@ -742,12 +783,18 @@ local function InvalidateSpellToCooldownIDCache()
   spellToCooldownIDCacheSpec = nil
 end
 
--- Find a cooldownID for a spellID on current spec
-local function FindCooldownIDForSpellID(spellID)
+-- Find every cooldownID a spellID maps to on the current spec (ordered)
+local function FindAllCooldownIDsForSpellID(spellID)
   if not spellID or spellID <= 0 then return nil end
-  
+
   local mapping = GetSpellToCooldownIDMapping()
   return mapping[spellID]
+end
+
+-- Find a cooldownID for a spellID on current spec (first match)
+local function FindCooldownIDForSpellID(spellID)
+  local list = FindAllCooldownIDsForSpellID(spellID)
+  return list and list[1]
 end
 
 -- Get the active (working) cooldownID for a bar
@@ -807,8 +854,81 @@ function ns.API.GetActiveCooldownIDForBar(barNum, validCooldownIDs)
     end
   end
   
-  -- 3. Auto-discover removed — use ns.API.DiscoverAlternateCooldownID(barNum) explicitly
-  
+  -- 3. Cross-spec resolution. The SAME spell carries a DIFFERENT cooldownID in
+  -- each spec, so a bar bound while in one spec (its id is stored as primary)
+  -- reads "Tracking Failed" in every other spec the user ticked under Show On
+  -- Specs -- the reported Alter Time / Ice Cold case. Ask the current spec's
+  -- spellID→cooldownID mapping (rebuilt on PLAYER_SPECIALIZATION_CHANGED, and it
+  -- indexes linkedSpellIDs too) for this bar's spell right here.
+  --
+  -- This is RESOLUTION ONLY: it returns an id for this spec and never writes to
+  -- alternateCooldownIDs. That is why the old auto-discover was removed -- it
+  -- silently accumulated ids into the config -- so adding is still the explicit
+  -- DiscoverAlternateCooldownID button. Ids the user removed stay excluded, and
+  -- the result must still have a live frame (hasValidFrame), so an unlearned
+  -- entry from the allowUnlearned scan can never bind.
+  local function isExcluded(cdID)
+    if not tracking.excludedCooldownIDs then return false end
+    for _, exID in ipairs(tracking.excludedCooldownIDs) do
+      if exID == cdID then return true end
+    end
+    return false
+  end
+
+  local spellCandidates, seenCandidate = {}, {}
+  local function addCandidate(sid)
+    if type(sid) ~= "number" or sid <= 0 or seenCandidate[sid] then return end
+    seenCandidate[sid] = true
+    table.insert(spellCandidates, sid)
+  end
+
+  addCandidate(tracking.spellID)
+  addCandidate(tracking.trackedSpellID)
+
+  -- Widen the net with the spell IDs the ORIGINAL binding stands for. The stored
+  -- id belongs to the spec the bar was made in, but cooldownInfo is static data
+  -- and still resolves, and its spellID / overrides / linked set are the very ids
+  -- THIS spec's entry is indexed under. That covers the case where the two specs'
+  -- entries disagree about which id is the "base" spell.
+  local function addSpellIDsOf(cdID)
+    if type(cdID) ~= "number" or cdID <= 0 then return end
+    if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then return end
+    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+    if not info then return end
+    addCandidate(info.spellID)
+    addCandidate(info.overrideSpellID)
+    addCandidate(info.overrideTooltipSpellID)
+    if info.linkedSpellIDs then
+      for _, linked in ipairs(info.linkedSpellIDs) do addCandidate(linked) end
+    end
+  end
+
+  addSpellIDsOf(tracking.cooldownID)
+  if tracking.alternateCooldownIDs then
+    for _, altCdID in ipairs(tracking.alternateCooldownIDs) do addSpellIDsOf(altCdID) end
+  end
+
+  -- Prefer a candidate whose live frame matches how this bar reads its source
+  -- (icon vs bar). The caller rejects a mismatch outright, so handing back an
+  -- icon-only id for a bar-sourced config would just fail validation one step
+  -- later; only fall back to a mismatched id when nothing better exists.
+  local wantSourceType = tracking.sourceType or "icon"
+  local fallbackResolved
+  for _, sid in ipairs(spellCandidates) do
+    for _, resolved in ipairs(FindAllCooldownIDsForSpellID(sid) or {}) do
+      if not isExcluded(resolved) and hasValidFrame(resolved) then
+        local kind = validCooldownIDs[resolved]
+        if kind == "both" or kind == wantSourceType then
+          return resolved, "discovered"
+        end
+        fallbackResolved = fallbackResolved or resolved
+      end
+    end
+  end
+  if fallbackResolved then
+    return fallbackResolved, "discovered"
+  end
+
   -- No valid cooldownID found
   return nil, nil
 end
@@ -4094,11 +4214,23 @@ SlashCmdList["ARCBARS"] = function(msg)
         if barConfig and barConfig.tracking and barConfig.tracking.enabled then
           local state = GetBarState(barNum)
           local cdID = barConfig.tracking.cooldownID
-          print(string.format("  Bar %d: cdID=%s, trackingOK=%s, cachedFrame=%s", 
-            barNum, 
+          -- resolved id is what the bar is ACTUALLY bound to right now; it differs
+          -- from the stored one whenever cross-spec resolution kicked in, which is
+          -- the first thing to check on a "Tracking Failed" report
+          local resolved = state.cooldownID
+          print(string.format("  Bar %d: cdID=%s%s, trackingOK=%s, cachedFrame=%s",
+            barNum,
             tostring(cdID),
+            (resolved and resolved ~= cdID) and (" |cff00ff00-> resolved " .. tostring(resolved) .. "|r") or "",
             tostring(state.trackingOK),
             state.cachedFrame and "YES" or "nil"))
+          if not state.trackingOK then
+            print(string.format("    spellID=%s trackedSpellID=%s alts=%d specs=%s",
+              tostring(barConfig.tracking.spellID),
+              tostring(barConfig.tracking.trackedSpellID),
+              barConfig.tracking.alternateCooldownIDs and #barConfig.tracking.alternateCooldownIDs or 0,
+              barConfig.behavior and barConfig.behavior.showOnSpecs and "set" or "all"))
+          end
           if state.cachedFrame then
             local frame = state.cachedFrame
             print(string.format("    frame.cooldownID=%s, frame._arcFreeCdID=%s, parent=%s",

@@ -389,6 +389,13 @@ local function BuildExportData(options)
                 keepCDMStyle = specData.keepCDMStyle or nil,
                 -- Global icon settings (tooltips, click-through) - stored at root, not per-spec
                 globalIconSettings = exportedGlobalIconSettings,
+                -- New Icon routing. Exported as the EFFECTIVE values for this
+                -- spec (resolved through account/character/spec), because the
+                -- raw scoped store is account-wide and importing it wholesale
+                -- would rewrite routing on every character the importer owns.
+                iconRouting = (options.includeIconRouting ~= false)
+                    and ns.CDMGroups and ns.CDMGroups.GetEffectiveIconRouting
+                    and ns.CDMGroups.GetEffectiveIconRouting() or nil,
             }
             
             -- Clean runtime data from layout profiles (shouldn't have any, but be safe)
@@ -851,6 +858,8 @@ function IE.GetImportStats(data)
         
         -- groupSettings are at specData level
         stats.hasGroupSettings = data.cdmGroups.groupSettings ~= nil
+        -- New Icon routing (carried as effective values for the exported spec)
+        stats.iconRouting = data.cdmGroups.iconRouting
     end
     
     if data.cdmEnhance then
@@ -1189,6 +1198,21 @@ function IE.Import(importString, options)
             if ns.CDMGroups and ns.CDMGroups.RefreshCachedLayoutSettings then
                 ns.CDMGroups.RefreshCachedLayoutSettings()
             end
+        end
+
+        -- ═══════════════════════════════════════════════════════════════════════════
+        -- IMPORT NEW ICON ROUTING
+        -- Applied at the SPEC scope, never the account base, so importing one
+        -- spec's layout cannot silently change routing on the importer's other
+        -- characters. A destination group that does not exist here resolves to
+        -- Free Position at runtime.
+        -- ═══════════════════════════════════════════════════════════════════════════
+        -- NOTE: read the flag from `options`, never from uiState -- uiState is
+        -- declared far BELOW this function, so referencing it here resolves to a
+        -- nil global and throws mid-import.
+        if data.cdmGroups.iconRouting and (not options or options.importIconRouting ~= false)
+           and ns.CDMGroups and ns.CDMGroups.ApplyImportedIconRouting then
+            ns.CDMGroups.ApplyImportedIconRouting(data.cdmGroups.iconRouting)
         end
     end
     
@@ -3471,6 +3495,33 @@ local function GetOptionsTable()
                             table.insert(lines, "  Tracked Spells: |cffffffff" .. stats.arcAurasSpells .. "|r")
                         end
                     end
+                    -- New Icon routing (where NEW icons are sent). Exported as the
+                    -- EFFECTIVE values for this spec, so the summary resolves the
+                    -- account/character/spec layers exactly like the export does.
+                    do
+                        local routing = ns.CDMGroups and ns.CDMGroups.GetEffectiveIconRouting
+                            and ns.CDMGroups.GetEffectiveIconRouting()
+                        table.insert(lines, "")
+                        if routing then
+                            table.insert(lines, "|cff888888New Icons:|r")
+                            for _, pair in ipairs({ { "essential", "Essential" }, { "utility", "Utility " }, { "buffs", "Buffs   " } }) do
+                                local v = routing[pair[1]]
+                                local text
+                                if v == nil or v == "default" then
+                                    text = "|cff666666Default|r"
+                                elseif v == "free" then
+                                    text = "|cffffffffFree Position|r"
+                                else
+                                    local _, groupName = ns.CDMGroups.FindGroupByID(v)
+                                    text = groupName and ("|cffffffff" .. groupName .. "|r")
+                                        or "|cffff6666missing group -> Free Position|r"
+                                end
+                                table.insert(lines, "  " .. pair[2] .. ": " .. text)
+                            end
+                        else
+                            table.insert(lines, "|cff888888New Icons:|r            |cff666666Default|r")
+                        end
+                    end
                     -- CDM native layout
                     table.insert(lines, "")
                     if stats.hasCDMNativeLayout then
@@ -3565,6 +3616,16 @@ local function GetOptionsTable()
                 get = function() return uiState.exportProfiles end,
                 set = function(_, v) uiState.exportProfiles = v end,
             },
+            exportIconRouting = {
+                type = "toggle",
+                name = "New Icons",
+                desc = "Include the New Icons routing (where Essential / Utility / Buff icons go when the Cooldown Manager adds them with no saved position).",
+                order = 47.4,
+                width = 0.7,
+                hidden = function() return collapsedSections.externalExport or collapsedSections.exportOptions end,
+                get = function() return uiState.exportIconRouting ~= false end,
+                set = function(_, v) uiState.exportIconRouting = v end,
+            },
             exportArcAuras = {
                 type = "toggle",
                 name = "Arc Auras",
@@ -3596,6 +3657,7 @@ local function GetOptionsTable()
                         includeGlobalSettings = uiState.exportGlobalSettings,
                         includeGroupSettings = uiState.exportGroupSettings,
                         includeArcAuras = uiState.exportArcAuras,
+                        includeIconRouting = uiState.exportIconRouting,
                     })
                     if exportStr then
                         uiState.exportString = exportStr
@@ -3744,6 +3806,26 @@ local function GetOptionsTable()
                         "  Global Defaults: " .. (p.hasGlobalAuraSettings and "|cff00ff00Aura|r " or "") .. (p.hasGlobalCooldownSettings and "|cff00ff00Cooldown|r" or ""),
                         "  Group Settings: " .. (p.hasGroupSettings and "|cff00ff00Yes|r" or "|cff666666No|r"),
                     }
+                    -- New Icon routing carried by the string (applied at SPEC scope)
+                    if p.iconRouting then
+                        table.insert(lines, "")
+                        table.insert(lines, "|cff00ccffNew Icons:|r")
+                        for _, pair in ipairs({ { "essential", "Essential" }, { "utility", "Utility" }, { "buffs", "Buffs" } }) do
+                            local v = p.iconRouting[pair[1]]
+                            local text
+                            if v == nil or v == "default" then
+                                text = "|cff666666Default|r"
+                            elseif v == "free" then
+                                text = "|cffffffffFree Position|r"
+                            else
+                                local _, groupName = ns.CDMGroups and ns.CDMGroups.FindGroupByID
+                                    and ns.CDMGroups.FindGroupByID(v)
+                                text = groupName and ("|cffffffff" .. groupName .. "|r")
+                                    or "|cffffcc00group not here -> Free Position|r"
+                            end
+                            table.insert(lines, "  " .. pair[2] .. ": " .. text)
+                        end
+                    end
                     -- Add Arc Auras info if present
                     if (p.arcAuras or 0) > 0 or (p.arcAurasSpells or 0) > 0 then
                         table.insert(lines, "")
@@ -3856,6 +3938,20 @@ local function GetOptionsTable()
                 hidden = function() return collapsedSections.externalExport or collapsedSections.importOptions end,
                 get = function() return uiState.importProfiles end,
                 set = function(_, v) uiState.importProfiles = v end,
+            },
+            importIconRouting = {
+                type = "toggle",
+                name = "New Icons",
+                desc = "Import the New Icons routing carried by this string. It is applied to THIS SPEC only, so it never changes routing on your other characters.\n\nUncheck to keep your own routing.",
+                order = 70.2,
+                width = 0.7,
+                hidden = function() return collapsedSections.externalExport or collapsedSections.importOptions end,
+                disabled = function()
+                    local p = uiState.importPreview
+                    return not (p and p.iconRouting)
+                end,
+                get = function() return uiState.importIconRouting ~= false end,
+                set = function(_, v) uiState.importIconRouting = v end,
             },
             importSkipCDMLayout = {
                 type = "toggle",
@@ -4081,6 +4177,7 @@ local function GetOptionsTable()
                             importFlattenGlobals = uiState.importFlattenGlobals,
                             importGroupSettings = uiState.importGroupSettings,
                             importProfiles = uiState.importProfiles,
+                            importIconRouting = uiState.importIconRouting,
                             layoutConflictResolutions = uiState.layoutConflictResolutions,
                             cdmAction = cdmAction, -- "replace", "ignore", or nil (normal add)
                         })
@@ -4222,6 +4319,7 @@ function ns.GetCDMExportOnlyOptionsTable()
         "exportHeader", "exportOptionsToggle",
         "exportGroupLayouts", "exportPositions", "exportIconSettings",
         "exportGlobalSettings", "exportGroupSettings", "exportProfiles",
+        "exportIconRouting",
         "exportSpacer", "exportButton", "exportString",
     }
     local full = GetOptionsTable()

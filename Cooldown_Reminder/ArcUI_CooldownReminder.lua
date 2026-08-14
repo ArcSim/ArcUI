@@ -3203,6 +3203,12 @@ end
 -- TOOLTIP SPELL/ITEM ID DISPLAY
 -- ===================================================================
 local function IsTooltipEnabled()
+    -- The global "Show IDs on Hover" toggle covers the same tooltips (and
+    -- more), so it wins outright -- otherwise both features would print an ID
+    -- line on every spell and item tooltip.
+    if ns.IconIDs and ns.IconIDs.IsEnabled and ns.IconIDs.IsEnabled() then
+        return false
+    end
     local db = GetDB()
     return db and db.showSpellIDsInTooltips == true
 end

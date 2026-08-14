@@ -1622,13 +1622,17 @@ end)
 SLASH_ARCBARDUR1 = "/arcbardur"
 SlashCmdList["ARCBARDUR"] = function(msg)
   msg = (msg or ""):gsub("%s+", ""):lower()
-  -- PERSISTED: the interesting failures happen during the LOAD WINDOW, before
-  -- any slash command can run, so the flag has to survive a /reload.
+  -- The saved flag is written for a future load-window capture but nothing reads
+  -- it back at load, so debug is ALWAYS off after a reload (BD.debug = false at
+  -- file scope). That is deliberate for now: the trace builds a table per
+  -- duration-bar refresh, so a diagnostic that silently survives reloads would
+  -- cost every user who ever ran it once. Do not advertise persistence until a
+  -- restore is actually wired.
   if msg == "debug" or msg == "on" then
     BD.debug = true
     local g = ns.API and ns.API.GetGlobalDB and ns.API.GetGlobalDB()
     if g then g.barDurDebug = true end
-    print("|cff33ff99[ArcBarDur]|r debug ON and SAVED (survives /reload). '/arcbardur log' opens the copyable window.")
+    print("|cff33ff99[ArcBarDur]|r debug ON for THIS session (a /reload clears it). '/arcbardur log' opens the copyable window.")
     return
   end
   if msg == "off" then
@@ -1748,8 +1752,10 @@ SlashCmdList["ARCBARDUR"] = function(msg)
   local any = false
   for bn, t in pairs(BD.lastTrace) do
     any = true
-    print(("  bar %s: active=%s hasAuraInfo=%s cooldownID=%s trackedSpellID=%s showDuration=%s secret=%s"):format(
-      tostring(bn), tostring(t.active), tostring(t.hasAuraInfo),
+    -- hasTotemInfo was recorded but never printed; it is the field that says
+    -- whether a totem bar took the totem branch or fell through to a mirror
+    print(("  bar %s: active=%s hasAuraInfo=%s hasTotemInfo=%s cooldownID=%s trackedSpellID=%s showDuration=%s secret=%s"):format(
+      tostring(bn), tostring(t.active), tostring(t.hasAuraInfo), tostring(t.hasTotemInfo),
       tostring(t.cooldownID), tostring(t.trackedSpellID), tostring(t.showDuration), tostring(t.secret)))
   end
   if not any then print("  (no duration-bar updates traced yet -- is the bar active/shown?)") end

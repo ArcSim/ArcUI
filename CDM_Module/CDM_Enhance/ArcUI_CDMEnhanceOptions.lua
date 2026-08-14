@@ -41,6 +41,7 @@ local collapsedSections = {
   arcLoadConditions = true,
   arcIconSettings = true,
   arcSpellOverride = true,   -- Arc spell icons: override-form behaviour
+  outOfStock = true,         -- CDM bag items: out-of-stock look
   arcTimerSettings = true,
   activeState = true,      -- For auras
   inactiveState = true,    -- For auras
@@ -80,7 +81,8 @@ local RebuildUnifiedIconCache
 -- Define which fields belong to each section for per-icon indicator
 -- ===================================================================
 local SECTION_FIELDS = {
-  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "shadowSize", "keepBright", "keepBrightAllowDesat", "forceHideIcon", "customIconID", "debuffBorder.enabled", "pandemicBorder.enabled" },
+  iconAppearance = { "scale", "width", "height", "aspectRatio", "zoom", "padding", "useGroupScale", "shadowSize", "keepBright", "keepBrightAllowDesat", "forceHideIcon", "noPing", "customIconID", "debuffBorder.enabled", "pandemicBorder.enabled" },
+  outOfStock = { "outOfStockState.desaturate", "outOfStockState.alphaEnabled", "outOfStockState.alpha", "outOfStockState.tint", "outOfStockState.tintColor" },
   position = { "position" },
   -- Ready State / Aura Active - all actual stored fields
   activeState = { 
@@ -1296,6 +1298,24 @@ end
 -- ===================================================================
 -- COOLDOWN ICON HELPERS
 -- ===================================================================
+-- ── 12.1 CDM BAG ITEMS (potions / healthstones) ─────────────────────
+-- Identity is a spell CATEGORY, never a spell. These gate the Out of Stock
+-- state, which only exists for entries whose stock we can actually read.
+local HEALTHSTONE_CATEGORIES = { [1711] = true, [2566] = true }
+
+local function SelectedBagItemCategory()
+  local cdID = selectedCooldownIcon
+  if type(cdID) ~= "number" then return nil end
+  if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then return nil end
+  local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+  return info and info.spellCategoryID or nil
+end
+
+local function IsHealthstoneSelection()
+  local cat = SelectedBagItemCategory()
+  return cat ~= nil and HEALTHSTONE_CATEGORIES[cat] == true
+end
+
 local function HideIfNoCooldownSelection()
   -- Check edit-all mode - if active with cooldowns in cache, show cooldown options
   if editAllUnifiedMode then
@@ -1311,6 +1331,16 @@ local function HideIfNoCooldownSelection()
   end
   -- Standard check
   return not next(selectedCooldownIcons) and selectedCooldownIcon == nil
+end
+
+-- Out of Stock state: bag items only (their stock is the whole point), and
+-- only for a single selection, since the category lookup is per icon.
+local function HideOutOfStock()
+  if HideIfNoCooldownSelection() then return true end
+  return SelectedBagItemCategory() == nil
+end
+local function HideOutOfStockBody()
+  return HideOutOfStock() or collapsedSections.outOfStock
 end
 
 -- ===================================================================
@@ -3408,6 +3438,21 @@ function ns.GetCDMAuraIconsOptionsTable()
       end,
       order = 100.05, width = 0.7, hidden = HideAuraIconAppearance,
     },
+    allowPing = {
+      type = "toggle", name = "Pingable",
+      desc = "Let this icon receive pings. Turn OFF and pings pass straight through it to the world, instead of announcing this spell when your cursor happens to be over the icon.\n\n"
+          .. "|cff8298b4Per-icon wins over the group setting, which wins over the global one.|r",
+      get = function()
+        return GetAuraBoolSetting(function(c) return not c.noPing end, function() local c = GetAuraCfg(); return not (c and c.noPing) end)
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c) if v then c.noPing = nil else c.noPing = true end end)
+        -- REQUIRED: the effective-settings cache feeds the resolver
+        if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+        if ns.Pings and ns.Pings.RefreshPingable then ns.Pings.RefreshPingable() end
+      end,
+      order = 100.06, width = 0.7, hidden = HideAuraIconAppearance,
+    },
     customIconID = {
       type = "input",
       dialogControl = "ArcUI_EditBox",
@@ -4004,9 +4049,17 @@ function ns.GetCDMAuraIconsOptionsTable()
       sorting = {"button", "pixel", "autocast", "proc", "ants", "ach_proc", "cdm_flash"},
       get = function()
         local c = GetAuraCfg()
-        if c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState then
-          return c.cooldownStateVisuals.readyState.glowType or "button"
-        end
+        local v = c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState
+          and c.cooldownStateVisuals.readyState.glowType
+        if v then return v end
+        -- SAME RULE AS THE MISSING-GLOW DROPDOWN BELOW: arc aura icons render
+        -- through the pack engine, which defaults to pixel, while CDM icons go
+        -- through ns.Glows and default to button. Reporting "button" for an arc
+        -- aura icon made the panel lie -- and because AceConfig only fires set
+        -- on a CHANGE, picking the already-displayed "Button Glow" wrote nothing
+        -- and the icon kept drawing pixel. That is the "glows are not reflecting
+        -- the glow options I selected" report.
+        if IsCurrentAuraSelectionAllArcAura() then return "pixel" end
         return "button"
       end,
       set = function(_, v)
@@ -4098,9 +4151,12 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.844, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
-        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
+        if IsCurrentAuraSelectionAllArcAura() then
+          -- pack engine: Scale sizes the atlas styles; Pixel hugs the icon border
+          return (c.cooldownStateVisuals.readyState.glowType or "pixel") == "pixel"
+        end
         return false  -- Scale works for all glow types
       end,
     },
@@ -4266,11 +4322,14 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.849, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
-        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
+        -- pack engine (arc aura icons): offsets move the whole glow layer — every style follows
+        if IsCurrentAuraSelectionAllArcAura() then return false end
         -- Only button and default types don't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
+        -- nil means the default, which IS button here -- without the fallback the
+        -- offset knobs showed for an untouched icon and then did nothing
+        local gt = c.cooldownStateVisuals.readyState.glowType or "button"; return gt == "button" or gt == "default"
       end,
     },
     activeStateGlowYOffset = {
@@ -4295,11 +4354,14 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8495, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
-        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
+        -- pack engine (arc aura icons): offsets move the whole glow layer — every style follows
+        if IsCurrentAuraSelectionAllArcAura() then return false end
         -- Only button and default types don't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
+        -- nil means the default, which IS button here -- without the fallback the
+        -- offset knobs showed for an untouched icon and then did nothing
+        local gt = c.cooldownStateVisuals.readyState.glowType or "button"; return gt == "button" or gt == "default"
       end,
     },
     activeStateGlowFrameStrata = {
@@ -4331,7 +4393,6 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8496, width = 0.85,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
-        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
@@ -4360,7 +4421,6 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 107.8497, width = 0.55,
       hidden = function()
         if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
-        if IsCurrentAuraSelectionAllArcAura() then return true end   -- pack engine: knob not consumed for arc aura icons
         local c = GetAuraCfg()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
@@ -7466,6 +7526,21 @@ function ns.GetCDMCooldownIconsOptionsTable()
       end,
       order = 100.05, width = 0.7, hidden = HideCooldownIconAppearance,
     },
+    allowPing = {
+      type = "toggle", name = "Pingable",
+      desc = "Let this icon receive pings. Turn OFF and pings pass straight through it to the world, instead of announcing this spell when your cursor happens to be over the icon.\n\n"
+          .. "|cff8298b4Per-icon wins over the group setting, which wins over the global one.|r",
+      get = function()
+        return GetCooldownBoolSetting(function(c) return not c.noPing end, function() local c = GetCooldownCfg(); return not (c and c.noPing) end)
+      end,
+      set = function(_, v)
+        ApplySharedCooldownSetting(function(c) if v then c.noPing = nil else c.noPing = true end end)
+        -- REQUIRED: the effective-settings cache feeds the resolver
+        if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then ns.CDMEnhance.InvalidateCache() end
+        if ns.Pings and ns.Pings.RefreshPingable then ns.Pings.RefreshPingable() end
+      end,
+      order = 100.06, width = 0.7, hidden = HideCooldownIconAppearance,
+    },
     customIconID = {
       type = "input",
       dialogControl = "ArcUI_EditBox",
@@ -8374,7 +8449,9 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Only button and default types don't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
+        -- nil means the default, which IS button here -- without the fallback the
+        -- offset knobs showed for an untouched icon and then did nothing
+        local gt = c.cooldownStateVisuals.readyState.glowType or "button"; return gt == "button" or gt == "default"
       end,
     },
     readyStateGlowYOffset = {
@@ -8402,7 +8479,9 @@ function ns.GetCDMCooldownIconsOptionsTable()
         local c = GetCooldownCfg()
         if not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow) then return true end
         -- Only button and default types don't support offset
-        local gt = c.cooldownStateVisuals.readyState.glowType; return gt == "button" or gt == "default"
+        -- nil means the default, which IS button here -- without the fallback the
+        -- offset knobs showed for an untouched icon and then did nothing
+        local gt = c.cooldownStateVisuals.readyState.glowType or "button"; return gt == "button" or gt == "default"
       end,
     },
     readyStateGlowFrameStrata = {
@@ -8725,7 +8804,10 @@ function ns.GetCDMCooldownIconsOptionsTable()
     cooldownStateDimWhenEmpty = {
       type = "toggle",
       name = "Dim When Out of Stock",
-      desc = "For item/trinket frames only: apply the cooldown alpha and desaturation when the item has no charges or isn't in your bags.\n\nDisable to only dim when the item is on an actual cooldown timer.",
+      desc = "For item icons - Arc trinket/item icons and the Cooldown Manager's potion and healthstone entries.\n\n"
+        .. "|cffffd100On:|r the icon also fades to your cooldown alpha when you have none in your bags.\n"
+        .. "|cff888888Off (default):|r it only greys out, and the alpha is reserved for a real cooldown.\n\n"
+        .. "|cffaaaaaaCombat and health potions only know which potion they are after you use one, so their stock check starts working from the first use.|r",
       get = function()
         return GetCooldownBoolSetting(
           function(c)
@@ -8770,10 +8852,21 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if HideIfNoCooldownSelection() or collapsedSections.cooldownState then return true end
         local cdID = selectedCooldownIcon
-        if not cdID or not ns.ArcAuras or not ns.ArcAuras.frames then return true end
-        local frame = ns.ArcAuras.frames[cdID]
-        local cfg = frame and frame._arcConfig
-        return not (cfg and (cfg.type == "item" or cfg.type == "trinket"))
+        if not cdID then return true end
+        -- Arc item / trinket icons
+        local frame = ns.ArcAuras and ns.ArcAuras.frames and ns.ArcAuras.frames[cdID]
+        local acfg = frame and frame._arcConfig
+        if acfg and (acfg.type == "item" or acfg.type == "trinket") then return false end
+        -- 12.1 CDM BAG ITEMS (potions, healthstones): stock is knowable for
+        -- these too, so the option has to be reachable when one is selected --
+        -- it was Arc-icons-only, which left the CDM healthstone with no way to
+        -- turn the dim on.
+        if type(cdID) == "number" and C_CooldownViewer
+           and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+          local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+          if info and info.spellCategoryID then return false end
+        end
+        return true
       end,
     },
     cooldownStateProcOverride = {
@@ -8823,6 +8916,137 @@ function ns.GetCDMCooldownIconsOptionsTable()
     -- ═══════════════════════════════════════════════════════════════════
     -- AURA ACTIVE STATE SECTION (when associated buff/aura is active)
     -- ═══════════════════════════════════════════════════════════════════
+    -- ═══════════════════════════════════════════════════════════════════
+    -- OUT OF STOCK STATE — 12.1 CDM bag items (potions, healthstones)
+    -- Their own state: "none in my bags" is neither a cooldown nor an aura.
+    -- Takes the Aura Active slot for healthstones, which have no buff at all.
+    -- ═══════════════════════════════════════════════════════════════════
+    outOfStockHeader = {
+      type = "toggle",
+      name = function() return GetCooldownHeaderName("outOfStock", "Out of Stock State") end,
+      desc = "Click to expand/collapse. How this icon looks when you have none of the item in your bags.",
+      dialogControl = "CollapsibleHeader",
+      get = function() return not collapsedSections.outOfStock end,
+      set = function(_, v) collapsedSections.outOfStock = not v end,
+      order = 107.9485,
+      width = "full",
+      hidden = function() return HideOutOfStock() end,
+    },
+    outOfStockDesc = {
+      type = "description",
+      name = "|cff888888Applies while the item is missing from your bags. By default the icon greys out at normal opacity.|r",
+      order = 107.94851,
+      width = "full",
+      fontSize = "small",
+      hidden = function() return HideOutOfStockBody() end,
+    },
+    outOfStockDesaturate = {
+      type = "toggle",
+      name = "Desaturate",
+      desc = "Grey the icon out while you have none in your bags.",
+      order = 107.94852,
+      width = 0.8,
+      hidden = function() return HideOutOfStockBody() end,
+      get = function()
+        local c = GetCooldownCfg()
+        return not (c and c.outOfStockState and c.outOfStockState.desaturate == false)
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          c.outOfStockState = c.outOfStockState or {}
+          c.outOfStockState.desaturate = v and nil or false   -- default ON
+        end)
+      end,
+    },
+    outOfStockAlphaEnabled = {
+      type = "toggle",
+      name = "Custom Opacity",
+      desc = "Use a specific opacity while out of stock instead of the normal one.",
+      order = 107.94853,
+      width = 1.0,
+      hidden = function() return HideOutOfStockBody() end,
+      get = function()
+        local c = GetCooldownCfg()
+        return (c and c.outOfStockState and c.outOfStockState.alphaEnabled) == true
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          c.outOfStockState = c.outOfStockState or {}
+          c.outOfStockState.alphaEnabled = v or nil
+          if v and c.outOfStockState.alpha == nil then c.outOfStockState.alpha = 0.5 end
+        end)
+      end,
+    },
+    outOfStockAlpha = {
+      type = "range",
+      name = "Opacity",
+      desc = "0 hides the icon completely, 1 is fully visible.",
+      order = 107.94854,
+      width = 1.2,
+      min = 0, max = 1, step = 0.05,
+      hidden = function() return HideOutOfStockBody() end,
+      disabled = function()
+        local c = GetCooldownCfg()
+        return not (c and c.outOfStockState and c.outOfStockState.alphaEnabled)
+      end,
+      get = function()
+        local c = GetCooldownCfg()
+        return (c and c.outOfStockState and c.outOfStockState.alpha) or 0.5
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          c.outOfStockState = c.outOfStockState or {}
+          c.outOfStockState.alpha = v
+        end)
+      end,
+    },
+    outOfStockTint = {
+      type = "toggle",
+      name = "Tint",
+      desc = "Colour the icon while out of stock.",
+      order = 107.94855,
+      width = 0.6,
+      hidden = function() return HideOutOfStockBody() end,
+      get = function()
+        local c = GetCooldownCfg()
+        return (c and c.outOfStockState and c.outOfStockState.tint) == true
+      end,
+      set = function(_, v)
+        ApplyCooldownSetting(function(c)
+          c.outOfStockState = c.outOfStockState or {}
+          c.outOfStockState.tint = v or nil
+          if v and not c.outOfStockState.tintColor then
+            c.outOfStockState.tintColor = { r = 0.5, g = 0.5, b = 0.5 }
+          end
+        end)
+      end,
+    },
+    outOfStockTintColor = {
+      type = "color",
+      name = "Tint Colour",
+      desc = "Colour applied to the icon while out of stock.",
+      order = 107.94856,
+      width = 0.9,
+      hasAlpha = false,
+      hidden = function() return HideOutOfStockBody() end,
+      disabled = function()
+        local c = GetCooldownCfg()
+        return not (c and c.outOfStockState and c.outOfStockState.tint)
+      end,
+      get = function()
+        local c = GetCooldownCfg()
+        local col = c and c.outOfStockState and c.outOfStockState.tintColor
+        if col then return col.r or 0.5, col.g or 0.5, col.b or 0.5 end
+        return 0.5, 0.5, 0.5
+      end,
+      set = function(_, r, g, b)
+        ApplyCooldownSetting(function(c)
+          c.outOfStockState = c.outOfStockState or {}
+          c.outOfStockState.tintColor = { r = r, g = g, b = b }
+        end)
+      end,
+    },
+
     auraActiveStateHeader = {
       type = "toggle",
       name = function() return GetCooldownHeaderName("auraActiveState", "Aura Active State") end,
@@ -8835,6 +9059,8 @@ function ns.GetCDMCooldownIconsOptionsTable()
       hidden = function()
         if IsCurrentCooldownSelectionAllTotem() then return true end  -- totems aren't auras
         if IsCurrentCooldownSelectionAllCustomTimer() then return true end  -- timers don't use the CDM aura-active path
+        -- healthstones have no buff at all: Out of Stock takes this slot for them
+        if IsHealthstoneSelection() then return true end
         return HideIfNoCooldownSelection()
       end,
     },
@@ -15152,7 +15378,22 @@ function ns.GetCDMIconsOptionsTable()
         end
       end,
     },
-    
+    showIconIDs = {
+      type = "toggle",
+      name = "Show IDs on Hover",
+      desc = "Adds an ID block to the tooltip of any icon ArcUI can identify.\n\n"
+        .. "|cffffd100Cooldown Manager icons:|r cooldown ID, spell ID, override and linked spells, equip slot, spell category (combat potion, healthstone) and the last item used for that category.\n"
+        .. "|cffffd100Arc icons:|r the arcID.\n"
+        .. "Both also show the icon's texture file ID - the number the Custom Icon box takes.",
+      order = 5.3,
+      width = 1.2,
+      hidden = function() return collapsedSections.globalOptions end,
+      get = function() return ns.IconIDs and ns.IconIDs.IsEnabled() or false end,
+      set = function(_, v)
+        if ns.IconIDs then ns.IconIDs.SetEnabled(v) end
+      end,
+    },
+
     -- ═══════════════════════════════════════════════════════════════════
     -- CATALOG
     -- ═══════════════════════════════════════════════════════════════════
@@ -16211,7 +16452,13 @@ function ns.CDMEnhanceOptions.SetGlowPreview(cdID, enabled)
   end
   -- Arc Aura spell frames: RefreshSpellVisuals does stop+cache-clear+re-eval in one pass
   if type(cdID) == "string" and cdID:match("^arc_") then
-    if ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals then
+    if cdID:match("^arc_aura_") then
+      -- 12.1 aura icons: the real active glow lives on the engine button —
+      -- the preview renders on the holder ghost (AuraIcons.ApplySettings)
+      if ns.AuraIcons and ns.AuraIcons.ApplySettings then
+        ns.AuraIcons.ApplySettings(cdID)
+      end
+    elseif ns.ArcAurasCooldown and ns.ArcAurasCooldown.RefreshSpellVisuals then
       ns.ArcAurasCooldown.RefreshSpellVisuals(cdID)
     end
   else

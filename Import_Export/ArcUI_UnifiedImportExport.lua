@@ -28,6 +28,7 @@ local state = {
 
     -- CDM-specific (what to import)
     cdmImportGroupLayouts   = true,
+    cdmImportIconRouting    = true,
     cdmImportPositions      = true,
     cdmImportIconSettings   = true,
     cdmImportGlobalSettings = true,
@@ -269,6 +270,7 @@ local function DoImport()
             importFlattenGlobals = state.cdmImportFlattenGlobals,
             importGroupSettings  = state.cdmImportGroupSettings,
             importProfiles       = state.cdmImportProfiles,
+            importIconRouting    = state.cdmImportIconRouting,
         })
         if success then
             print(MSG_PREFIX .. "|cff00ff00CDM import successful!|r")
@@ -564,6 +566,16 @@ function UIE.GetOptionsTable()
                 hidden = function() return state.detectedType ~= "cdm" end,
                 get    = function() return state.cdmImportGroupLayouts end,
                 set    = function(_, v) state.cdmImportGroupLayouts = v end,
+            },
+            cdmImportIconRouting = {
+                type   = "toggle",
+                name   = "New Icons",
+                desc   = "Import the New Icons routing (where Essential / Utility / Buff icons go when the Cooldown Manager adds them with no saved position).\n\nApplied to THIS SPEC only, so it never changes routing on your other characters. Uncheck to keep your own.",
+                order  = 21.5,
+                width  = 0.7,
+                hidden = function() return state.detectedType ~= "cdm" end,
+                get    = function() return state.cdmImportIconRouting ~= false end,
+                set    = function(_, v) state.cdmImportIconRouting = v end,
             },
             cdmImportPositions = {
                 type   = "toggle",
