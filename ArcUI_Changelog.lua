@@ -62,6 +62,7 @@ CL.versions = {
           { title = "CN client crash shield", desc = "Worked around a Chinese-client bug that could crash the game when aura countdown text refreshes; decimal countdowns on aura icons show whole seconds on the CN client until Blizzard fixes it." },
           { title = "Custom Icons form error", desc = "Adding a Custom Icon timer by spell ID no longer errors on submit." },
           { title = "Debuff bars track only your own debuff again", desc = "Since 12.1, a duration bar, texture, stack count, or duration override for a target debuff (e.g. Colossus Smash) could light up when another player applied the same debuff. They now follow only your own cast, as before." },
+          { title = "Potion and healthstone errors in restricted content", desc = "The bag-item features could throw errors during 12.1 restricted open-world events (e.g. Prey Hunts) and in instances, where the game hides item identities from addons. ArcUI now remembers each item's identity from unrestricted moments, so cooldown visuals, out-of-stock detection, and tooltips keep working fully everywhere." },
         },
       },
     },

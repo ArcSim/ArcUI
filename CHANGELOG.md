@@ -1,3 +1,9 @@
+## 3.7.12.b
+
+### Bug Fixes
+
+- **Potion and healthstone errors in restricted content** — The bag-item features could throw errors during 12.1 restricted open-world events (e.g. Prey Hunts) and in instances, where the game hides item identities from addons. ArcUI now remembers each item's identity from unrestricted moments, so cooldown visuals, out-of-stock detection, and tooltips keep working fully everywhere.
+
 ## 3.7.12.a
 
 ### Bug Fixes

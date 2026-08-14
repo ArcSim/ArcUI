@@ -801,11 +801,16 @@ FeedShadowCooldown = function(frame, spellID)
     frame._arcIsChargeSpellCached = false
     local shadowCD = EnsureShadowCooldown(frame)
     if shadowCD then
+      -- secret-proof identity: live fields when readable (refreshes the
+      -- per-frame plain-number cache), the cache when they read SECRET
+      -- (restricted contexts: instances + 12.1 restricted open-world
+      -- events). The APIs below reject secret ARGUMENTS but return plain
+      -- numbers, so the cached identity keeps full cooldown fidelity there.
+      local itemID, catSpellID = ns.CooldownState.GetItemIdentity(frame, ci)
       local start, dur
       if eqSlot then
         start, dur = GetInventoryItemCooldown("player", eqSlot)
       else
-        local itemID = ci.lastItemIDForCategory
         if itemID and C_Item and C_Item.GetItemCooldown then
           start, dur = C_Item.GetItemCooldown(itemID)
         end
@@ -819,10 +824,10 @@ FeedShadowCooldown = function(frame, spellID)
       end
       if start and dur and start > 0 and dur > ITEM_GCD_THRESHOLD then
         shadowCD:SetCooldown(start, dur)
-      elseif catID and ci.spellID and C_Spell.GetSpellCooldownDuration then
+      elseif catID and catSpellID and C_Spell.GetSpellCooldownDuration then
         -- category entry with a spell CDM resolved on first use: the durObj is
         -- the secret-safe read (ignoreGCD so a bare GCD never reads as a CD)
-        local durObj = C_Spell.GetSpellCooldownDuration(ci.spellID, true)
+        local durObj = C_Spell.GetSpellCooldownDuration(catSpellID, true)
         if durObj then
           shadowCD:SetCooldownFromDurationObject(durObj, true)
         else
@@ -1231,14 +1236,53 @@ local CATEGORY_FALLBACK_ITEM = {
   [2566] = 224464,  -- Demonic Healthstone
 }
 
+-- BAG-ITEM IDENTITY, secret-proof (the _arcSpellID pattern): cooldownInfo's
+-- lastItemIDForCategory / spellID go SECRET in restricted contexts (instances
+-- AND 12.1 restricted open-world events -- the Prey Hunts crash), and every
+-- consumer API rejects secret ARGUMENTS ("AllowedWhenUntainted") while their
+-- RETURNS stay plain numbers. So: whenever the live fields are readable,
+-- refresh a per-frame PLAIN-NUMBER cache; when they read secret, serve the
+-- cache -- identity doesn't change under restriction (and category cooldowns
+-- are shared, so even a same-category stale item reads the right cooldown).
+-- Full swipe/dim/glow/stock/tooltip fidelity in combat and keys, exactly like
+-- the spell icons. Exported: CDMEnhance's tooltip forwarder uses it too.
+local function GetItemIdentity(frame, ci)
+  if not (frame and ci) then return nil, nil end
+  local itemID, spellID = ci.lastItemIDForCategory, ci.spellID
+  if itemID then
+    if issecretvalue and issecretvalue(itemID) then
+      itemID = frame._arcItemIDCache
+    else
+      frame._arcItemIDCache = itemID
+    end
+  else
+    itemID = frame._arcItemIDCache
+  end
+  if spellID then
+    if issecretvalue and issecretvalue(spellID) then
+      spellID = frame._arcItemSpellIDCache
+    else
+      frame._arcItemSpellIDCache = spellID
+    end
+  else
+    spellID = frame._arcItemSpellIDCache
+  end
+  return itemID, spellID
+end
+ns.CooldownState.GetItemIdentity = GetItemIdentity
+
 -- OUT OF STOCK for a CDM bag item, the same question the Arc item icons ask
 -- with GetItemCount. Returns nil when we cannot know (no item identity yet),
 -- which callers treat as "in stock" rather than dimming on a guess.
-local function ItemOutOfStock(ci)
+-- Identity via the secret-proof cache (GetItemIdentity above): GetItemCount
+-- rejects secret arguments but returns plain counts, so the cached plain ID
+-- keeps stock detection fully working in restricted contexts.
+local function ItemOutOfStock(frame, ci)
   if not ci then return nil end
   local cat = ci.spellCategoryID
   if not cat then return nil end
-  local itemID = ci.lastItemIDForCategory or CATEGORY_FALLBACK_ITEM[cat]
+  local itemID = GetItemIdentity(frame, ci)
+  itemID = itemID or CATEGORY_FALLBACK_ITEM[cat]
   if not itemID or not GetItemCount then return nil end
   -- includeCharges=true: a healthstone's stack is charges, not item count
   local count = GetItemCount(itemID, false, true)
@@ -1278,7 +1322,7 @@ local function HandleItemCooldownState(frame, iconTex, cfg, stateVisuals, ignore
     else
       ApplyCooldownDesat(frame, iconTex, stateVisuals, false, false)
     end
-  elseif ItemOutOfStock(frame.cooldownInfo) then
+  elseif ItemOutOfStock(frame, frame.cooldownInfo) then
     -- ═══════════════════════════════════════════════════════════════
     -- OUT OF STOCK STATE (bag items: potions, healthstones)
     -- A state of its own, with its own alpha / desaturate / tint, because

@@ -3485,6 +3485,10 @@ ApplyIconStyle = function(frame, cdID)
       do
         local cooldownInfo = frame.cooldownInfo
         local spellID = cooldownInfo and (cooldownInfo.overrideSpellID or cooldownInfo.spellID)
+        -- item entries carry a SECRET spellID in restricted contexts (12.1
+        -- open-world events, instances) — the ~= compare below throws on a
+        -- secret; treat as no spellID (bag items are never charge spells)
+        if spellID and issecretvalue and issecretvalue(spellID) then spellID = nil end
         if spellID then
           if frame._arcChargeCheckSpellID ~= spellID then
             frame._arcChargeCheckSpellID = spellID
@@ -5551,11 +5555,18 @@ local function ForwardHoverTooltip(cdmFrame)
     if eq then
       GameTooltip:SetInventoryItem("player", eq)
     else
-      local itemID = ci.lastItemIDForCategory
+      -- identity via the secret-proof cache (CooldownState.GetItemIdentity):
+      -- the live fields go SECRET in restricted contexts and tooltip setters
+      -- reject secret arguments — the cached plain IDs keep tooltips working
+      -- there; only a never-learned potion falls through to no tooltip
+      local itemID, sid
+      if ns.CooldownState and ns.CooldownState.GetItemIdentity then
+        itemID, sid = ns.CooldownState.GetItemIdentity(cdmFrame, ci)
+      end
       if itemID then
         GameTooltip:SetItemByID(itemID)
-      elseif ci.spellID then
-        GameTooltip:SetSpellByID(ci.spellID)
+      elseif sid then
+        GameTooltip:SetSpellByID(sid)
       else
         GameTooltip:Hide()
         return
@@ -10688,6 +10699,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         local frameSpellID = nil
         if data.frame.cooldownInfo then
           frameSpellID = data.frame.cooldownInfo.overrideSpellID or data.frame.cooldownInfo.spellID
+          -- item entries: SECRET in restricted contexts — the == compare
+          -- below throws; fall through to the non-secret fallbacks instead
+          if frameSpellID and issecretvalue and issecretvalue(frameSpellID) then
+            frameSpellID = nil
+          end
         end
         if not frameSpellID and data.frame.GetSpellID then
           frameSpellID = NonSecretSpellID(data.frame:GetSpellID())
