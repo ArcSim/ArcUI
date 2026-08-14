@@ -1,3 +1,9 @@
+## 3.7.12.a
+
+### Bug Fixes
+
+- **Debuff bars track only your own debuff again** — Since 12.1, a duration bar, texture, stack count, or duration override for a target debuff (e.g. Colossus Smash) could light up when another player applied the same debuff. They now follow only your own cast, as before.
+
 ## 3.7.12
 
 ### New Features

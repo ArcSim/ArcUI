@@ -134,7 +134,9 @@ function DOC.Attach(targetFrame, auraSpellID, unit)
     -- Filter by LANE SEMANTICS, never live unit state: UnitCanAssist on a
     -- transient friendly target (or a not-yet-summoned pet) returns the
     -- wrong filter and it gets baked into the slot for good (the BD bug).
-    local filter = (unit == "target") and "HARMFUL" or "HELPFUL"
+    -- Target lane = the player's OWN debuffs (|PLAYER): another player's
+    -- copy of the same debuff must not drive this icon's duration override.
+    local filter = (unit == "target") and "HARMFUL|PLAYER" or "HELPFUL"
 
     slotSeq = slotSeq + 1
     local key = "arcdo" .. slotSeq

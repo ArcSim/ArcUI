@@ -494,7 +494,10 @@ local function EnsureOverlayInfra(f)
     local sub = { unit = unit, container = cont, key = key }
     if not cont._arcSlotAdded then
       cont._arcSlotAdded = true
-      sub.btn = cont:AddAuraSlot(key, (unit == "player") and "HELPFUL" or "HARMFUL", {
+      -- target lane = OWN debuffs only (|PLAYER): the CDM icon under this
+      -- overlay tracks the player's aura, so counting another player's
+      -- stacks of the same debuff would disagree with the icon itself
+      sub.btn = cont:AddAuraSlot(key, (unit == "player") and "HELPFUL" or "HARMFUL|PLAYER", {
         maxFrameCount    = 1,
         candidateFilters = { includeSpellIDs = {} },   -- parked until targeted
         templateNames    = { "ArcBarDurButtonTemplate" },

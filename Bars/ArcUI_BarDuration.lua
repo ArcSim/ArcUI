@@ -1175,8 +1175,11 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
   -- during the login prebuild — so the pet slot got baked with a HARMFUL
   -- filter for the whole session and the pet's buff could never match (the
   -- "empty pet bar after every reload" bug). The lanes are fixed by design:
-  -- target = debuffs (HARMFUL); player/pet = buffs (HELPFUL).
-  local filter = (unit == "target") and "HARMFUL" or "HELPFUL"
+  -- target = the player's OWN debuffs (HARMFUL|PLAYER — plain HARMFUL lit
+  -- bars up for ANY ally's copy of the debuff, e.g. a second Arms warrior's
+  -- Colossus Smash; the pre-12.1 CDM path was own-only implicitly);
+  -- player/pet = buffs (HELPFUL, any source — external buffs must match).
+  local filter = (unit == "target") and "HARMFUL|PLAYER" or "HELPFUL"
   -- threshold overlays present -> colour/texture split: the base goes FLAT
   -- too (the shade slot below carries the texture for every layer at once)
   local nSteps = opts.applicationSteps and #opts.applicationSteps or 0
