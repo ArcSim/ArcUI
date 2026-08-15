@@ -334,12 +334,26 @@ local function WireAuraButton(btn, arcID)
     btn.TextOverlay = overlay
 
     local stacks = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    -- OVERLAY sublevel 7: the active border edges live on this SAME overlay at
+    -- sublevel 6 (ApplyBorderEdges) — texts must sit one notch above or the
+    -- border strips draw over them (the "stack text behind the border" report)
+    stacks:SetDrawLayer("OVERLAY", 7)
     stacks:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
     btn._arcStacks = stacks
 
-    -- countdown fontstring reference for styling (the swipe owns the text)
+    -- countdown fontstring reference for styling (the swipe owns the text).
+    -- REHOME it onto TextOverlay: the FS is born on the swipe frame, a full
+    -- frame level BELOW the overlay hosting the border edges — frame level
+    -- beats draw layer, so SetDrawLayer(7) on the swipe frame still rendered
+    -- the countdown UNDER the border. Same object, the Cooldown keeps
+    -- driving its text; only the render context moves.
     if swipe.GetCountdownFontString then
-        btn._arcDurText = swipe:GetCountdownFontString()
+        local cfs = swipe:GetCountdownFontString()
+        btn._arcDurText = cfs
+        if cfs then
+            cfs:SetParent(overlay)
+            cfs:SetDrawLayer("OVERLAY", 7)
+        end
     end
 
     -- Hand the engine our widgets (inbound setters; engine drives from here)
@@ -540,15 +554,21 @@ local function EnsureSlots(arcID, def, startParked)
                         -- FULL LADDER (holder = h): ghost regions h, missing
                         -- glow host h+1 (a DECISIVE level above the ghost —
                         -- equal-level ties are family-dependent: pixel won,
-                        -- ants/proc lost), button h+2, swipe h+3, overlay
-                        -- h+4, glow anchor h+5, border overlay h+6, stack
-                        -- text h+10. CHILDREN DO NOT FOLLOW a parent
-                        -- SetFrameLevel — re-level the swipe/text overlay
-                        -- explicitly or they keep container-high levels and
-                        -- bury the ArcUI border. Swipe ABOVE the button
-                        -- (equal level loses the draw order against the icon
-                        -- region = invisible swipe).
-                        local lvl = h:GetFrameLevel() + 2
+                        -- ants/proc lost), GHOST BORDER overlay h+2 — BELOW
+                        -- the button: the live button OCCLUDES the ghost
+                        -- chrome while the aura is up (we can never READ the
+                        -- button's secret shown state, so stacking order IS
+                        -- the state logic; the old h+6 put this chrome above
+                        -- the texts = the "text behind the border" bug) —
+                        -- button h+3, swipe h+4, text overlay h+5 (active
+                        -- border sublevel 6, texts sublevel 7), glow anchor
+                        -- h+8, count container h+10. CHILDREN DO NOT FOLLOW
+                        -- a parent SetFrameLevel — re-level the swipe/text
+                        -- overlay explicitly or they keep container-high
+                        -- levels. Swipe ABOVE the button (equal level loses
+                        -- the draw order against the icon region = invisible
+                        -- swipe).
+                        local lvl = h:GetFrameLevel() + 3
                         b:SetFrameStrata(h:GetFrameStrata())
                         b:SetFrameLevel(lvl)
                         if b._arcSwipe then b._arcSwipe:SetFrameLevel(lvl + 1) end
@@ -880,6 +900,8 @@ function AuraIcons.StyleActiveButton(btn, settings, sizeRef)
         local bdt = btn._arcBoundDurText
         if not bdt then
             bdt = btn.TextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightMedium")
+            -- above the border edges (sublevel 6) — see _arcStacks
+            bdt:SetDrawLayer("OVERLAY", 7)
             btn._arcBoundDurText = bdt
         end
         -- CustomAuraButtonDurationTextOptions (69111, doc-verified)
@@ -1112,12 +1134,17 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
 
     -- Re-assert the holder's overlay level ladder from its CURRENT level:
     -- those children got their levels at factory time (base level 10) and
-    -- do NOT follow when CDMGroups later raises the holder — leaving the
-    -- border overlay BELOW our level-synced button (border vanishes exactly
-    -- when the aura is active).
+    -- do NOT follow when CDMGroups later raises the holder. GHOST BORDER
+    -- overlay goes at h+2, BELOW the button (h+3): the live button OCCLUDES
+    -- the ghost chrome while the aura is up — the active border on the
+    -- button's TextOverlay is the visible border then — and when the button
+    -- hides (aura missing) the ghost chrome surfaces. The old h+6 drew this
+    -- chrome over the button's texts at every state ("text behind the
+    -- border"). Occlusion IS the state logic: the button's shown state is a
+    -- secret we can never read.
     local hl = holder:GetFrameLevel()
-    if holder._arcBorderOverlay then holder._arcBorderOverlay:SetFrameLevel(hl + 6) end
-    if holder._arcGlowAnchor then holder._arcGlowAnchor:SetFrameLevel(hl + 5) end
+    if holder._arcBorderOverlay then holder._arcBorderOverlay:SetFrameLevel(hl + 2) end
+    if holder._arcGlowAnchor then holder._arcGlowAnchor:SetFrameLevel(hl + 8) end
     if holder._arcCountContainer then holder._arcCountContainer:SetFrameLevel(hl + 10) end
 
     local missDesat = cs.desaturate
@@ -1303,11 +1330,12 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
                 btn:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
                 btn:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
                 -- re-sync draw order (holder levels move with group ops):
-                -- ghost h, miss-glow host h+1, button h+2, swipe h+3
-                -- (ABOVE the button — equal level buries it under the icon
-                -- region), text overlay h+4, then glow anchor h+5 / border
-                -- h+6 / stack text h+10
-                local lvl = holder:GetFrameLevel() + 2
+                -- ghost h, miss-glow host h+1, ghost border overlay h+2
+                -- (occluded by the button while the aura is up), button h+3,
+                -- swipe h+4 (ABOVE the button — equal level buries it under
+                -- the icon region), text overlay h+5, then glow anchor h+8 /
+                -- count container h+10 — mirror of the creation ladder
+                local lvl = holder:GetFrameLevel() + 3
                 btn:SetFrameStrata(holder:GetFrameStrata())
                 btn:SetFrameLevel(lvl)
                 if btn._arcSwipe then btn._arcSwipe:SetFrameLevel(lvl + 1) end

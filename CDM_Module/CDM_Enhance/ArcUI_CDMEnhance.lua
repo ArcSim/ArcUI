@@ -1633,16 +1633,37 @@ end
 -- exact mistake made the first version of this mirror a silent no-op), copy
 -- snap only when readable, and when it is not, LEAVE the strips at client
 -- defaults (same defaults the icon gets) instead of forcing snap=false/bias=0.
+local ICON_DEFAULT_TEXEL_BIAS = 0.30000001192093  -- the client default (geo-dump-measured)
+
 local function MirrorIconSnapPolicy(frame, edges)
   local icon = frame.Icon
   if not icon then return end
-  local bias
+  -- SECRET GUARD + READ-ONCE CACHE (3.8.0 live error): in restricted content
+  -- EVEN RENDER PROPERTIES read off a Blizzard CDM frame come back secret,
+  -- and SetTexelSnappingBias rejects secret args from tainted code. Same law
+  -- as the bag-item identity cache (GetItemIdentity): read while the game
+  -- lets us, cache the PLAIN value on the icon (_arc* field, never read by
+  -- Blizzard), serve the cache under lockdown. The constant is only the
+  -- never-yet-readable fallback (it IS the client default).
+  local bias = ICON_DEFAULT_TEXEL_BIAS
   if icon.GetTexelSnappingBias then
-    bias = icon:GetTexelSnappingBias()
+    local b = icon:GetTexelSnappingBias()
+    if b ~= nil and not (issecretvalue and issecretvalue(b)) then
+      icon._arcTexelBiasCache = b    -- unrestricted: refresh the cache
+      bias = b
+    elseif icon._arcTexelBiasCache ~= nil then
+      bias = icon._arcTexelBiasCache -- lockdown: serve the last plain read
+    end
   end
   local snap
   if icon.GetSnapToPixelGrid then
-    snap = icon:GetSnapToPixelGrid() and true or false
+    local sv = icon:GetSnapToPixelGrid()
+    if not (issecretvalue and issecretvalue(sv)) then
+      snap = sv and true or false
+      icon._arcSnapCache = snap
+    elseif icon._arcSnapCache ~= nil then
+      snap = icon._arcSnapCache
+    end
   end
   local function apply(t)
     if snap ~= nil and t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(snap) end
@@ -5576,6 +5597,28 @@ ns.CDMEnhance.ApplyIconStyle = ApplyIconStyle
 -- ourselves from non-secret ids (equip slot / the category's last-used item),
 -- which touches no protected state at all. Spell icons keep the old forward.
 -- ═══════════════════════════════════════════════════════════════════
+-- TOOLTIP OWNER PROXY: never make the CDM frame itself the GameTooltip owner.
+-- The item frame's own periodic handler (CooldownViewerItemData ~832) checks
+-- "is the tooltip owned by me?" and then re-runs the PROTECTED tooltip
+-- refresh — on the execution our tainted SetOwner poisoned — feeding a
+-- SECRET auraInstanceID into SetUnitAuraByAuraInstanceID every tick (5x
+-- error storms while hovering). Owning the tooltip with OUR proxy, sized and
+-- anchored over the icon, breaks that IsOwned match: Blizzard's refresher
+-- never engages, the tooltip looks and anchors identically. The proxy stays
+-- shown (a hidden owner auto-hides the tooltip) and is mouse-transparent.
+local tooltipOwnerProxy
+local function TooltipOwnerFor(cdmFrame)
+  if not tooltipOwnerProxy then
+    tooltipOwnerProxy = CreateFrame("Frame", "ArcUITooltipOwnerProxy", UIParent)
+    tooltipOwnerProxy:EnableMouse(false)
+    tooltipOwnerProxy:Show()
+  end
+  tooltipOwnerProxy:ClearAllPoints()
+  tooltipOwnerProxy:SetPoint("TOPLEFT", cdmFrame, "TOPLEFT", 0, 0)
+  tooltipOwnerProxy:SetPoint("BOTTOMRIGHT", cdmFrame, "BOTTOMRIGHT", 0, 0)
+  return tooltipOwnerProxy
+end
+
 local function ForwardHoverTooltip(cdmFrame)
   if not cdmFrame then return end
   local ci = cdmFrame.cooldownInfo
@@ -5586,7 +5629,7 @@ local function ForwardHoverTooltip(cdmFrame)
     -- honour the global Show Tooltips toggle, same as CDM's own path would
     local db = Shared and Shared.GetCDMGroupsDB and Shared.GetCDMGroupsDB()
     if db and db.disableTooltips then return end
-    GameTooltip:SetOwner(cdmFrame, "ANCHOR_RIGHT")
+    GameTooltip:SetOwner(TooltipOwnerFor(cdmFrame), "ANCHOR_RIGHT")
     if eq then
       GameTooltip:SetInventoryItem("player", eq)
     else
@@ -5627,7 +5670,7 @@ local function ForwardHoverTooltip(cdmFrame)
     if raw and not (issecretvalue and issecretvalue(raw)) then sid = raw end
   end
   if sid then
-    GameTooltip:SetOwner(cdmFrame, "ANCHOR_RIGHT")
+    GameTooltip:SetOwner(TooltipOwnerFor(cdmFrame), "ANCHOR_RIGHT")
     GameTooltip:SetSpellByID(sid)
     GameTooltip:Show()
   end

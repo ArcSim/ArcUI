@@ -9710,9 +9710,22 @@ function ns.CDMGroups.CreateGroup(name, groupType)
             local cascadeOffsetY = self._rowCumulativeOffset and self._rowCumulativeOffset[row] or 0
             local lo = leftOverflow or 0
             local to = topOverflow or 0
+            -- CENTERING with per-icon size overrides (/afi-group-proven): the
+            -- container is sized content + cascade + left/right (top/bottom)
+            -- overflow and anchored by CENTER, so the grid shifts by HALF the
+            -- per-axis ASYMMETRY — (lo - ro)/2 minus half the total cascade —
+            -- NOT by the full left/top overflow in the outward direction. The
+            -- old "- lo"/"+ to" pushed oversized icons OUT the top-left corner
+            -- while the slack space collected bottom-right. Every term is 0
+            -- for groups without size overrides — placement is byte-identical
+            -- in the normal case.
+            local ro = self._rightOverflow or 0
+            local bo = self._bottomOverflow or 0
+            local tEW = self._colCumulativeOffset and self._colCumulativeOffset[cols - 1] or 0
+            local tEH = self._rowCumulativeOffset and self._rowCumulativeOffset[rows - 1] or 0
             -- CENTER of slot [row,col] relative to container CENTER
-            local cx = -contentW / 2 - lo + col * stepX + snapSlotW / 2 + cascadeOffsetX
-            local cy =  contentH / 2 + to - row * stepY - snapSlotH / 2 - cascadeOffsetY
+            local cx = -contentW / 2 + (lo - ro) / 2 - tEW / 2 + col * stepX + snapSlotW / 2 + cascadeOffsetX
+            local cy =  contentH / 2 - (to - bo) / 2 + tEH / 2 - row * stepY - snapSlotH / 2 - cascadeOffsetY
             return cx, cy
         end
         
@@ -10369,9 +10382,15 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         local effectiveTopOverflow = topOverflow > 0 and (topOverflow + overflowMargin) or 0
         local effectiveBottomOverflow = bottomOverflow > 0 and (bottomOverflow + overflowMargin) or 0
         
-        -- Store edge overflows for positioning calculations (use effective values)
+        -- Store edge overflows for positioning calculations (use effective values).
+        -- ALL FOUR: right/bottom were never stored, so every reader of
+        -- self._rightOverflow/_bottomOverflow (dynamic compact sizing, and the
+        -- centering share in getSlotPosition) silently got 0 — oversized icons
+        -- at the right/bottom edge clipped the container.
         self._leftOverflow = effectiveLeftOverflow
         self._topOverflow = effectiveTopOverflow
+        self._rightOverflow = effectiveRightOverflow
+        self._bottomOverflow = effectiveBottomOverflow
         
         -- Store per-column and per-row max effective sizes for cascade positioning
         -- This allows oversized icons to push only their neighbors by the correct amount

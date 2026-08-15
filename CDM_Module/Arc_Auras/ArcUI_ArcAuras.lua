@@ -1086,14 +1086,11 @@ local function CreateArcAuraFrame(arcID, config)
     frame:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-    
-    -- Right-click for options
-    frame:SetScript("OnClick", function(self, button)
-        if button == "RightButton" then
-            ArcAuras.ShowContextMenu(self)
-        end
-    end)
-    frame:RegisterForClicks("RightButtonUp")
+
+    -- Right-click context menu REMOVED (3.8.0.a, by request): everything it
+    -- offered (configure, always-show, change icon, remove) lives in the Arc
+    -- Auras panel / CDM Icons catalog. No OnClick, no RegisterForClicks —
+    -- the ShowContextMenu functions below are unreachable from gameplay.
     
     return frame
 end
@@ -2895,7 +2892,6 @@ function ArcAuras.ShowTooltip(frame)
         end
     end
     
-    GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
     
     if frame._isOnCooldown and frame._remaining then
         GameTooltip:AddLine(string.format("Cooldown: %.1fs", frame._remaining), 1, 0.8, 0)

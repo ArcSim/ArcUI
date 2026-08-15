@@ -1,3 +1,13 @@
+## 3.8.0.a
+
+### Bug Fixes
+
+- **Border errors in instances** — The 3.8.0 border alignment fix could throw errors in restricted content (dungeons, raids, restricted world events), where the game hides even rendering properties from addons. The border now remembers what it needs from unrestricted moments and never asks the game for it under lockdown, same as the potion fix in 3.7.12.b.
+- **Stack text behind the border on aura icons** — On Arc aura icons the stack count and duration text could be covered by the icon border; all icon texts now always draw above it.
+- **Right-click menu on Arc icons removed** — The context menu (configure, always-show, change icon, remove) is gone; everything it offered lives in the Arc Auras panel and the CDM Icons catalog.
+- **Oversized icons in groups** — An icon with Group Scale off and a larger custom size now sits correctly inside its group boundary; before, it escaped out the top-left corner while empty space collected bottom-right, and drag-and-drop targeting in that group was off by the same amount.
+- **CDM tooltip errors, round two** — Hovering a CDM icon in restricted content could still produce a stream of tooltip errors every refresh tick; ArcUI-built tooltips no longer let the game's own tooltip refresher engage at all.
+
 ## 3.8.0
 
 ### New Features
