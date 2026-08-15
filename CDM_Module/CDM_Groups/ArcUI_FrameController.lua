@@ -223,15 +223,8 @@ local function FcOnSetScale(self, scale)
 
     local parent = self:GetParent()
     local isInContainer = parent and parent._isCDMGContainer
-    -- STALE FREE-FLAG HEAL: don't force scale 1 on a plain viewer icon that
-    -- only LOOKS free via a leftover recycled-frame flag (see FcOnSetSize)
-    if self._cdmgIsFreeIcon and not isInContainer then
-        local cdID = self.cooldownID
-        if not (cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID]) then
-            self._cdmgIsFreeIcon = nil
-            self._cdmgFreeTargetSize = nil
-        end
-    end
+    -- NO free-flag heal here (the 3.7.12 vanishing-icons lesson): clearing
+    -- _cdmgIsFreeIcon on a transient lookup failure disarmed the hide fight.
     local isManaged = isInContainer or self._cdmgIsFreeIcon
 
     if isManaged and math.abs((scale or 1) - 1) > 0.01 then
@@ -252,14 +245,14 @@ local function FcOnSetSize(self, w, h)
     local isFreeIcon = self._cdmgIsFreeIcon
     local cdID = self.cooldownID
 
-    -- STALE FREE-FLAG HEAL (mirror of Maintain's OnSetSize): CDM pool
-    -- recycling carries _cdmgIsFreeIcon/_cdmgFreeTargetSize across occupant
-    -- changes — a grouped/viewer frame with the leftover flag would get the
-    -- OLD occupant's free sizing stamped onto it (intermittent giant icons).
-    -- In-container frames are never free; occupants without a freeIcons
-    -- entry aren't free either. Clear and let the real owner size it.
-    if isFreeIcon and (isInContainer
-        or not (cdID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[cdID])) then
+    -- STALE FREE-FLAG HEAL — IN-CONTAINER ONLY (the 3.7.12 vanishing-icons
+    -- lesson, mirror of Maintain's OnSetSize): in-container frames are
+    -- definitionally not free, safe to clear. A NOT-in-container frame must
+    -- NEVER be healed on a freeIcons lookup failure — CDM refresh waves make
+    -- that lookup fail transiently for LEGIT free icons, and clearing the
+    -- flag disarmed DeferredHideFight (free icons vanished at combat start
+    -- until reload). Lookup failure falls back to stored size, as 3.7.11.
+    if isFreeIcon and isInContainer then
         self._cdmgIsFreeIcon = nil
         self._cdmgFreeTargetSize = nil
         isFreeIcon = false

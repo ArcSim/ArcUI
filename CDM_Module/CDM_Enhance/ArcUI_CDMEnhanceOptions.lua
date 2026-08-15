@@ -3368,7 +3368,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     zoom = {
       type = "range", name = "Zoom", min = 0, max = 0.3, step = 0.01,
       desc = "Crops icon edges for a cleaner look.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings.",
-      get = function() local c = GetAuraCfg(); return c and c.zoom or 0.075 end,
+      get = function() local c = GetAuraCfg(); return c and c.zoom or 0.08 end,
       set = function(_, v) ApplyAuraSetting(function(c) c.zoom = v end) end,
       order = 105, width = 0.65, hidden = HideAuraIconAppearance,
       disabled = IsMasqueActive,
@@ -7456,7 +7456,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
     zoom = {
       type = "range", name = "Zoom", min = 0, max = 0.3, step = 0.01,
       desc = "Crops icon edges for a cleaner look.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings.",
-      get = function() local c = GetCooldownCfg(); return c and c.zoom or 0.075 end,
+      get = function() local c = GetCooldownCfg(); return c and c.zoom or 0.08 end,
       set = function(_, v) ApplySharedCooldownSetting(function(c) c.zoom = v end) end,
       order = 105, width = 0.65, hidden = HideCooldownIconAppearance,
       disabled = IsMasqueActive,
@@ -9163,7 +9163,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         },
         auraComingSoon121 = {
           type = "description",
-          name = "|cffff8800Aura / Buff source -- coming soon in patch 12.1 (Midnight).|r Show a buff/debuff's remaining time on this cooldown icon by spell ID. It's available to try on the 12.1 PTR now (still a work in progress); it can't ship on live because it relies on 12.1's new aura container.",
+          name = "|cffff8800Aura / Buff source requires patch 12.1 (Midnight).|r Show a buff/debuff's remaining time on this cooldown icon by spell ID. Your client is on an older game version -- this option unlocks once your game updates to 12.1 (it relies on 12.1's aura container).",
           fontSize = "medium",
           order = 2.5,
           hidden = function()
@@ -11786,7 +11786,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
       zoom = {
         type = "range", name = "Zoom", min = 0, max = 0.3, step = 0.01,
         desc = "Crop edges to zoom into icon center.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings.",
-        get = function() return GetAuraGlobalCfg().zoom or 0.075 end,
+        get = function() return GetAuraGlobalCfg().zoom or 0.08 end,
         set = function(_, v) ApplyAuraGlobalSetting("zoom", v); RefreshGlobalAuras() end,
         order = 11.7, width = 0.8, hidden = function() return collapsedGlobalAuraSections.iconAppearance end,
         disabled = IsMasqueActive,
@@ -13503,7 +13503,7 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
       zoom = {
         type = "range", name = "Zoom", min = 0, max = 0.3, step = 0.01,
         desc = "Crop edges to zoom into icon center.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings.",
-        get = function() return GetCooldownGlobalCfg().zoom or 0.075 end,
+        get = function() return GetCooldownGlobalCfg().zoom or 0.08 end,
         set = function(_, v) ApplyCooldownGlobalSetting("zoom", v); RefreshGlobalCooldowns() end,
         order = 11.7, width = 0.8, hidden = function() return collapsedGlobalCooldownSections.iconAppearance end,
         disabled = IsMasqueActive,

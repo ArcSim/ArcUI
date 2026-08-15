@@ -2525,18 +2525,40 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
         for groupName, group in pairs(ns.CDMGroups.groups) do
             if group.members and group.members[arcID] then
                 inGroup = true
-                -- Use group's slot dimensions (respects group iconSize/width/height)
-                if ns.CDMGroups.GetSlotDimensions then
-                    width, height = ns.CDMGroups.GetSlotDimensions(group.layout)
+                -- ONE SIZE AUTHORITY (panel-close border bleed + the 79.0 vs
+                -- 79.2px drag mismatch): the number every CDM frame in the
+                -- group is ACTUALLY sized to is frame._cdmgSlotW/H — Layout's
+                -- SetupFrameInContainer pixel-snaps the slot to the physical
+                -- grid (44 ui -> 43.8888 = exactly 79px) before SetSize and
+                -- stores it there. member._effectiveIconW holds the RAW slot
+                -- (44 = 79.2px); preferring it made arc frames 0.2px wider
+                -- than their CDM neighbors after every post-drag apply
+                -- (/afi group verdict-proven). Snapped slot FIRST, raw
+                -- effective size as fallback, raw GetSlotDimensions only for
+                -- the never-laid-out case. Per-icon overrides (useGroupScale
+                -- OFF) replicate Layout's own override math instead, so they
+                -- are not stomped to slot size.
+                local m = group.members[arcID]
+                if cfg.useGroupScale == false then
+                    local s = cfg.scale or 1.0
+                    width  = (cfg.width  or frame._cdmgSlotW or 44) * s
+                    height = (cfg.height or frame._cdmgSlotH or 44) * s
                 else
-                    -- Fallback: calculate manually
-                    local baseScale = 36
-                    local iconSize = group.layout.iconSize or 36
-                    local iconWidth = group.layout.iconWidth or 36
-                    local iconHeight = group.layout.iconHeight or 36
-                    local scale = iconSize / baseScale
-                    width = iconWidth * scale
-                    height = iconHeight * scale
+                    width  = frame._cdmgSlotW or (m and m._effectiveIconW)
+                    height = frame._cdmgSlotH or (m and m._effectiveIconH)
+                end
+                if not width or not height then
+                    if ns.CDMGroups.GetSlotDimensions then
+                        width, height = ns.CDMGroups.GetSlotDimensions(group.layout)
+                    else
+                        local baseScale = 36
+                        local iconSize = group.layout.iconSize or 36
+                        local iconWidth = group.layout.iconWidth or 36
+                        local iconHeight = group.layout.iconHeight or 36
+                        local scale = iconSize / baseScale
+                        width = iconWidth * scale
+                        height = iconHeight * scale
+                    end
                 end
                 break
             end

@@ -1323,7 +1323,12 @@ local function MirrorHookBar(srcBar)
   hooksecurefunc(srcBar, "SetValue", function(self, v)
     for ourFrame, rec in pairs(mirrorByBar) do
       if rec.srcBar == self and ourFrame.bar and MirrorSourceValid(rec) then
-        ourFrame.bar:SetValue(v)
+        -- SMOOTHING: SetValue's second argument is the interpolation enum, and it
+        -- is NeverSecret -- we supply it, so a secret value animates fine. The
+        -- mirror simply never passed one, so every push was Immediate and the bar
+        -- stepped. rec.interp is nil when the user has Smooth Fill off, which is
+        -- the documented default (Immediate).
+        ourFrame.bar:SetValue(v, rec.interp)
         mirDiag.value = mirDiag.value + 1
         -- DURATION TEXT (Arc's call: value-derived ONLY -- the normal text
         -- sources are cut out entirely in mirror mode): whole seconds from
@@ -1348,8 +1353,23 @@ local function MirrorHookBar(srcBar)
         -- the INACTIVE push is literal SetMinMaxValues(0, 0) -- non-secret
         -- constants, so this compare is safe -- clear the mirrored text so no
         -- stale number lingers after the timer ends
-        if rec.fs and not (issecretvalue and issecretvalue(mx)) and mx == 0 then
+        local inactive = not (issecretvalue and issecretvalue(mx)) and mx == 0
+        if rec.fs and inactive then
           rec.fs:SetText("")
+        end
+        -- FILL-MODE LAYER (Display's ApplyMirrorFillLayer): it paints the gap the
+        -- drain texture leaves behind, so an inactive entry -- zero-width drain --
+        -- would leave the whole bar looking FULL. The active push carries a SECRET
+        -- duration, so "mx is secret" is itself the active signal.
+        -- gate on the MODE FLAG, not on the texture existing: the texture is
+        -- pooled and merely hidden when the user switches back to drain
+        local fillTex = ourFrame._mirrorFillActive and ourFrame._mirrorFillTex
+        if fillTex then
+          fillTex:SetShown(not inactive)
+          -- re-assert the drain's alpha-0 at the timer edge: ApplyAppearance can
+          -- run between bar updates and restore it, which would put the mirrored
+          -- drain back on top of the fill layer
+          if not inactive then ourFrame.bar:SetAlpha(0) end
         end
       end
     end
@@ -1363,11 +1383,12 @@ end
 -- update): re-resolves the CDM item frame each time, so CDM frame
 -- reassignment self-heals on the next update. Returns true when a bar-kind
 -- CDM item was found and hooked.
-function BD.AttachMirror(barFrame, fs, cooldownID)
+function BD.AttachMirror(barFrame, fs, cooldownID, interp)
   if not (barFrame and cooldownID and cooldownID > 0) then return false end
   local rec = mirrorByBar[barFrame] or {}
   rec.cooldownID = cooldownID
   rec.fs = fs
+  rec.interp = interp   -- StatusBarInterpolation for the mirrored SetValue (nil = Immediate)
   mirrorByBar[barFrame] = rec
   -- registry lookups are COLON methods (self = the registry)
   local f = ns.FrameRegistry and ns.FrameRegistry.GetValidFrameForCooldownID
@@ -1552,6 +1573,16 @@ function BD.ApplyStyle(barFrame, durationFrame, showDuration, decimals, duration
       ReassertStepGeometry(sub, barFrame)
       ReassertDurGeometry(sub, barFrame)
     end
+    if at then
+      -- THE TOGGLE IS THE DEADLINE: Show Duration OFF must hide the engine's
+      -- ArcTimer holder NOW — the timer is engine-driven and keeps counting
+      -- otherwise ("disabled duration text but it still shows on the bar").
+      -- Holder writes are legal here: the blocked path above already
+      -- deferred us when the button partition is forbidden. ON re-shows it.
+      if sub.holder and sub.holder.SetShown then
+        sub.holder:SetShown(showDuration and true or false)
+      end
+    end
     if at and showDuration then
       if sub.holder and durationFrame and sub.holder.SetFrameLevel then
         sub.holder:SetFrameStrata(durationFrame:GetFrameStrata())
@@ -1569,6 +1600,7 @@ function BD.ApplyStyle(barFrame, durationFrame, showDuration, decimals, duration
   a.decimals = decimals
   a.textColorEnabled = textColorEnabled
   a.colorKey = colorKey
+  a.showDuration = showDuration and true or false
   Log("ApplyStyle: plain restyle done (cd=%s key=%s tce=%s)",
     tostring(a.cooldownID), tostring(colorKey), tostring(textColorEnabled))
 end

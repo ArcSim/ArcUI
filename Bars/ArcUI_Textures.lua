@@ -63,6 +63,63 @@ local function FindActiveFrame(cfg)
 end
 
 -- ===================================================================
+-- TRACK-TYPE LANES (mirrors the bars' Type dropdown; ONE resolver so a
+-- lane decision can never miss a site again)
+--   buff -> player, debuff -> target, petbuff -> pet (12.1 engine lane)
+--   pet/totem/ground -> the TOTEM path (no aura unit at all)
+--   ""/nil -> setup incomplete: no aura lane armed
+-- ===================================================================
+local TOTEM_LIKE = { pet = true, totem = true, ground = true }
+
+local function TrackUnitFor(cfg)
+  local t = cfg and cfg.tracking
+  local tt = t and t.trackType
+  if not tt or tt == "" then
+    -- PRE-REWORK textures reach here BEFORE the login bake runs (the engine
+    -- prebuild fires at the load window, EARLIER than Init): a CONFIGURED
+    -- texture must keep its historical player lane so drains and countdowns
+    -- arm exactly as they always did — returning nil here skipped the
+    -- prebuild arm for every pre-rework texture and killed their drains
+    -- (the Drain As It Expires regression). Only truly unconfigured slots
+    -- stay unarmed.
+    if t and ((tonumber(t.spellID) or 0) > 0 or (tonumber(t.cooldownID) or 0) > 0) then
+      return "player"
+    end
+    return nil
+  end
+  if TOTEM_LIKE[tt] then return nil end
+  if tt == "debuff" then return "target" end
+  if tt == "petbuff" then return "pet" end
+  return "player"
+end
+
+local function IsTotemLikeTexture(cfg)
+  local tt = cfg and cfg.tracking and cfg.tracking.trackType
+  return tt ~= nil and TOTEM_LIKE[tt] == true
+end
+
+-- Totem-path state: the slot whose totem spell matches the tracked spell.
+-- GetTotemDuration returns a durObj while the totem is up and nothing when
+-- the slot is empty (nil-testable, secret-safe, works in combat/instances) —
+-- the same copy-not-reparent read the Arc Auras totem icons ship on.
+-- GetTotemInfo's haveTotem is a SECRET boolean — never read it; the spellID
+-- (7th return) is the same value Blizzard's own CDM destructures directly.
+local MAX_TEXTURE_TOTEMS = MAX_TOTEMS or 4
+local function TotemStateFor(cfg)
+  if not (GetTotemInfo and GetTotemDuration) then return nil end
+  local t = cfg and cfg.tracking
+  local want = t and (t.trackedSpellID or t.spellID)
+  if not want or want == 0 then return nil end
+  for slot = 1, MAX_TEXTURE_TOTEMS do
+    local _, _, _, _, _, _, spellID = GetTotemInfo(slot)
+    if spellID and not (issecretvalue and issecretvalue(spellID)) and spellID == want then
+      return GetTotemDuration(slot)
+    end
+  end
+  return nil
+end
+
+-- ===================================================================
 -- DURATION FADE-OUT (secret-safe, via Blizzard ColorCurve alpha)
 -- As the tracked aura runs down, the texture's alpha follows a curve.
 -- Mirrors the bar duration-color-curve pattern in ArcUI_Display.lua.
@@ -74,7 +131,8 @@ local function GetDurObjFor(cfg, activeFrame)
   if not (C_UnitAuras and C_UnitAuras.GetAuraDuration) then return nil end
   local aiid = activeFrame.auraInstanceID
   if not HasAuraInstanceID(aiid) then return nil end
-  local unit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
+  local unit = TrackUnitFor(cfg)
+  if not unit then return nil end   -- totem-type / setup incomplete: no aura lane
   -- 12.1: the aura APIs THROW while the unit's auras are secret (aiid stays NON-secret), so gate
   -- on the ns.API.AurasSecret probe. Skip -> texture holds its active alpha (no fade). Inert on live.
   if ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit) then return nil end
@@ -136,10 +194,11 @@ local function StartFade(num, frame, cfg, activeFrame)
     return
   end
 
-  local unit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
+  local unit = TrackUnitFor(cfg)
   -- 12.1: GetAuraDuration THROWS while the unit's auras are secret. Under secrecy skip the fade
   -- entirely (static active alpha, and no OnUpdate ticker that would throw every frame). Inert on live.
-  if ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit) then
+  -- No aura unit (totem-type / setup incomplete): same static fallback.
+  if not unit or (ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit)) then
     StopFade(frame)
     tex:SetAlpha(fullA)
     return
@@ -1204,22 +1263,50 @@ function Textures.ApplyAppearance(num)
     end
 
     -- 12.1 borrowed-engine mode: the engine's ArcBar carries the art as its
-    -- FILL (mask-to-engine-fill anchoring is aspect-blocked). A DIRECTION,
-    -- TEXTURE or ELIGIBILITY change needs a fresh engine (bindings + fill are
-    -- init-window): release the slot; the drive block re-attaches next pass.
-    if frame._arcDrainAttached
-       and (frame._arcDrainDir ~= frame._arcDrainDirKey
-            or frame._arcDrainSrc ~= srcFile
-            or not frame._arcDrainEligible) then
+    -- FILL (mask-to-engine-fill anchoring is aspect-blocked). EVERY baked
+    -- ingredient is part of the RECIPE — direction, source file, UNIT LANE
+    -- (the Type dropdown), blend, colour, alpha, eligibility. ANY change
+    -- retires the slot (warm-container law: Detach + fresh attach in the
+    -- next UpdateTexture pass) so option edits take effect ON THE SPOT —
+    -- the old checks covered only direction/source, which is why colour,
+    -- alpha, blend and type edits silently kept the old drain until reload.
+    local ac0 = d.activeColor
+    local drainSig = table.concat({
+      tostring(frame._arcDrainDirKey), tostring(srcFile), tostring(TrackUnitFor(cfg)),
+      tostring(blend),
+      string.format("%.3f|%.3f|%.3f|%.3f",
+        (ac0 and ac0.r) or 1, (ac0 and ac0.g) or 1, (ac0 and ac0.b) or 1,
+        tonumber(d.activeAlpha) or 1),
+      tostring(frame._arcDrainEligible),
+    }, "#")
+    if frame._arcDrainAttached and frame._arcDrainSig ~= drainSig then
       if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(frame._arcDrainHost) end
       frame._arcDrainAttached, frame._arcDrainDir, frame._arcDrainSrc, frame._arcDrainBT = nil, nil, nil, nil
     end
+    frame._arcDrainSig = drainSig
 
-    -- Config (direction/source) changed: re-seed the timer next update.
+    -- Config changed: re-seed the timer next update.
     frame._arcDrainSeeded = false
     frame._arcDrainFrame = nil
   else
     -- STATIC: the texture region (supports zoom/crop/mirror/rotation/fade).
+    -- This path runs BOTH when the drain is genuinely OFF and during the
+    -- panel-open preview (progress is forced off while editing). Only a
+    -- REAL disable retires the engine slot — a panel-open Detach would
+    -- recreate the tracer-proven "no countdown after an options visit" bug
+    -- (re-creation is impossible under secrecy). The preview just HIDES the
+    -- host: binding kept, engine art off while editing.
+    if d.progressEnabled ~= true then
+      -- Drain turned OFF: retire the slot, or the engine keeps painting the
+      -- drain art over the static texture (drain-disable "didn't take effect").
+      if frame._arcDrainAttached and frame._arcDrainHost
+         and ns.BarDuration and ns.BarDuration.Detach then
+        ns.BarDuration.Detach(frame._arcDrainHost)
+      end
+      frame._arcDrainAttached, frame._arcDrainDir, frame._arcDrainSrc, frame._arcDrainBT = nil, nil, nil, nil
+      frame._arcDrainSig = nil
+    end
+    if frame._arcDrainHost then frame._arcDrainHost:Hide() end
     if frame.drainMask then tex:RemoveMaskTexture(frame.drainMask) end
     if frame.ghost then frame.ghost:Hide() end
     HideRegionPieces(frame)
@@ -1300,6 +1387,12 @@ function Textures.UpdateTexture(num)
      and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable() then
     active = true
   end
+  -- TOTEM-TYPE textures: state rides the totem slots (secret-safe, combat
+  -- and instances included), never CDM frames or auras.
+  if IsTotemLikeTexture(cfg) then
+    activeFrame = nil
+    active = TotemStateFor(cfg) ~= nil
+  end
   local showInactive = (d.showWhenInactive == true)
 
   -- Hidden when inactive (and not editing): nothing to draw.
@@ -1307,9 +1400,31 @@ function Textures.UpdateTexture(num)
   -- drain-engine attach, so a CDM texture whose aura first lands in combat
   -- never armed its engine and the art never drained that session (in-game
   -- log: the endless "cd=113506 tracked=nil" deferrals were these textures).
+  -- MID-SESSION ARM PASS (prebuild parity at the gate): re-enabling Duration
+  -- Text / Drain while the aura is DOWN hit this return before the attach
+  -- blocks ever ran — nothing armed, the first in-combat activation then
+  -- DEFERRED slot creation (secret), and the feature only appeared a fight
+  -- later ("disabled it, re-enabled it, no text that combat"). When an
+  -- enabled engine feature is unarmed, fall through ONCE to arm (legal at
+  -- the desk), then return to the hidden steady state — exactly how
+  -- prebuild-armed inactive textures live (bindings kept, engine refreshes
+  -- on show).
+  local armPass = false
   if (not active) and (not showInactive) and (not optionsOpen) and (not Textures._prebuild) then
-    Textures.HideTexture(num)
-    return
+    local engineOK = ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()
+    local unitLane = TrackUnitFor(cfg)
+    local hasIDs = ((cfg.tracking.cooldownID or 0) > 0)
+      or ((cfg.tracking.trackedSpellID or cfg.tracking.spellID or 0) > 0)
+    local dtfA = frame._arcDurFrame
+    local needTextArm = engineOK and unitLane ~= nil and hasIDs
+      and (d.showDuration == true) and dtfA and (dtfA._arcTexDurSig == nil)
+    local needDrainArm = engineOK and unitLane ~= nil and hasIDs
+      and frame._arcProgress and frame._arcDrainEligible and not frame._arcDrainAttached
+    if not (needTextArm or needDrainArm) then
+      Textures.HideTexture(num)
+      return
+    end
+    armPass = true
   end
 
   -- Choose which state's style to use. While editing an otherwise-hidden
@@ -1385,8 +1500,8 @@ function Textures.UpdateTexture(num)
     -- _arcDrainSeeded so the aura's OWN refresh re-seeds. The bar stays invisible
     -- (alpha 0); only its fill geometry sweeps the mask over the foreground.
     bar:SetStatusBarColor(1, 1, 1, 0)
-    local drainUnit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
-    local drainSecret = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(drainUnit)
+    local drainUnit = TrackUnitFor(cfg)   -- nil = totem-type / setup incomplete: no drain lane
+    local drainSecret = drainUnit and ns.API and ns.API.AurasSecret and ns.API.AurasSecret(drainUnit)
     -- custom auras have no live-data fallback (no CDM frame to read a durObj
     -- from) — they always ride the engine lane on 12.1, secret or not
     local texCustomAura = cfg.tracking and cfg.tracking.customAura
@@ -1552,8 +1667,8 @@ function Textures.UpdateTexture(num)
   local dtf, dtext = frame._arcDurFrame, frame._arcDurText
   if dtf and dtext then
     if d.showDuration == true then
-      local unit = (cfg.tracking and cfg.tracking.trackType == "debuff") and "target" or "player"
-      local secret = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit)
+      local unit = TrackUnitFor(cfg)
+      local secret = unit and ns.API and ns.API.AurasSecret and ns.API.AurasSecret(unit)
       if optionsOpen then
         -- NEVER Detach here (tracer-proven bug): the panel-open Detach threw
         -- away the live engine binding, and re-creation is impossible under
@@ -1567,6 +1682,31 @@ function Textures.UpdateTexture(num)
         if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(dtext) end
         dtext:SetText("12.3")
         dtf:Show()
+      elseif IsTotemLikeTexture(cfg) then
+        -- TOTEM path: duration straight from the slot's durObj — readable in
+        -- combat and instances, no engine lane needed. A leftover AURA-lane
+        -- engine attach from before a Type change must be retired or its
+        -- ArcTimer keeps overlaying the totem countdown.
+        if dtf._arcTexDurSig and ns.BarDuration and ns.BarDuration.Detach then
+          ns.BarDuration.Detach(dtf)
+          dtf._arcTexDurSig = nil
+        end
+        local durObj = active and TotemStateFor(cfg) or nil
+        if durObj and ns.DurationText and ns.DurationText.IsSupported and ns.DurationText.IsSupported()
+           and ns.DurationText.Bind(dtext, durObj, tonumber(d.durationDecimals) or 1, nil, nil, d) then
+          dtf:Show()
+        else
+          if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(dtext) end
+          dtf:Hide()
+        end
+      elseif not unit then
+        -- setup incomplete: no lane to read from; retire any stale attach
+        if dtf._arcTexDurSig and ns.BarDuration and ns.BarDuration.Detach then
+          ns.BarDuration.Detach(dtf)
+          dtf._arcTexDurSig = nil
+        end
+        if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(dtext) end
+        dtext:SetText(""); dtf:Hide()
       elseif secret then
         -- 12.1: durObj is unreadable, so drive the countdown via the AuraButton engine (text-only,
         -- no bar) exactly like the aura duration bars. The engine's ArcTimer overlays our dtext.
@@ -1575,13 +1715,29 @@ function Textures.UpdateTexture(num)
         -- countdown never existed (both bar lanes already had the fallback).
         local cdID = cfg.tracking and cfg.tracking.cooldownID
         local tsID = cfg.tracking and (cfg.tracking.trackedSpellID or cfg.tracking.spellID)
-        -- arm during the prebuild too: this binding is the texture's one
-        -- chance per session, same as the drain engine above
+        -- ARM WHENEVER ENABLED (prebuild parity): the login prebuild arms
+        -- every Duration Text texture regardless of active, so a MID-SESSION
+        -- enable must arm the same way — gating on `active` meant a texture
+        -- whose option was turned on after creation never armed until the
+        -- next reload ("doesn't show until I reload"). A parked slot costs
+        -- the same as the prebuild's; BD.Attach self-defers when creation
+        -- is blocked (combat/secrecy) and retries at regen.
         if ns.TraceTap then ns.TraceTap("TEX", string.format(
           "tex %s durText: SECRET branch active=%s prebuild=%s cd=%s ts=%s",
           tostring(num), tostring(active), tostring(Textures._prebuild),
           tostring(cdID), tostring(tsID))) end
-        if (active or Textures._prebuild) and ns.BarDuration and ns.BarDuration.Attach and ((cdID and cdID > 0) or (tsID and tsID > 0)) then
+        if ns.BarDuration and ns.BarDuration.Attach and ((cdID and cdID > 0) or (tsID and tsID > 0)) then
+          -- LANE SIGNATURE (unit + ids): a Type-dropdown change or a respec
+          -- id change must RETIRE the old slot (warm-container law) and
+          -- attach fresh — without this the countdown kept driving from the
+          -- OLD unit's lane until reload. Style-only edits never retire
+          -- (fonts/colors re-push below; the live formatter mutates in place).
+          local durSig = tostring(unit) .. "#" .. tostring(cdID) .. "#" .. tostring(tsID)
+          if dtf._arcTexDurSig and dtf._arcTexDurSig ~= durSig
+             and ns.BarDuration.Detach then
+            ns.BarDuration.Detach(dtf)
+          end
+          dtf._arcTexDurSig = durSig
           local dOutline = DUR_OUTLINE[d.durationOutline or "THICKOUTLINE"] or "THICKOUTLINE"
           local dFontPath = "Fonts\\FRIZQT__.TTF"
           if LSM and d.durationFont then local f = LSM:Fetch("font", d.durationFont); if f and f ~= "" then dFontPath = f end end
@@ -1605,8 +1761,9 @@ function Textures.UpdateTexture(num)
           dtf:Show()
         else
           if ns.TraceTap then ns.TraceTap("TEX", string.format(
-            "tex %s durText: SECRET but NO ATTACH (inactive, no ids, or BD gone) -> Detach + hide", tostring(num))) end
+            "tex %s durText: SECRET but NO ATTACH (no ids, or BD gone) -> Detach + hide", tostring(num))) end
           if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(dtf) end
+          dtf._arcTexDurSig = nil
           dtext:SetText(""); dtf:Hide()
         end
       else
@@ -1626,9 +1783,18 @@ function Textures.UpdateTexture(num)
       end
     else
       if ns.BarDuration and ns.BarDuration.Detach then ns.BarDuration.Detach(dtf) end
+      dtf._arcTexDurSig = nil
       if ns.DurationText and ns.DurationText.Unbind then ns.DurationText.Unbind(dtext) end
       dtf:Hide()
     end
+  end
+
+  -- ARM PASS exit: lanes are armed now — return to the hidden steady state.
+  -- Bindings survive the hide (HideTexture never detaches the engine); the
+  -- container children are hidden with the frame and refresh on show.
+  if armPass then
+    Textures.HideTexture(num)
+    return
   end
 
   frame._arcWasActive = active   -- next activation knows if this is a fresh-in
@@ -1686,6 +1852,8 @@ local function EnsureDriver()
   -- UNIT_AURA limited to the only units a buff/debuff texture can track.
   driver:RegisterUnitEvent("UNIT_AURA", "player", "target")
   driver:RegisterEvent("PLAYER_TARGET_CHANGED")
+  -- Totem-type textures: fires only on summon/expire/destroy — near-free.
+  driver:RegisterEvent("PLAYER_TOTEM_UPDATE")
   driver:RegisterEvent("PLAYER_REGEN_ENABLED")
   driver:RegisterEvent("PLAYER_REGEN_DISABLED")
   driver:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
@@ -1694,7 +1862,7 @@ local function EnsureDriver()
   driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 
   driver:SetScript("OnEvent", function(_, event)
-    if event == "UNIT_AURA" or event == "PLAYER_TARGET_CHANGED" then
+    if event == "UNIT_AURA" or event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_TOTEM_UPDATE" then
       -- Coalesce bursts into a single state refresh next tick.
       if statePending then return end
       statePending = true
@@ -1719,6 +1887,21 @@ end
 -- ===================================================================
 function Textures.Init()
   EnsureDriver()
+
+  -- ONE-TIME BAKE (setup-honesty rework): configured textures created before
+  -- the Type choice was enforced can carry no trackType — they always rode
+  -- the player lane, so bake "buff" to preserve exactly that behavior. New
+  -- or unconfigured slots stay "" and the panel forces the choice.
+  local db = ns.API and ns.API.GetDB and ns.API.GetDB()
+  if db and db.textures then
+    for _, tcfg in pairs(db.textures) do
+      local tr = tcfg and tcfg.tracking
+      if tr and tr.enabled and (tr.trackType == nil or tr.trackType == "")
+         and ((tonumber(tr.spellID) or 0) > 0 or (tonumber(tr.cooldownID) or 0) > 0) then
+        tr.trackType = "buff"
+      end
+    end
+  end
 
   -- Rebind whenever CDM frames are rescanned/rebuilt (login, spec change,
   -- CDM layout change). Chains the central scan-complete callback the same

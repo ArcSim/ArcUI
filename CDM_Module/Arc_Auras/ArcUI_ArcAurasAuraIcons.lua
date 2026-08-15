@@ -414,7 +414,12 @@ end
 local function ApplySlotFilters(entry, parked)
     local def = entry.def
     for _, sub in ipairs(entry.subs) do
-        local filters = parked and { includeSpellIDs = {} }
+        -- PARK = the never-matching id, NEVER the empty table (ONE convention,
+        -- the BD pattern the rewire already uses): an empty set is the
+        -- permissive fallback if the engine ever reverts toward creation-time
+        -- filters — a filterless HELPFUL slot displays an ARBITRARY buff (the
+        -- Bonegrinder icon showing a permanent rep bonus).
+        local filters = parked and { includeSpellIDs = { [0] = true } }
             or { includeSpellIDs = IncludeMap(def) }
         sub.container:SetAuraSlotCandidateFilters(sub.key, filters)
     end
@@ -430,17 +435,40 @@ local function SetSlotsParked(entry, parked)
     ApplySlotFilters(entry, parked)
 end
 
+-- FILTER TRUTH RE-ASSERTION (the Bonegrinder wrong-aura report): a slot that
+-- loses its candidate filter shows an ARBITRARY buff — a permanently-active
+-- rep bonus always wins a filterless HELPFUL slot. Our writers only fire on
+-- STATE TRANSITIONS, so a filter dropped engine-side (mid-session container
+-- churn) was never re-pushed. SetAuraSlotCandidateFilters is a data-only
+-- write (legal in any context, engine rescans internally): re-push every
+-- entry's correct set at the settle edges. A handful of table writes per
+-- event, zero idle cost.
+function AuraIcons.ReassertFilters()
+    if not IS_121 then return end
+    for _, entry in pairs(entries) do
+        if entry.subs and #entry.subs > 0 and combatQueue[entry] == nil then
+            ApplySlotFilters(entry, entry.parked)
+        end
+    end
+end
+
 local regenWatcher = CreateFrame("Frame")
 regenWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
-regenWatcher:SetScript("OnEvent", function()
-    for entry, parked in pairs(combatQueue) do
-        ApplySlotFilters(entry, parked)
+regenWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+regenWatcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+regenWatcher:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_ENABLED" then
+        for entry, parked in pairs(combatQueue) do
+            ApplySlotFilters(entry, parked)
+        end
+        wipe(combatQueue)
+        if pendingRefresh then
+            pendingRefresh = false
+            AuraIcons.RefreshVisibility()
+        end
     end
-    wipe(combatQueue)
-    if pendingRefresh then
-        pendingRefresh = false
-        AuraIcons.RefreshVisibility()
-    end
+    -- every settle edge (regen included): re-assert believed-correct filters
+    AuraIcons.ReassertFilters()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -537,7 +565,9 @@ local function EnsureSlots(arcID, def, startParked)
                     AuraIcons.ApplySettings(arcID, b)
                     C_Timer.After(0, function() AuraIcons.ApplySettings(arcID) end)
                 end,
-                candidateFilters = { includeSpellIDs = startParked and {} or IncludeMap(def) },
+                -- parked creation uses the never-matching id too — never bake
+                -- the permissive empty set into the slot's creation state
+                candidateFilters = { includeSpellIDs = startParked and { [0] = true } or IncludeMap(def) },
             })
             if btn and not sub.frame then sub.frame = btn end
         end

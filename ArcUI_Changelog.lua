@@ -29,6 +29,36 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.0",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Texture Tracking Types", desc = "Textures now use the same tracking dropdown as bars: Buff (you), Debuff (target), Buff (pet), and Totem. Images can react to pet buffs and totem timers, with duration text and Drain As It Expires working on every type." },
+          { title = "Timer Mirror fill options", desc = "Bars that mirror a Cooldown Manager timer can now fill up instead of draining, reverse direction, and animate smoothly." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Texture editor sub-tabs", desc = "Each texture's settings are organized into Source, Transform, and Duration sub-tabs instead of one long panel." },
+          { title = "Cleaner texture creation", desc = "Creating a texture no longer jumps you to a different tab; the new texture expands in place and asks for its tracking type up front, just like bars." },
+          { title = "Options apply on the spot", desc = "Enabling or disabling duration text, drains, and Show Duration on bars and textures now takes effect the moment you click, instead of waiting for a reload or the next time the aura appears." },
+          { title = "Description cleanup", desc = "Outdated notes in the texture panels were replaced with what actually applies on 12.1." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Free icons vanishing in combat", desc = "Fixed free-placed icons disappearing at the start of combat until a reload." },
+          { title = "Aura state stuck after target swaps", desc = "Target-debuff icons could keep their active look, or stay desaturated or hidden, after switching targets; every target change now re-verifies the real aura state." },
+          { title = "Icon borders drawn off the icon", desc = "Borders could render up to a pixel off the icon art at certain screen positions, and moving the group changed which icons were affected. Border and icon now render by the same pixel rules and stay glued at any position." },
+          { title = "Arc icon size in groups", desc = "Arc spell and item icons in a group now match their CDM neighbors exactly: identical pixel-perfect frame size after drags and options-panel closes, and identical icon art trim (arc art was cropped slightly less than Blizzard's, making it look a different size)." },
+          { title = "Group mouse errors in a party", desc = "Fixed \"attempt to access forbidden object\" errors from group click-through handling while in a group or raid." },
+          { title = "Tooltip errors in restricted content", desc = "Hovering CDM icons in instances could start a stream of tooltip errors; ArcUI now builds those tooltips itself from safe data." },
+          { title = "Wrong aura on custom debuff icons", desc = "A custom debuff icon could briefly show an unrelated buff after loading screens or spec changes; tracking filters are now always explicit and re-asserted at those moments." },
+        },
+      },
+    },
+  },
+  {
     version = "3.7.12",
     sections = {
       {

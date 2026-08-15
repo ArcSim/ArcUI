@@ -69,16 +69,9 @@ local function OnSetScale(self, scale)
     local isInContainer = parent and parent._isCDMGContainer
     local isFreeIcon = self._cdmgIsFreeIcon
 
-    -- STALE FREE-FLAG HEAL: don't force scale 1 on a plain viewer icon that
-    -- only LOOKS free via a leftover recycled-frame flag (see OnSetSize)
-    if isFreeIcon and not isInContainer then
-        local frameID = Shared.GetFrameID and Shared.GetFrameID(self) or self.cooldownID
-        if not (frameID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[frameID]) then
-            self._cdmgIsFreeIcon = nil
-            self._cdmgFreeTargetSize = nil
-            isFreeIcon = false
-        end
-    end
+    -- NO free-flag heal here (the 3.7.12 vanishing-icons lesson): clearing
+    -- _cdmgIsFreeIcon on a transient lookup failure disarmed the hide fight.
+    -- Forcing scale 1 on a stale-flag frame is harmless; leave state alone.
 
     if not isInContainer and not isFreeIcon then return end
     
@@ -104,24 +97,21 @@ local function OnSetSize(self, w, h)
 
     if not isInContainer and not isFreeIcon then return end
 
-    -- STALE FREE-FLAG HEAL: CDM's pool recycles item frames across occupants
-    -- and never clears our fields, so a frame that WAS a free icon can carry
-    -- _cdmgIsFreeIcon/_cdmgFreeTargetSize into a grouped/viewer role — the
-    -- free sizing below would then stamp the OLD occupant's size onto the new
-    -- icon (the intermittent giant/mis-sized icon reports). A frame inside a
-    -- group container is by definition not free (see the move-to-group paths
-    -- that clear this flag for exactly that reason); a frame whose current
-    -- occupant has no freeIcons entry isn't free either. Clear and fall back
-    -- to the legitimate owner.
-    if isFreeIcon then
-        local frameID = Shared.GetFrameID and Shared.GetFrameID(self) or self.cooldownID
-        local freeData = frameID and ns.CDMGroups.freeIcons and ns.CDMGroups.freeIcons[frameID]
-        if isInContainer or not freeData then
-            self._cdmgIsFreeIcon = nil
-            self._cdmgFreeTargetSize = nil
-            isFreeIcon = false
-            if not isInContainer then return end   -- plain viewer icon: CDM owns its size
-        end
+    -- STALE FREE-FLAG HEAL — IN-CONTAINER ONLY (the 3.7.12 vanishing-icons
+    -- lesson): a frame inside a group container is DEFINITIONALLY not free,
+    -- so clearing leftover recycled-pool flags there is safe and fixes the
+    -- giant-grouped-icon bug (a previous occupant's free size stamped onto a
+    -- grouped icon). A NOT-in-container frame must NEVER be healed from this
+    -- hook: CDM refresh waves put legit free icons through transient states
+    -- where the freeIcons lookup fails (ClearCooldownID-then-hide pool
+    -- windows, mid-rebind occupant swaps), and clearing _cdmgIsFreeIcon on
+    -- that signal DISARMED DeferredHideFight — free icons vanished the
+    -- moment combat started and stayed gone until reload (3.7.12 code red).
+    -- Lookup failure below falls back to the stored size, exactly as 3.7.11.
+    if isFreeIcon and isInContainer then
+        self._cdmgIsFreeIcon = nil
+        self._cdmgFreeTargetSize = nil
+        isFreeIcon = false
     end
 
     -- Get target size - for free icons, get from freeIcons table using frame ID
@@ -363,6 +353,19 @@ local function DeferredHideFight(self)
         if self.GetCooldownID then
             if self.cooldownID == nil then return end         -- released (id cleared)
             if self.layoutIndex == nil then return end        -- released (pool resetter finished)
+        end
+        -- Blizzard's own Hide When Inactive: an INACTIVE frame with the
+        -- setting on is a LEGITIMATE hide (target swap away from a debuffed
+        -- unit, aura dropped) — resurrecting it defeated the user's setting
+        -- ("debuff icon should disappear when not applied but stays up").
+        -- Secrecy checked BEFORE any boolean test (secret booleans throw on
+        -- truthiness); nil/secret isActive = unknown = keep fighting.
+        local hwi = self.hideWhenInactive
+        if not (issecretvalue and issecretvalue(hwi)) and hwi then
+            local bIsActive = self.isActive
+            if not (issecretvalue and issecretvalue(bIsActive)) and bIsActive == false then
+                return
+            end
         end
         local p = self:GetParent()
         if (p and p._isCDMGContainer) or self._cdmgIsFreeIcon then

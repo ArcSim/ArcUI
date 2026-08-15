@@ -1472,6 +1472,7 @@ function ns.API.InitializeNewTexture()
       cfg.tracking.buffName = "(Not configured yet)"
       cfg.tracking.spellID = 0
       cfg.tracking.cooldownID = 0
+      cfg.tracking.trackType = ""  -- Force user to select (same as bars)
       ns.API.InvalidateActiveTextureCache()
 
       if ns.Textures and ns.Textures.ShowTexture then
@@ -1500,6 +1501,11 @@ function ns.API.SelectBuffForTexture(buffInfo, textureNumber)
   cfg.tracking.cooldownID = buffInfo.cooldownID
   cfg.tracking.slotNumber = buffInfo.slotNumber
   cfg.tracking.enabled = true
+  -- Bake the entry's tracking type when it carries one (custom Add-by-ID
+  -- entries do); otherwise the setup panel's Type dropdown forces the choice.
+  if buffInfo.trackType and buffInfo.trackType ~= "" then
+    cfg.tracking.trackType = buffInfo.trackType
+  end
   ns.API.InvalidateActiveTextureCache()
 
   if ns.Textures and ns.Textures.UpdateTexture then

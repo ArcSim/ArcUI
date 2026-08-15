@@ -933,7 +933,11 @@ local DEFAULT_ICON_SETTINGS = {
   -- NOTE: width/height are nil by default to preserve CDM's native icon size
   -- They only get set when user explicitly changes them via the sliders
   aspectRatio = 1.0,  -- 1.0 = square, >1 = wider, <1 = taller
-  zoom = 0.075,  -- Default slight zoom to crop icon borders
+  zoom = 0.08,  -- Default icon-border crop. MUST equal Blizzard's own 0.08 art
+                -- trim: their refresh re-crops CDM icons to 0.08 regardless of
+                -- us, so any other default makes arc/aura art render a visibly
+                -- different apparent size next to CDM icons in the same group
+                -- (the 15% vs 16% /afi group finding, 2026-08-14).
   padding = 0,
   alpha = 1.0,
   keepBright = false,  -- Prevent all dimming/desaturation (icon stays full brightness always)
@@ -1603,44 +1607,72 @@ end
 -- ===================================================================
 -- BORDER (4 edge textures at OVERLAY level)
 -- ===================================================================
+-- The strips must RASTERIZE by the SAME rule as the icon art they wrap — that
+-- is the whole alignment law. Both absolutist policies failed:
+--   * snap ON + bias 1 rounded the strips in ONE direction while the icon
+--     rounds to nearest ("off by 1, -1 inset fixes top/left but gaps
+--     bottom/right", the old all-four-drift report);
+--   * snap OFF rendered the strips exactly at fractional edges while the icon
+--     still rounds — timeline-proven 2026-08-14: with the strip and icon rects
+--     logically IDENTICAL (all deltas 0.00), the bleed appeared exactly when a
+--     frame edge landed on a half pixel (odd-physical-pixel icon sizes are
+--     CENTER-anchored, so edges sit at center ± n.5 px), because the icon
+--     rounded half a pixel away and the unsnapped strip stayed put. Position-
+--     dependent by construction; container snapping made it WORSE (on-grid
+--     center = guaranteed .50 edges).
+-- Mirroring the Icon texture's own snap/bias means border and icon quantize
+-- together and stay glued at ANY fraction, size, and position. Read-only on
+-- the Blizzard icon (getters), writes only on our own strip textures.
+-- Hairline visibility is still guaranteed by the thickness being snapped to
+-- >= 1 physical pixel in UpdateIconBorder (PixelUtil, minPixels=1).
+-- 12.1 API state (geo-dump-proven 2026-08-14): GetSnapToPixelGrid NO LONGER
+-- EXISTS on textures (the setter survives), GetTexelSnappingBias does. The
+-- icon art carries the client-default bias 0.30000001192093; strips at bias 0
+-- rasterize differently at half-pixel edges = the visible split. So: copy the
+-- BIAS unconditionally (never gate it behind the dead snap getter - that
+-- exact mistake made the first version of this mirror a silent no-op), copy
+-- snap only when readable, and when it is not, LEAVE the strips at client
+-- defaults (same defaults the icon gets) instead of forcing snap=false/bias=0.
+local function MirrorIconSnapPolicy(frame, edges)
+  local icon = frame.Icon
+  if not icon then return end
+  local bias
+  if icon.GetTexelSnappingBias then
+    bias = icon:GetTexelSnappingBias()
+  end
+  local snap
+  if icon.GetSnapToPixelGrid then
+    snap = icon:GetSnapToPixelGrid() and true or false
+  end
+  local function apply(t)
+    if snap ~= nil and t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(snap) end
+    if bias ~= nil and t.SetTexelSnappingBias then t:SetTexelSnappingBias(bias) end
+  end
+  apply(edges.top)
+  apply(edges.bottom)
+  apply(edges.left)
+  apply(edges.right)
+end
+
 local function CreateBorderEdges(frame)
   if frame._arcBorderEdges then return frame._arcBorderEdges end
 
-  -- NO pixel-grid snapping on the strips. The old SetSnapToPixelGrid(true) +
-  -- SetTexelSnappingBias(1) made each strip's rendered rect round in ONE
-  -- direction on the physical pixel grid, while the icon texture rounds by its
-  -- own rules — at fractional frame positions/UI scales all four strips
-  -- drifted a pixel the same screen direction relative to the icon: the icon
-  -- poked past a 1px border on two edges and the border overlapped it on the
-  -- others (the classic "off by 1, -1 inset fixes top/left but gaps
-  -- bottom/right" report). Unsnapped, the strips render exactly where they are
-  -- anchored — the same rect the icon fills — so border and icon stay glued at
-  -- any scale. Hairline visibility is guaranteed by the thickness being snapped
-  -- to >= 1 physical pixel in UpdateIconBorder (PixelUtil, minPixels=1), same
-  -- approach as the bar engine's unsnapped textures.
   local edges = {}
 
   edges.top = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.top:SetColorTexture(1, 1, 1, 1)
-  edges.top:SetSnapToPixelGrid(false)
-  edges.top:SetTexelSnappingBias(0)
 
   edges.bottom = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.bottom:SetColorTexture(1, 1, 1, 1)
-  edges.bottom:SetSnapToPixelGrid(false)
-  edges.bottom:SetTexelSnappingBias(0)
 
   edges.left = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.left:SetColorTexture(1, 1, 1, 1)
-  edges.left:SetSnapToPixelGrid(false)
-  edges.left:SetTexelSnappingBias(0)
 
   edges.right = frame:CreateTexture(nil, "OVERLAY", nil, 7)
   edges.right:SetColorTexture(1, 1, 1, 1)
-  edges.right:SetSnapToPixelGrid(false)
-  edges.right:SetTexelSnappingBias(0)
 
   frame._arcBorderEdges = edges
+  MirrorIconSnapPolicy(frame, edges)
 
   -- BLANK-FRAME GUARD: a CDM frame can end up SHOWN with no icon art after a
   -- combat reload (its refresh never painted the icon), and our border edges
@@ -1688,6 +1720,9 @@ local function UpdateIconBorder(frame, cdID, iconWidth, iconHeight, padding, zoo
   frame._arcBorderAutoHidden = nil
 
   if cfg.border.enabled then
+    -- Re-mirror on every apply: the icon's snap flags can be (re)set by its
+    -- template after our create-time read, and the mirror is 8 cheap setters.
+    MirrorIconSnapPolicy(frame, edges)
     local color
     if cfg.border.useClassColor then
       color = GetClassColor()
@@ -2628,7 +2663,7 @@ ApplyIconStyle = function(frame, cdID)
   end
   
   local aspectRatio = cfg.aspectRatio or 1.0
-  local zoom = cfg.zoom or 0.075
+  local zoom = cfg.zoom or 0.08
   local padding = cfg.padding or 0
   
   -- MASQUE COMPATIBILITY: Check if Masque skinning is enabled for this viewer type
@@ -5576,8 +5611,26 @@ local function ForwardHoverTooltip(cdmFrame)
     return
   end
 
-  local script = cdmFrame:GetScript("OnEnter")
-  if script then script(cdmFrame) end
+  -- SPELL / AURA icons: NEVER call Blizzard's OnEnter from our stack — that
+  -- seeds the tooltip's lifecycle under OUR taint, and Blizzard's own
+  -- periodic tooltip refresh then re-runs SetUnitAuraByAuraInstanceID with a
+  -- SECRET aura instance id on a tainted execution and errors every 0.2s
+  -- tick (the potion OnEnter-taint lesson, now applied to the other half of
+  -- the cases). Build the tooltip from NON-SECRET identity instead; the live
+  -- aura-instance lines are secret-walled to addons in restricted content
+  -- anyway, and taint baked into shared tooltip state is the brick class.
+  local db2 = Shared and Shared.GetCDMGroupsDB and Shared.GetCDMGroupsDB()
+  if db2 and db2.disableTooltips then return end
+  local sid = cdmFrame._arcSpellID
+  if not sid and ci then
+    local raw = ci.overrideSpellID or ci.spellID
+    if raw and not (issecretvalue and issecretvalue(raw)) then sid = raw end
+  end
+  if sid then
+    GameTooltip:SetOwner(cdmFrame, "ANCHOR_RIGHT")
+    GameTooltip:SetSpellByID(sid)
+    GameTooltip:Show()
+  end
 end
 
 local function CreateTextDragOverlay(fontString, frame, cdID, textType)

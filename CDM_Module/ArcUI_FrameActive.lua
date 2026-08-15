@@ -233,7 +233,53 @@ local function OnAII_Cleared(frame)
     local active = (cd and cd:IsShown()) or frame.totemData ~= nil
     local newActive = active and true or false
 
-    if newActive == entry.isActive then return end
+    -- 50ms coalesce window. CDM's rebuild churn (spell override / refresh /
+    -- data swap) can span multiple render frames within a few ms — using
+    -- C_Timer.After(0) (= next frame only) was missing some of these and
+    -- causing momentary false inactive→active flips that showed as layout
+    -- reflows. 50ms is well below human perception (~100ms) and well above
+    -- CDM's longest observed rebuild duration. Matches the probe window
+    -- which proved reliable in testing.
+    -- SCHEDULED ON EVERY CLEAR, including when the immediate compute still
+    -- reads active: at Cleared time CDM's refresh has cleared the aura but
+    -- often not yet refreshed the Cooldown widget — the old swipe still
+    -- shows, we read "still active" and previously bailed with NO follow-up,
+    -- latching stuck-active (the target-swap "saturated icon, no timer"
+    -- report). The recheck runs after the widget settles and decides from
+    -- real state. Secret-safe: the widget's shown flag can be secret in
+    -- restricted content — only a NON-secret true counts as proof of active.
+    local function ScheduleClearRecheck()
+        if entry.pendingClearDispatch then return end  -- already scheduled
+        entry.pendingClearDispatch = true
+        C_Timer_After(0.05, function()
+            if not entries[frame] then return end
+            if not entry.pendingClearDispatch then return end  -- cancelled by AII-Set
+            entry.pendingClearDispatch = false
+
+            local recheck = AuraPresent(frame.auraInstanceID)
+                         or frame.totemData ~= nil
+            if not recheck then
+                local cd2 = frame.Cooldown
+                if cd2 and cd2.IsShown then
+                    local shown = cd2:IsShown()
+                    if not (issecretvalue and issecretvalue(shown)) and shown then
+                        recheck = true
+                    end
+                end
+            end
+            local final = recheck and true or false
+
+            if final == entry.isActive then return end
+            local was = entry.isActive
+            entry.isActive = final
+            FireChanged(entry, frame, final, was)
+        end)
+    end
+
+    if newActive == entry.isActive then
+        if newActive then ScheduleClearRecheck() end
+        return
+    end
 
     -- If we'd transition to inactive, defer one frame so a same-tick
     -- AII-Set can cancel us. If we'd transition to active (unusual for
@@ -245,33 +291,7 @@ local function OnAII_Cleared(frame)
     end
 
     -- Defer the inactive dispatch
-    if entry.pendingClearDispatch then return end  -- already scheduled
-    entry.pendingClearDispatch = true
-
-    -- 50ms coalesce window. CDM's rebuild churn (spell override / refresh /
-    -- data swap) can span multiple render frames within a few ms — using
-    -- C_Timer.After(0) (= next frame only) was missing some of these and
-    -- causing momentary false inactive→active flips that showed as layout
-    -- reflows. 50ms is well below human perception (~100ms) and well above
-    -- CDM's longest observed rebuild duration. Matches the probe window
-    -- which proved reliable in testing.
-    C_Timer_After(0.05, function()
-        if not entries[frame] then return end
-        if not entry.pendingClearDispatch then return end  -- cancelled by AII-Set
-        entry.pendingClearDispatch = false
-
-        -- Re-check: are we still inactive after the window?
-        local cd2 = frame.Cooldown
-        local recheck = (cd2 and cd2:IsShown())
-                     or AuraPresent(frame.auraInstanceID)
-                     or frame.totemData ~= nil
-        local final = recheck and true or false
-
-        if final == entry.isActive then return end
-        local was = entry.isActive
-        entry.isActive = final
-        FireChanged(entry, frame, final, was)
-    end)
+    ScheduleClearRecheck()
 end
 
 -- Cooldown:OnShow: widget just shown. Active is guaranteed true.
@@ -637,3 +657,57 @@ if EventRegistry and EventRegistry.RegisterCallback then
         FA.PokeResync("CDMDataChanged")
     end, "ArcUIFrameActiveResync")
 end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TARGET-SWAP TRUTH SWEEP (the "debuff icon stays lit after switching to a
+-- clean target" reports). Blizzard's deactivation signal for a target-aura
+-- item is PLAYER_TARGET_CHANGED (source: CooldownViewerMixin:
+-- OnPlayerTargetChanged -> itemFrame:OnNewTarget() [SetIsActive(false)] ->
+-- RefreshData) — the aura clear arrives with NO UNIT_AURA removal, because
+-- the debuff still exists on the OLD target. Our event hooks can catch it
+-- mid-refresh in a still-active-looking intermediate state and latch, and
+-- the resync pulse has no churn marker for a plain target swap. So mirror
+-- Blizzard's own signal: shortly after every swap (CDM's refresh has run by
+-- then), re-derive every entry from live signals through the single writer.
+-- SECRET-SAFE, POSITIVE-PROOF-ONLY under restriction (the hook-state rule):
+-- a secret Cooldown shown flag proves nothing — the frame is then only
+-- flipped ACTIVE on a positive aura/totem signal, never flipped inactive on
+-- an unprovable one. At the desk (the reported repro) everything is
+-- readable and the sweep fully corrects. Zero idle cost: one timer per
+-- human-rate target change, superseded-generation guarded.
+-- ═══════════════════════════════════════════════════════════════════════════
+local targetSwapEv = CreateFrame("Frame")
+targetSwapEv:RegisterEvent("PLAYER_TARGET_CHANGED")
+local swapGen = 0
+targetSwapEv:SetScript("OnEvent", function()
+    swapGen = swapGen + 1
+    local myGen = swapGen
+    C_Timer_After(0.15, function()
+        if myGen ~= swapGen then return end   -- superseded: user is tab-cycling
+        for frame, entry in pairs(entries) do
+            UpdateAID(entry, frame)
+            local live = AuraPresent(frame.auraInstanceID) or frame.totemData ~= nil
+            local provable = true
+            if not live then
+                local cd = frame.Cooldown
+                if cd and cd.IsShown then
+                    local shown = cd:IsShown()
+                    if issecretvalue and issecretvalue(shown) then
+                        provable = false   -- cannot prove inactive; leave state alone
+                    elseif shown then
+                        live = true
+                    end
+                end
+            end
+            if live then
+                ApplyActive(entry, frame, true)
+            elseif provable then
+                if entry.isActive and ns.TraceTap then
+                    ns.TraceTap("FA", "TARGETSWAP FIX cd="
+                        .. tostring(frame.cooldownID or frame._arcAuraID) .. " -> false")
+                end
+                ApplyActive(entry, frame, false)
+            end
+        end
+    end)
+end)

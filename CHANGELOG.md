@@ -1,3 +1,27 @@
+## 3.8.0
+
+### New Features
+
+- **Texture Tracking Types** — Textures now use the same tracking dropdown as bars: Buff (you), Debuff (target), Buff (pet), and Totem. Images can react to pet buffs and totem timers, with duration text and Drain As It Expires working on every type.
+- **Timer Mirror fill options** — Bars that mirror a Cooldown Manager timer can now fill up instead of draining, reverse direction, and animate smoothly.
+
+### Improvements
+
+- **Texture editor sub-tabs** — Each texture's settings are organized into Source, Transform, and Duration sub-tabs instead of one long panel.
+- **Cleaner texture creation** — Creating a texture no longer jumps you to a different tab; the new texture expands in place and asks for its tracking type up front, just like bars.
+- **Options apply on the spot** — Enabling or disabling duration text, drains, and Show Duration on bars and textures now takes effect the moment you click, instead of waiting for a reload or the next time the aura appears.
+- **Description cleanup** — Outdated notes in the texture panels were replaced with what actually applies on 12.1.
+
+### Bug Fixes
+
+- **Free icons vanishing in combat** — Fixed free-placed icons disappearing at the start of combat until a reload.
+- **Aura state stuck after target swaps** — Target-debuff icons could keep their active look, or stay desaturated or hidden, after switching targets; every target change now re-verifies the real aura state.
+- **Icon borders drawn off the icon** — Borders could render up to a pixel off the icon art at certain screen positions, and moving the group changed which icons were affected. Border and icon now render by the same pixel rules and stay glued at any position.
+- **Arc icon size in groups** — Arc spell and item icons in a group now match their CDM neighbors exactly: identical pixel-perfect frame size after drags and options-panel closes, and identical icon art trim (arc art was cropped slightly less than Blizzard's, making it look a different size).
+- **Group mouse errors in a party** — Fixed "attempt to access forbidden object" errors from group click-through handling while in a group or raid.
+- **Tooltip errors in restricted content** — Hovering CDM icons in instances could start a stream of tooltip errors; ArcUI now builds those tooltips itself from safe data.
+- **Wrong aura on custom debuff icons** — A custom debuff icon could briefly show an unrelated buff after loading screens or spec changes; tracking filters are now always explicit and re-asserted at those moments.
+
 ## 3.7.12.b
 
 ### Bug Fixes

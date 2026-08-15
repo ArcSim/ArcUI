@@ -1944,15 +1944,35 @@ local function CreateActiveTextureEntry(num, orderBase)
     },
   }
 
-  -- Aura Type (buff/debuff) -- relocated here from the removed Textures > Trigger tab.
+  -- Tracking Type -- the SAME choice set as the bars (one mental model):
+  -- aura lanes (Buff / Debuff / Buff on Pet) route to their unit's aura
+  -- engine; Pet / Totem / Ground Effect route to the totem-slot duration
+  -- path (secret-safe, works in combat and instances). Unset = orange
+  -- "Type" + forced "-- Select Type --" entry, exactly like the bars.
   args.auraType = {
     type = "select",
-    name = "Aura Type",
-    desc = "Track this aura as a Buff (on you) or a Debuff (on your target).",
-    values = { buff = "Buff", debuff = "Debuff" },
+    name = function()
+      local cfg = texCfg()
+      if cfg and (not cfg.tracking or not cfg.tracking.trackType or cfg.tracking.trackType == "") then
+        return "|cffFF6600Type|r"
+      end
+      return "Type"
+    end,
+    desc = "What this texture tracks.\n\n|cffffd700Buff|r - a buff on you\n|cffffd700Debuff|r - your debuff on the target\n|cffffd700Buff on Pet|r - a buff on your pet\n|cffffd700Pet / Totem / Ground Effect|r - a summon's remaining duration, read from the totem slots (works in combat and instances)",
+    values = function()
+      local v = { [""] = "-- Select Type --", ["buff"] = "Buff", ["debuff"] = "Debuff", ["pet"] = "Pet", ["totem"] = "Totem", ["ground"] = "Ground Effect" }
+      if ns.API and ns.API.IS_121 then v["petbuff"] = "Buff on Pet" end
+      return v
+    end,
+    sorting = function()
+      if ns.API and ns.API.IS_121 then
+        return { "", "buff", "debuff", "petbuff", "pet", "totem", "ground" }
+      end
+      return { "", "buff", "debuff", "pet", "totem", "ground" }
+    end,
     get = function()
       local cfg = texCfg()
-      return (cfg and cfg.tracking and cfg.tracking.trackType) or "buff"
+      return (cfg and cfg.tracking and cfg.tracking.trackType) or ""
     end,
     set = function(_, v)
       local cfg = texCfg()
@@ -2534,13 +2554,14 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           local entry = GetSelectedCatalogEntry()
           if not entry then return end
 
-          -- Custom aura entry: engine-driven texture, no CDM source
+          -- Custom aura entry: engine-driven texture, no CDM source.
+          -- NO tab jump (Arc's call): stay here with the new texture's setup
+          -- row expanded so the user confirms its Type first, same as bars.
           if entry.isCustomAura then
             local ok, result = ns.Catalog.CreateCustomAuraTexture(entry.spellID, entry.trackType)
             if ok then
-              print(string.format("|cff00ccffArc UI|r: Created texture #%d — configure it in Buffs/Debuffs > Textures (use Progress mode).", result))
-              local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
-              if acd and acd.SelectGroup then acd:SelectGroup("ArcUI", "auras", "textures") end
+              expandedTextures["tex_" .. result] = true
+              print(string.format("|cff00ccffArc UI|r: Created texture #%d — set it up below (use Progress mode), then Edit Texture for looks.", result))
             else
               print("|cff00ccffArc UI|r: " .. tostring(result))
             end
@@ -2561,14 +2582,13 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
             cooldownID = entry.cooldownID,
             slotNumber = 0,
             maxStacks = 10,
+            trackType = entry.trackType,   -- bakes when the entry knows its type
           }, num)
           local db = ns.API.GetDB and ns.API.GetDB()
           if db then db.selectedTexture = num end
-          print(string.format("|cff00ccffArc UI|r: Created texture for |cffffd700%s|r - configure it in Buffs/Debuffs > Textures.", entry.name or "aura"))
-          if LibStub then
-            local acd = LibStub("AceConfigDialog-3.0", true)
-            if acd and acd.SelectGroup then acd:SelectGroup("ArcUI", "auras", "textures") end
-          end
+          -- NO tab jump: expand the setup row so the Type choice comes first.
+          expandedTextures["tex_" .. num] = true
+          print(string.format("|cff00ccffArc UI|r: Created texture for |cffffd700%s|r - set it up below, then Edit Texture for looks.", entry.name or "aura"))
           LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
         end,
         order = 8.8,

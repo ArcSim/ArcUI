@@ -2114,6 +2114,92 @@ local function GetTotemMaxCurve(maxValue, fillMode)
   return curve
 end
 
+-- CDM TIMER MIRROR "fill" mode.
+-- The mirror re-pushes CDM's own SetValue, which is REMAINING (CooldownViewer's
+-- RefreshCooldownInfo does SetMinMaxValues(0, duration) + SetValue(currentTime)),
+-- so our bar can only ever DRAIN. Producing elapsed would need duration minus
+-- remaining, arithmetic on two secrets, and the curve escape is closed as well:
+-- LuaCurveObject:Evaluate is AllowedWhenUntainted, so it refuses a secret x.
+--
+-- So we do not invert the value, we paint the OTHER SIDE of it. A texture
+-- anchored from the drain texture's trailing edge to the end of the bar IS the
+-- elapsed region, and it resizes itself as the drain texture shrinks. Pure
+-- C-side layout, nothing read, nothing compared. The drain texture is alpha'd
+-- out so only the elapsed side paints.
+--
+-- Which END it grows from is the drain bar's reverse-fill, inverted: the gap the
+-- drain leaves is always on the opposite side from its anchor.
+local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, drainReverse, enabled)
+  local tex = barFrame._mirrorFillTex
+  local sb = barFrame.bar
+  local drainTex = sb and sb:GetStatusBarTexture()
+
+  if not enabled then
+    -- the texture object is KEPT (pooled) but the mode is off. Everything that
+    -- keys off "is fill mode on" must read the FLAG, never the texture's
+    -- existence -- the mirror hook did the latter and went on forcing the drain
+    -- to alpha 0 after a switch back to drain, leaving a permanently blank bar.
+    barFrame._mirrorFillActive = nil
+    if tex then tex:Hide() end
+    if drainTex then drainTex:SetAlpha(1) end
+    if sb then
+      sb:SetAlpha(1)
+      sb:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+    end
+    return
+  end
+  if not drainTex then return end
+  barFrame._mirrorFillActive = true
+
+  if not tex then
+    tex = barFrame:CreateTexture(nil, "ARTWORK")
+    barFrame._mirrorFillTex = tex
+  end
+
+  local path = "Interface\\TargetingFrame\\UI-StatusBar"
+  if LSM and barConfig.display.texture then
+    local fetched = LSM:Fetch("statusbar", barConfig.display.texture)
+    if fetched then path = fetched end
+  end
+  tex:SetTexture(path)
+  tex:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+
+  tex:ClearAllPoints()
+  if isVertical then
+    if drainReverse then           -- drain hugs the TOP, elapsed grows from the bottom
+      tex:SetPoint("TOPLEFT", drainTex, "BOTTOMLEFT", 0, 0)
+      tex:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
+    else                           -- drain hugs the BOTTOM, elapsed grows from the top
+      tex:SetPoint("BOTTOMLEFT", drainTex, "TOPLEFT", 0, 0)
+      tex:SetPoint("TOPRIGHT", sb, "TOPRIGHT", 0, 0)
+    end
+  else
+    if drainReverse then           -- drain hugs the RIGHT, elapsed grows from the left
+      tex:SetPoint("TOPLEFT", sb, "TOPLEFT", 0, 0)
+      tex:SetPoint("BOTTOMRIGHT", drainTex, "BOTTOMLEFT", 0, 0)
+    else                           -- drain hugs the LEFT, elapsed grows from the right
+      tex:SetPoint("TOPLEFT", drainTex, "TOPRIGHT", 0, 0)
+      tex:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
+    end
+  end
+
+  -- KILL THE REMAINING SIDE AT THE FRAME. Per-texture alpha kept losing: the
+  -- branch above re-runs SetVertexColor(1,1,1,1) and SetStatusBarColor on the
+  -- drain every update, SetStatusBarTexture hands back a FRESH texture region on
+  -- any config change, and the Use Texture Colors hook rewrites tints on its own.
+  -- Frame alpha is immune to all of it -- an alpha-0 StatusBar renders nothing
+  -- whatever its textures say -- and layout is unaffected, so the fill layer's
+  -- anchor to the drain texture's edge still tracks. The colour/texture alphas
+  -- stay as belt and braces.
+  sb:SetAlpha(0)
+  sb:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 0)
+  drainTex:SetAlpha(0)
+  -- shown/hidden by the mirror's own min/max hook: an inactive CDM entry pushes a
+  -- literal (0, 0), which would otherwise leave a zero-width drain texture and a
+  -- full-width "elapsed" gap, i.e. a bar that reads FULL after the timer ends
+  tex:Hide()
+end
+
 local TOTEM_LIKE_TRACKTYPES = { pet = true, totem = true, ground = true }
 local function IsTotemLikeBar(barConfig)
   local tt = barConfig and barConfig.tracking and barConfig.tracking.trackType
@@ -2258,21 +2344,43 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   -- with Hide When Inactive on (aura down at login) it would swallow the
   -- bar's only chance to create its engine slot — the same trap the
   -- duration-bar path already guards. The prebuild hides all frames after.
+  -- MID-SESSION ARM PASS (the texture fix's twin): re-enabling Show Duration
+  -- on a hidden-inactive stack bar hit this return before the countdown-host
+  -- attach ever ran — nothing armed, the first in-combat activation DEFERRED
+  -- slot creation (secret), and the countdown only appeared a fight later.
+  -- When the host is enabled but unarmed, fall through ONCE to arm at the
+  -- desk, then restore the hidden state (below, after the attach block).
+  local armPassStack = false
   if not shouldShow and not optionsOpen and not prebuildPass then
-    if deactivate then
-      DeactivateBar(barNumber)
-    else
-      if barFrames[barNumber] then
-        SafeHide(barFrames[barNumber].barFrame)
-        SafeHide(barFrames[barNumber].textFrame)
-        SafeHide(barFrames[barNumber].durationFrame)
-        SafeHide(barFrames[barNumber].iconFrame)
-        SafeHide(barFrames[barNumber].nameFrame)
-        SafeHide(barFrames[barNumber].barIconFrame)
-        HideMultiIconFrames(barNumber)
+    if not deactivate and ns.API and ns.API.IS_121
+       and barConfig.display.showDuration
+       and not (barConfig.tracking and barConfig.tracking.customAura)
+       and not IsTotemLikeBar(barConfig)
+       and ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable() then
+      local cdA = barConfig.tracking.cooldownID
+      local tsA = barConfig.tracking.trackedSpellID or barConfig.tracking.spellID
+      if ((cdA or 0) > 0) or ((tsA or 0) > 0) then
+        local fr = barFrames[barNumber]
+        local bf = fr and fr.barFrame
+        if not (bf and bf._arcStackDurArmed) then armPassStack = true end
       end
     end
-    return
+    if not armPassStack then
+      if deactivate then
+        DeactivateBar(barNumber)
+      else
+        if barFrames[barNumber] then
+          SafeHide(barFrames[barNumber].barFrame)
+          SafeHide(barFrames[barNumber].textFrame)
+          SafeHide(barFrames[barNumber].durationFrame)
+          SafeHide(barFrames[barNumber].iconFrame)
+          SafeHide(barFrames[barNumber].nameFrame)
+          SafeHide(barFrames[barNumber].barIconFrame)
+          HideMultiIconFrames(barNumber)
+        end
+      end
+      return
+    end
   end
   
   -- Bar is active — ensure it's not flagged as deactivated
@@ -3442,12 +3550,28 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
         barConfig.display.durationTextColorEnabled and true or false,
         sdColorKey)
     end
+    barFrame._arcStackDurArmed = true
   elseif barFrame._arcStackDurHost and not engineDurText then
     -- Show Duration toggled off (or bar re-identified): release the binding
     if ns.BarDuration and ns.BarDuration.Detach then
       ns.BarDuration.Detach(barFrame._arcStackDurHost)
     end
     barFrame._arcStackDurHost:Hide()
+    barFrame._arcStackDurArmed = nil
+  end
+
+  -- ARM PASS exit: the countdown host is armed — restore the hidden-inactive
+  -- state and stop (everything below is visual work for a bar that must stay
+  -- hidden; the binding survives the hide and drives on the next activation).
+  if armPassStack then
+    SafeHide(barFrame)
+    SafeHide(textFrame)
+    SafeHide(durationFrame)
+    SafeHide(iconFrame)
+    SafeHide(nameFrame)
+    SafeHide(barIconFrame)
+    HideMultiIconFrames(barNumber)
+    return
   end
 
   -- Update tick marks - only needed when config changes
@@ -4433,7 +4557,12 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       if maxCurve then
         barFrame.bar:SetValue(durObj:EvaluateRemainingDuration(maxCurve), durationInterp)
       else
-        barFrame.bar:SetTimerDuration(durObj, Enum.StatusBarInterpolation.Linear, timerDirection)
+        -- StatusBarInterpolation has exactly two members, Immediate and
+        -- ExponentialEaseOut. "Linear" never existed, so this was passing nil for
+        -- a non-nilable argument and silently falling back to Immediate.
+        barFrame.bar:SetTimerDuration(durObj,
+          GetBarInterpolation(barConfig.display.enableSmoothing) or Enum.StatusBarInterpolation.Immediate,
+          timerDirection)
       end
 
       -- Duration text: poll GetRemainingDuration() on the fresh durObj each frame.
@@ -4689,7 +4818,8 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       UnregisterAuraPolling(barNumber)
       ns.BarDuration.AttachMirror(barFrame,
         (barConfig.display.showDuration and durationFrame and durationFrame.text) or nil,
-        bdCooldownID)
+        bdCooldownID,
+        GetBarInterpolation(barConfig.display.enableSmoothing))
       local bdTex = barFrame.bar:GetStatusBarTexture()
       if bdTex then bdTex:SetVertexColor(1, 1, 1, 1) end
       barFrame.bar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
@@ -4697,6 +4827,15 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       barFrame.bar:SetAlpha(1)
       barFrame.bar:Show()
       barFrame._arcBDActive = true
+      -- FILL MODE: the option was inert here before (it only ever picked a
+      -- StatusBarTimerDirection for SetTimerDuration, which this lane never
+      -- calls). Fill is now the painted-gap layer; drain is unchanged.
+      local mirrorFill = (barConfig.display.durationBarFillMode == "fill")
+      local mirrorDrainReverse = isDurationReverseFill
+      if mirrorFill then mirrorDrainReverse = not isDurationReverseFill end
+      barFrame.bar:SetReverseFill(mirrorDrainReverse)
+      ApplyMirrorFillLayer(barFrame, barConfig, baseColor,
+        isDurationVertical, mirrorDrainReverse, mirrorFill)
       if durationFrame then
         if barConfig.display.showDuration then
           -- reclaim the fontstring from other lanes: the engine lane HIDES it
@@ -4716,6 +4855,11 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
         end
       end
       else
+      -- mirror turned off (or switched to drain) while its fill layer existed:
+      -- release the layer and un-hide the real fill texture
+      if barFrame._mirrorFillTex then
+        ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isDurationVertical, false, false)
+      end
       -- 12.1 AuraButton-driven duration bar: the invisible button drives the FILL (and the
       -- countdown text via SetDurationText); we own only color + visibility here. No OnUpdate,
       -- no polling, no durObj, no secret compare.

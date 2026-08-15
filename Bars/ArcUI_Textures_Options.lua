@@ -366,10 +366,12 @@ local function BuildEditor()
     --  and Aura Type / spec / talent conditions live in the catalog's texture row.)
 
     -- ---- SOURCE ----
+    -- (sourceGroup/transformGroup/durationGroup render as a NESTED TAB ROW
+    --  inside the Texture tab — Arc's call: one section visible at a time,
+    --  not one long panel. Non-inline groups under childGroups="tab".)
     sourceGroup = {
       type = "group",
       name = "Texture Source",
-      inline = true,
       order = 40,
       hidden = function() return not HasAnyTexture() end,
       args = {
@@ -538,7 +540,6 @@ local function BuildEditor()
     transformGroup = {
       type = "group",
       name = "Transform",
-      inline = true,
       order = 60,
       hidden = function() return not HasAnyTexture() end,
       args = {
@@ -663,7 +664,6 @@ local function BuildEditor()
     durationGroup = {
       type = "group",
       name = "Duration Drain",
-      inline = true,
       order = 65,
       hidden = function() return not HasAnyTexture() end,
       args = {
@@ -675,7 +675,7 @@ local function BuildEditor()
         },
         progressNote121 = {
           type = "description",
-          name = "|cffff8800On the 12.1 (Midnight) PTR: the smooth drain isn't available (duration is a protected value), so the texture simply shows while the aura is active and hides when it drops. The full drain works normally on live servers.|r",
+          name = "|cffff8800On 12.1 (Midnight): Region Insets and Rotation aren't compatible with the drain engine — with either set, the texture shows statically while the aura is active instead of draining. While this options panel is open the texture previews statically; the drain resumes when you close it.|r",
           order = 0.5,
           width = "full",
           hidden = function() return not (ns.API and ns.API.IS_121) end,
@@ -1370,6 +1370,7 @@ function ns.GetTexturesOptionsTable()
     texture = {
       type = "group", name = "Texture", order = 30,
       hidden = notEmpty,
+      childGroups = "tab",   -- nested tab row: Source | Transform | Drain
       args = { sourceGroup = ed.sourceGroup, transformGroup = ed.transformGroup, durationGroup = ed.durationGroup },
     },
     position = {

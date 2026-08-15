@@ -36,6 +36,17 @@ build-check protocol in Reference Sources before doing API work.)
   range, execute) MUST have a `width` large enough that its full `name` is visible in the panel —
   truncated labels like "Glow Col..." are BANNED. When in doubt, widen (a color/short toggle
   usually needs ≥0.8; longer names ≥1.0–1.5). Check new options render cleanly, not just compile.
+- **HOOK-STATE RULE (the 3.7.12 vanishing-icons code red): hooks and maintenance code may
+  NEVER clear or overwrite management state (`_cdmg*` / `_arc*` ownership flags) on a
+  TRANSIENT signal such as a failed table lookup — CDM refresh waves make those lookups
+  fail for LEGIT frames (ClearCooldownID-then-hide pool windows, mid-rebind occupant
+  swaps). Only positive, unambiguous signals (e.g. parent IS a group container) may clear
+  state. Before changing ANY write to a management field, enumerate every READER of that
+  field first: `_cdmgIsFreeIcon` gates DeferredHideFight and the reclamation fights, not
+  just sizing — clearing it made free icons vanish at combat start until reload.**
+- **COMBAT-EDGE TEST GATE: no CDM-module change ships without the ten-second test — free
+  icon placed, enter combat, leave combat, spec swap, icons visible throughout. The
+  3.7.12 vanish was 100% reproducible in that test and shipped without it.**
 
 ---
 
@@ -255,6 +266,12 @@ On CurseForge the project's **Automatic Packaging must be OFF** (Actions is the 
 
 ## Workflow
 
+- **LIVING SKILLS (definition of done):** before touching a subsystem, read its
+  skill in `.claude/skills/`; no skill for it = writing one is part of the task.
+  Every fix/feature/learning updates the subsystem's skill IN THE SAME SESSION —
+  the skill update ships with the code, exactly like `luac -p`. When reality
+  contradicts a skill, fix the skill immediately (a stale claim gets trusted and
+  is worse than no skill). Full contract in the global `wow-addon-dev` skill.
 - One bug or feature per session. Commit after each fix is confirmed working in-game.
 - Before any risky change, ensure the current state is committed so it can be rolled back.
 - After edits: `luac -p` every touched file, then summarize briefly what changed and why.

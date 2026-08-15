@@ -3352,7 +3352,7 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       barFillModeMirrorNote = {
         type = "description", fontSize = "small",
-        name = "|cffff8800This bar uses CDM Timer Mirror: it repeats the Cooldown Manager's own timer, which always drains. Fill mode, Smoothing and Conditional Color can't apply to a mirrored timer.|r",
+        name = "|cffff8800This bar uses CDM Timer Mirror: it repeats the Cooldown Manager's own timer. Fill Mode, Reverse Fill and Smooth Fill all work. Conditional Color still can't apply to a mirrored timer.|r",
         order = 21.45, width = "full",
         hidden = function()
           if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
@@ -3363,8 +3363,10 @@ function ns.AppearanceOptions.GetOptionsTable()
       barFillMode = {
         type = "select",
         name = "Fill Mode",
-        desc = "Drain: bar shrinks as time passes. Fill: bar grows as time passes.\n\n|cffff8800Not available while CDM Timer Mirror is on: the mirror repeats the Cooldown Manager's own timer, which always drains.|r",
-        disabled = IsMirrorBar,
+        -- Mirror bars support this now. The mirrored value is always REMAINING, so
+        -- fill is painted as the gap the drain leaves rather than inverted (which
+        -- would need arithmetic on a secret). See ApplyMirrorFillLayer in Display.
+        desc = "Drain: bar shrinks as time passes. Fill: bar grows as time passes.\n\nWorks on CDM Timer Mirror bars too; pair it with Reverse Fill to pick which end it grows from.",
         values = GetFillModes,
         get = function()
           local cfg = GetSelectedConfig()
@@ -3439,8 +3441,10 @@ function ns.AppearanceOptions.GetOptionsTable()
       enableSmoothing = {
         type = "toggle",
         name = "Smooth Fill",
-        desc = "Smoothly animate bar fill changes.\n\n|cff00ff00Duration bars:|r Applies to Manual Max mode. Auto mode always uses smooth interpolation via SetTimerDuration.\n\n|cffff8800Not available while CDM Timer Mirror is on: the mirror repeats the Cooldown Manager's raw timer pushes as-is.|r",
-        disabled = IsMirrorBar,
+        -- Mirror bars support this now: SetValue's interpolation argument is
+        -- NeverSecret, so we can hand it one even though the value is secret. The
+        -- mirror simply never passed one. See BD.AttachMirror's interp.
+        desc = "Smoothly animate bar fill changes.\n\n|cff00ff00Duration bars:|r Applies to Manual Max mode. Auto mode always uses smooth interpolation via SetTimerDuration.\n\nWorks on CDM Timer Mirror bars too.",
         get = function()
           local cfg = GetSelectedConfig()
           return cfg and cfg.display.enableSmoothing

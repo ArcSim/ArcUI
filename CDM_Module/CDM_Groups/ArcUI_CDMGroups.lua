@@ -1192,12 +1192,22 @@ function ns.CDMGroups.SetupFreeIconDrag(cooldownID)
     local frame = data.frame
     
     -- Helper to disable mouse on ALL descendants recursively
-    -- Forbidden descendants (AuraContainer slot buttons that have displayed
-    -- secret aura data, e.g. the stack-count overlay's) throw on ANY method
-    -- call from addon code; they are mouse-disabled at creation, so skip them.
+    -- Engine-owned descendants (AuraContainer slot buttons, e.g. the
+    -- stack-count overlay's) throw on ANY method call while inaccessible.
+    -- CanBeAccessedInContext is the ONLY accurate probe — aura secrecy and
+    -- classic forbidden are DIFFERENT states (joining a party makes the
+    -- buttons inaccessible while IsForbidden still reports false; same
+    -- probe order as StackColor's IsButtonAccessible). They are
+    -- mouse-disabled at creation, so skipping them loses nothing.
     local function DisableAllChildMouse(f)
         for _, child in pairs({f:GetChildren()}) do
-            if not (child.IsForbidden and child:IsForbidden()) then
+            local accessible = true
+            if child.CanBeAccessedInContext then
+                accessible = child:CanBeAccessedInContext()
+            elseif child.IsForbidden then
+                accessible = not child:IsForbidden()
+            end
+            if accessible then
                 if child.EnableMouse then
                     child:EnableMouse(false)
                 end
@@ -10553,8 +10563,7 @@ function ns.CDMGroups.CreateGroup(name, groupType)
                         local baseX = self.position.x or 0
                         local baseY = self.position.y or 0
                         self.container:ClearAllPoints()
-                        self.container:SetPoint("CENTER", UIParent, "CENTER",
-                            baseX + newCenterX, baseY + newCenterY)
+                        self.container:SetPoint("CENTER", UIParent, "CENTER", baseX + newCenterX, baseY + newCenterY)
                         self._appliedOffsetX = newCenterX
                         self._appliedOffsetY = newCenterY
                     else
@@ -11172,6 +11181,7 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         -- Apply position offset if needed
         local _isAnchored = ns.CDMGroupsAnchors and ns.CDMGroupsAnchors.IsGroupAnchored(self)
         if not _isAnchored and (posOffsetX ~= 0 or posOffsetY ~= 0) then
+            -- snap the WRITE too, so the persisted position is grid-aligned
             self.position.x = self.position.x + posOffsetX
             self.position.y = self.position.y + posOffsetY
             if db then
@@ -11978,12 +11988,20 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         
         -- Helper to disable mouse on ALL descendants recursively
         -- This is CRITICAL for aura icons which have Applications subframes at high frame levels
-        -- Forbidden descendants (AuraContainer slot buttons that have displayed
-        -- secret aura data, e.g. the stack-count overlay's) throw on ANY method
-        -- call from addon code; they are mouse-disabled at creation, so skip them.
+        -- Engine-owned descendants (AuraContainer slot buttons) throw on ANY
+        -- method call while inaccessible. CanBeAccessedInContext is the ONLY
+        -- accurate probe — aura secrecy and classic forbidden are DIFFERENT
+        -- states (a party makes buttons inaccessible while IsForbidden still
+        -- reports false). Mouse-disabled at creation; skipping loses nothing.
         local function DisableAllChildMouse(f)
             for _, child in pairs({f:GetChildren()}) do
-                if not (child.IsForbidden and child:IsForbidden()) then
+                local accessible = true
+                if child.CanBeAccessedInContext then
+                    accessible = child:CanBeAccessedInContext()
+                elseif child.IsForbidden then
+                    accessible = not child:IsForbidden()
+                end
+                if accessible then
                     if child.EnableMouse then
                         child:EnableMouse(false)
                     end
