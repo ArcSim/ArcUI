@@ -12,7 +12,7 @@ local LibDeflate = LibStub("LibDeflate")
 local AceSerializer = LibStub("AceSerializer-3.0")
 
 -- Constants
-local EXPORT_VERSION = 3  -- Bumped for resource bar support
+local EXPORT_VERSION = 4  -- 4: textures section added (old strings still import)
 local EXPORT_PREFIX = "ARCUI_BARS"
 
 -- Module state
@@ -20,6 +20,7 @@ local selectedBarsForExport = {}
 local selectedCooldownBarsForExport = {}  -- keyed by "spellID_barType"
 local selectedResourceBarsForExport = {}  -- keyed by slot number
 local selectedTimerBarsForExport = {}     -- keyed by timerID
+local selectedTexturesForExport = {}      -- keyed by texture number
 local importPreviewData = nil
 local lastExportString = ""
 local lastImportString = ""
@@ -133,6 +134,23 @@ local function GetEnabledBars()
                 cooldownID = bar.tracking.cooldownID or 0,
                 trackType = bar.tracking.trackType or "buff",
                 alternateCooldownIDs = bar.tracking.alternateCooldownIDs or {},
+            })
+        end
+    end
+    return enabled
+end
+
+local function GetEnabledTextures()
+    local db = ns.API.GetDB and ns.API.GetDB()
+    if not db or not db.textures then return {} end
+    local enabled = {}
+    for i = 1, 200 do
+        local tex = db.textures[i]
+        if tex and tex.tracking and tex.tracking.enabled then
+            table.insert(enabled, {
+                slot = i,
+                name = tex.tracking.buffName or "Unknown",
+                trackType = tex.tracking.trackType or "",
             })
         end
     end
@@ -375,13 +393,30 @@ local function ExportSelectedBars()
         end
     end
     
+    -- Export selected textures (full-config deep copy: texture configs are
+    -- plain explicit tables written by InitializeNewTexture, so no AceDB
+    -- field-list extraction is needed)
+    local texturesToExport = {}
+    local textureExportCount = 0
+    if db.textures then
+        for slot, isSelected in pairs(selectedTexturesForExport) do
+            if isSelected then
+                local tex = db.textures[slot]
+                if tex and tex.tracking and tex.tracking.enabled then
+                    table.insert(texturesToExport, DeepCopy(tex))
+                    textureExportCount = textureExportCount + 1
+                end
+            end
+        end
+    end
+
     -- Castbar: a single config, embedded as a component (same pattern the Master export uses for CR)
     local castbarPayload = nil
     if includeCastbarForExport and ns.CastbarImportExport and ns.CastbarImportExport.GetExportPayload then
         castbarPayload = ns.CastbarImportExport.GetExportPayload()
     end
 
-    local totalCount = auraExportCount + cooldownExportCount + resourceExportCount + timerExportCount
+    local totalCount = auraExportCount + cooldownExportCount + resourceExportCount + timerExportCount + textureExportCount
     if totalCount == 0 and not castbarPayload then
         return nil, "Nothing selected for export"
     end
@@ -402,6 +437,8 @@ local function ExportSelectedBars()
         cooldownBars = cooldownBarsToExport,  -- Cooldown bars
         resourceBars = resourceBarsToExport,  -- Resource bars
         timerBars = timerBarsToExport,        -- Timer bars
+        textureCount = textureExportCount,
+        textures = texturesToExport,          -- Aura textures (v4+)
         castbar = castbarPayload,             -- Castbar config (nil unless included)
     }
     
@@ -463,9 +500,10 @@ local function ParseImportString(importString)
     local hasCooldownBars = data.cooldownBars and #data.cooldownBars > 0
     local hasResourceBars = data.resourceBars and #data.resourceBars > 0
     local hasTimerBars = data.timerBars and #data.timerBars > 0
-    
+    local hasTextures = data.textures and #data.textures > 0
+
     if not hasAuraBars and not hasCooldownBars and not hasResourceBars and not hasTimerBars
-       and not (type(data.castbar) == "table") then
+       and not hasTextures and not (type(data.castbar) == "table") then
         return nil, "No bars found in import data"
     end
     
@@ -482,10 +520,11 @@ local function GenerateImportPreview(data)
     local cooldownCount = data.cooldownBars and #data.cooldownBars or 0
     local resourceCount = data.resourceBars and #data.resourceBars or 0
     local timerCount = data.timerBars and #data.timerBars or 0
-    local totalCount = auraCount + cooldownCount + resourceCount + timerCount
-    
+    local textureCount = data.textures and #data.textures or 0
+    local totalCount = auraCount + cooldownCount + resourceCount + timerCount + textureCount
+
     table.insert(lines, string.format(
-        "|cff00FF00Found %d bar(s)|r from %s @ %s",
+        "|cff00FF00Found %d item(s)|r from %s @ %s",
         totalCount,
         data.exportedBy or "Unknown",
         data.realm or "Unknown"
@@ -493,6 +532,14 @@ local function GenerateImportPreview(data)
 
     if type(data.castbar) == "table" then
         table.insert(lines, "|cffCC66FFCastbar:|r 1 (full castbar config)")
+    end
+
+    if textureCount > 0 then
+        local texNames = {}
+        for _, tex in ipairs(data.textures) do
+            table.insert(texNames, (tex.tracking and tex.tracking.buffName) or "Unknown")
+        end
+        table.insert(lines, "|cffFF88FFTextures:|r " .. table.concat(texNames, ", "))
     end
     
     -- Aura bars
@@ -936,6 +983,47 @@ local function ImportBars(data, mode, castbarOpts)
         end
     end
 
+    -- ═══════════════════════════════════════════════════════════════
+    -- IMPORT TEXTURES (v4+ strings; older strings simply lack the field)
+    -- ═══════════════════════════════════════════════════════════════
+    if data.textures and #data.textures > 0 then
+        if not db.textures then db.textures = {} end
+        if mode == "replace" then
+            for i = 1, 200 do
+                if db.textures[i] and db.textures[i].tracking then
+                    db.textures[i].tracking.enabled = false
+                end
+            end
+            for i, importedTex in ipairs(data.textures) do
+                if i <= 200 then
+                    db.textures[i] = DeepCopy(importedTex)
+                    imported = imported + 1
+                else
+                    table.insert(messages, "Texture slot limit reached, skipped: "
+                        .. ((importedTex.tracking and importedTex.tracking.buffName) or "Unknown"))
+                    skipped = skipped + 1
+                end
+            end
+        else
+            -- Add mode: first slot that is empty or holds a disabled texture
+            for _, importedTex in ipairs(data.textures) do
+                local slot
+                for i = 1, 200 do
+                    local t = db.textures[i]
+                    if not t or not (t.tracking and t.tracking.enabled) then slot = i break end
+                end
+                if slot then
+                    db.textures[slot] = DeepCopy(importedTex)
+                    imported = imported + 1
+                else
+                    table.insert(messages, "No empty texture slots, skipped: "
+                        .. ((importedTex.tracking and importedTex.tracking.buffName) or "Unknown"))
+                    skipped = skipped + 1
+                end
+            end
+        end
+    end
+
     -- Trigger validation for imported aura bars
     if ns.API.ValidateAllBarTracking then
         C_Timer.After(0.1, function()
@@ -961,6 +1049,14 @@ local function ImportBars(data, mode, castbarOpts)
     if ns.Resources and ns.Resources.RefreshAllBars then
         C_Timer.After(0.4, function()
             ns.Resources.RefreshAllBars()
+        end)
+    end
+
+    -- Refresh textures
+    if data.textures and #data.textures > 0 then
+        C_Timer.After(0.3, function()
+            if ns.API.InvalidateActiveTextureCache then ns.API.InvalidateActiveTextureCache() end
+            if ns.Textures and ns.Textures.RefreshAll then ns.Textures.RefreshAll() end
         end)
     end
     
@@ -1033,6 +1129,13 @@ function ns.BarsImportExport.GetOptionsTable()
             selectedTimerBarsForExport[bar.timerID] = true  -- Default to selected
         end
     end
+
+    -- Initialize selection state for textures
+    for _, tex in ipairs(GetEnabledTextures()) do
+        if selectedTexturesForExport[tex.slot] == nil then
+            selectedTexturesForExport[tex.slot] = true  -- Default to selected
+        end
+    end
     
     local options = {
         type = "group",
@@ -1044,13 +1147,13 @@ function ns.BarsImportExport.GetOptionsTable()
             -- ═══════════════════════════════════════════════════════════════
             exportHeader = {
                 type = "header",
-                name = "Export Bars",
+                name = "Export Display",
                 order = 1,
             },
-            
+
             exportDesc = {
                 type = "description",
-                name = "Select bars to export. The export string includes all settings including alternate cooldownIDs for cross-spec support and resource bar configurations.",
+                name = "Select what to export: aura, cooldown, resource and timer bars, aura textures, and the castbar. The string carries every setting, including alternate cooldownIDs for cross-spec support.",
                 order = 2,
             },
             
@@ -1068,6 +1171,12 @@ function ns.BarsImportExport.GetOptionsTable()
                     end
                     for _, bar in ipairs(GetEnabledResourceBars()) do
                         selectedResourceBarsForExport[bar.slot] = true
+                    end
+                    for _, bar in ipairs(GetEnabledTimerBars()) do
+                        selectedTimerBarsForExport[bar.timerID] = true
+                    end
+                    for _, tex in ipairs(GetEnabledTextures()) do
+                        selectedTexturesForExport[tex.slot] = true
                     end
                     includeCastbarForExport = true
                 end,
@@ -1087,6 +1196,12 @@ function ns.BarsImportExport.GetOptionsTable()
                     end
                     for k in pairs(selectedResourceBarsForExport) do
                         selectedResourceBarsForExport[k] = false
+                    end
+                    for k in pairs(selectedTimerBarsForExport) do
+                        selectedTimerBarsForExport[k] = false
+                    end
+                    for k in pairs(selectedTexturesForExport) do
+                        selectedTexturesForExport[k] = false
                     end
                     includeCastbarForExport = false
                 end,
@@ -1255,6 +1370,50 @@ function ns.BarsImportExport.GetOptionsTable()
                 end)(),
             },
             
+            -- Texture selection checkboxes
+            textureSelectionGroup = {
+                type = "group",
+                name = "Textures",
+                order = 7.6,
+                inline = true,
+                args = (function()
+                    local args = {}
+                    local textures = GetEnabledTextures()
+
+                    if #textures == 0 then
+                        args.noTextures = {
+                            type = "description",
+                            name = "|cff888888No enabled textures.|r",
+                            order = 1,
+                        }
+                    else
+                        for i, tex in ipairs(textures) do
+                            local typeLabel
+                            local tt = tex.trackType
+                            if tt == "debuff" then typeLabel = "|cffff6b6bDebuff|r"
+                            elseif tt == "petbuff" then typeLabel = "|cffaa88ffPet Buff|r"
+                            elseif tt == "pet" then typeLabel = "|cffaa88ffPet|r"
+                            elseif tt == "totem" then typeLabel = "|cffff9900Totem|r"
+                            elseif tt == "ground" then typeLabel = "|cffff9900Ground|r"
+                            elseif tt == "buff" then typeLabel = "|cff00ff00Buff|r"
+                            else typeLabel = "|cffffff00Type Not Set|r" end
+
+                            args["texture_" .. tex.slot] = {
+                                type = "toggle",
+                                name = string.format("|cffFF88FFTexture %d|r: %s (%s)", tex.slot, tex.name, typeLabel),
+                                desc = "Includes the image, position, size, states, duration text, drain and behavior settings.",
+                                order = i,
+                                width = "full",
+                                get = function() return selectedTexturesForExport[tex.slot] end,
+                                set = function(_, val) selectedTexturesForExport[tex.slot] = val end,
+                            }
+                        end
+                    end
+
+                    return args
+                end)(),
+            },
+
             -- Castbar selection (single config, not a per-slot list)
             castbarSelectionGroup = {
                 type = "group",
@@ -1304,13 +1463,13 @@ function ns.BarsImportExport.GetOptionsTable()
             -- ═══════════════════════════════════════════════════════════════
             importHeader = {
                 type = "header",
-                name = "Import Bars",
+                name = "Import Display",
                 order = 20,
             },
-            
+
             importDesc = {
                 type = "description",
-                name = "Paste an export string below to import bar configurations. Supports aura bars, cooldown bars, resource bars, and timer bars.",
+                name = "Paste an export string below. Supports aura bars, cooldown bars, resource bars, timer bars, textures, and the castbar. Strings made before textures existed still import normally.",
                 order = 21,
             },
             

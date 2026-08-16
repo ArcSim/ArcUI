@@ -1210,6 +1210,7 @@ local function CleanupFrameHidingState(frame)
   hiddenCDMFrames[frame] = nil
   frame._arcHiddenByBar = nil
   frame._arcHiddenByBarCdID = nil
+  frame._arcBarRevealRefreshed = nil  -- frame left the hide system: next reveal re-evaluates
   if hiddenByBarOverlays[frame] then
     hiddenByBarOverlays[frame]:Hide()
     hiddenByBarOverlays[frame] = nil
@@ -1340,6 +1341,35 @@ local function RefreshHiddenCDMFrames()
   end
 end
 
+-- Hand a REVEALED frame back to its visual writer.
+--
+-- Why this is needed (frame-inspector timeline, cd 82624): while a frame is
+-- bar-hidden EVERY state writer skips it — AuraFrames.UpdateAuraFrame and the
+-- CDMEnhance visual paths all guard on IsFrameHiddenByBar — so its alpha is
+-- frozen at whatever it was when the hide began. For an icon CDM created while
+-- hidden that value is CDM's own initialisation: ZERO (the same CDM behaviour
+-- CDMEnhance's "ALPHA PROTECTION" block documents). Clearing the flag and
+-- calling Show() therefore revealed a fully transparent icon, and the red
+-- overlay is a CHILD so it inherited that 0 too. The timeline proved it: for
+-- the whole first panel open the frame read alpha=0.00 with tgtA=nil — i.e.
+-- UpdateAuraFrame had never run on it. On the second open a layout sweep
+-- finally ran it (tgtA=1.00) and the icon appeared, which is exactly why
+-- close+reopen "fixed" it.
+--
+-- So the reveal asks the OWNER to re-evaluate (UpdateIcon -> ApplyIconVisuals
+-- -> UpdateAuraFrame / CooldownState). Core never decides alpha itself: forcing
+-- a value here would mask whichever writer is really responsible and desync the
+-- state the writers cache. Flags must already be cleared before this runs, or
+-- the writers bail at their IsFrameHiddenByBar guard.
+local function RefreshRevealedFrameVisuals(frame, cdID)
+  if not frame or not cdID then return end
+  if frame._arcBarRevealRefreshed then return end  -- once per reveal, not per retry pass
+  frame._arcBarRevealRefreshed = true
+  if ns.CDMEnhance and ns.CDMEnhance.UpdateIcon then
+    ns.CDMEnhance.UpdateIcon(cdID)
+  end
+end
+
 ForceHideCDMFrame = function(frame, expectedCooldownID)
   if not frame then return end
   
@@ -1436,13 +1466,17 @@ ForceHideCDMFrame = function(frame, expectedCooldownID)
     frame._arcHiddenByBar = nil
     frame._arcHiddenByBarCdID = nil
     frame:Show()
-    
+
     -- Create/show overlay
     GetOrCreateHiddenOverlay(frame):Show()
+
+    -- Flags are cleared above, so the writers will accept this frame again
+    RefreshRevealedFrameVisuals(frame, expectedCooldownID)
   else
     -- Set shared flags BEFORE Hide - CDMEnhance Show hook verifies these
     frame._arcHiddenByBar = true
     frame._arcHiddenByBarCdID = expectedCooldownID
+    frame._arcBarRevealRefreshed = nil  -- next reveal re-evaluates
     frame:Hide()
     -- Hide overlay if it exists
     if hiddenByBarOverlays[frame] then
@@ -1461,6 +1495,15 @@ local function AllowCDMFrameVisible(frame)
   local cdID = GetFrameCooldownID(frame)
   if cdID then
     frame:Show()
+    -- SAME STALE-STATE CLASS as the panel-open reveal: while the bar was hiding
+    -- this icon every visual writer skipped it, so its alpha is frozen at the
+    -- value it had when the hide began (zero for an icon CDM created hidden).
+    -- Un-hiding for real — bar disabled/deleted, "Hide CDM Icon" toggled off,
+    -- spec change — must therefore ALSO hand the frame back to its writer, or
+    -- the icon returns invisible until some later sweep repaints it.
+    -- CleanupFrameHidingState above already cleared the flags and the
+    -- once-per-reveal marker, so the writers accept it and this runs.
+    RefreshRevealedFrameVisuals(frame, cdID)
   end
 end
 
@@ -1476,27 +1519,69 @@ local function HideAllHiddenByBarOverlays()
   for frame, expectedCdID in pairs(hiddenCDMFrames) do
     frame._arcHiddenByBar = true
     frame._arcHiddenByBarCdID = expectedCdID
+    frame._arcBarRevealRefreshed = nil  -- next reveal re-evaluates visuals
     frame:Hide()
   end
 end
 
 -- Called when options panel opens to show overlays on already-hidden frames
 local function ShowAllHiddenByBarOverlays()
-  -- Refresh first: fix any stale entries from CDM frame recycling
+  -- RESOLVE REQUESTS FIRST (the "first panel open after /reload showed nothing"
+  -- bug): hiddenCDMFrames only holds frames we have ALREADY hidden. After a
+  -- reload the hide REQUESTS (cdmHideRequestsByCD) exist while that set can
+  -- still be empty — CDM bound the icon after the login sweeps, or recycled the
+  -- frame since — so iterating only the already-hidden set overlaid NOTHING on
+  -- the first open. The icons then got registered while the panel sat open, and
+  -- close+reopen "fixed" it. ReassertCDMHideRequests resolves every requested
+  -- cooldownID to its live frame (group members + free icons + viewers, via
+  -- FindCDMFrameForCooldownID) and routes it through ForceHideCDMFrame, which in
+  -- options-open mode SHOWS it with the red overlay instead of hiding it.
+  -- Called through ns.API because it is defined further down this file: a direct
+  -- call would capture a nil upvalue, and luac cannot see that (see the
+  -- lua-call-before-definition rule).
+  if ns.API and ns.API.ReassertCDMHideRequests then
+    ns.API.ReassertCDMHideRequests()
+  end
+
+  -- Refresh: fix any stale entries from CDM frame recycling
   RefreshHiddenCDMFrames()
-  
-  for frame, _ in pairs(hiddenCDMFrames) do
+
+  for frame, revealCdID in pairs(hiddenCDMFrames) do
     frame._arcHiddenByBar = nil  -- Clear so Show hook doesn't re-hide
     frame._arcHiddenByBarCdID = nil
     frame:Show()
     -- Create overlay if needed
     GetOrCreateHiddenOverlay(frame):Show()
+    -- Let the frame's own visual writer decide its alpha now that it is no
+    -- longer skipped as bar-hidden (see RefreshRevealedFrameVisuals)
+    RefreshRevealedFrameVisuals(frame, revealCdID)
+  end
+end
+
+-- Panel-open reveal is RETRIED, not a single snapshot. A pass can only overlay
+-- icons that EXIST and are resolvable at that instant, and the first open after
+-- a /reload races three slow things: CDM binding its icons, ArcUI restoring
+-- group/free placement, and bar states resolving their cooldownIDs. One pass at
+-- +0.1s could therefore find nothing at all — the icons then registered while
+-- the panel sat open, so close+reopen "fixed" it. These are one-shot timers
+-- (not polling): each re-runs the idempotent pass only while the panel is still
+-- open, and they stop on their own.
+local OVERLAY_RETRY_DELAYS = { 0.5, 1.2, 2.5, 5.0 }
+local function ShowHiddenByBarOverlaysRetried()
+  ShowAllHiddenByBarOverlays()
+  for _, delay in ipairs(OVERLAY_RETRY_DELAYS) do
+    C_Timer.After(delay, function()
+      if ns._arcUIOptionsOpen then
+        ShowAllHiddenByBarOverlays()
+      end
+    end)
   end
 end
 
 -- Expose for Options.lua and FrameController
 ns.API = ns.API or {}
-ns.API.ShowHiddenByBarOverlays = ShowAllHiddenByBarOverlays
+ns.API.ShowHiddenByBarOverlays = ShowHiddenByBarOverlaysRetried
+ns.API.ShowHiddenByBarOverlaysOnce = ShowAllHiddenByBarOverlays
 ns.API.HideHiddenByBarOverlays = HideAllHiddenByBarOverlays
 ns.API.RefreshHiddenCDMFrames = RefreshHiddenCDMFrames
 
@@ -1649,6 +1734,9 @@ end
 -- Expose internal tables for ArcUI_Debugger OverlayInspector (accessed via ArcUI_NS)
 ns.API._hiddenCDMFrames = hiddenCDMFrames
 ns.API._hiddenByBarOverlays = hiddenByBarOverlays
+-- INTENT table (which cooldownIDs bars want hidden) — exposed so the Frame
+-- Inspector can diff intent vs reality when the overlays misbehave.
+ns.API._cdmHideRequestsByCD = cdmHideRequestsByCD
 ns.API._GetFrameCooldownID = GetFrameCooldownID
 ns.API._FindCDMFrameForCooldownID = FindCDMFrameForCooldownID
 

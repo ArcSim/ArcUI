@@ -132,7 +132,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local TYPE_LABELS = {
-    bars    = "|cffFFD100Bars Export|r",
+    bars    = "|cffFFD100Display Export|r",
     cdm     = "|cff00CCFFIcon Manager Export|r",
     master  = "|cff00FF88Master Export|r",
     cr      = "|cffFF7777Cooldown Reminder Export|r",
@@ -210,14 +210,15 @@ local function BuildPreview(t, d)
         local cooldownCount = d.cooldownBars and #d.cooldownBars or 0
         local resourceCount = d.resourceBars and #d.resourceBars or 0
         local timerCount    = d.timerBars and #d.timerBars or 0
-        local total         = auraCount + cooldownCount + resourceCount + timerCount
+        local textureCount  = d.textures and #d.textures or 0
+        local total         = auraCount + cooldownCount + resourceCount + timerCount + textureCount
         table.insert(lines, string.format(
             "|cff888888From:|r %s @ %s\n",
             d.exportedBy or "?", d.realm or "?"
         ))
         table.insert(lines, string.format(
-            "%d bar(s) — |cffFFFF00%d aura|r  |cff00FFFF%d cooldown|r  |cff00FF88%d resource|r  |cffCC66FF%d timer|r",
-            total, auraCount, cooldownCount, resourceCount, timerCount
+            "%d item(s) — |cffFFFF00%d aura|r  |cff00FFFF%d cooldown|r  |cff00FF88%d resource|r  |cffCC66FF%d timer|r  |cffFF88FF%d texture|r",
+            total, auraCount, cooldownCount, resourceCount, timerCount, textureCount
         ))
         if type(d.castbar) == "table" then
             table.insert(lines, "|cffCC66FFCastbar:|r 1 (full castbar config)")

@@ -51,6 +51,17 @@ local function ApplyUsabilityDesat(frame, iconTex, desaturate)
     -- Without this, the icon stays desaturated until CDM's next RefreshData cycle (~1s).
     if desaturate == nil then
         if wasRequested and iconTex then
+            -- RELEASE, DON'T OVERWRITE (Dalf's "icons randomly stop being
+            -- desaturated while on cooldown"). Usability is only ONE owner of
+            -- desaturation; the COOLDOWN state owns it too. Clearing outright
+            -- here wiped the cooldown's desaturation whenever a spell flipped
+            -- back to usable - which in combat happens constantly as resources
+            -- fluctuate, hence "random" - and the icon stayed bright until
+            -- CDM's next refresh (~1s) repainted it. Turning usability tinting
+            -- off "fixed" it precisely because this path stopped running.
+            -- /afi proof: cooldownDesaturated=true and _arcDesatBranch=C_BIN_CD
+            -- (both owners agreeing it should be grey) on a visibly bright icon.
+            -- So: hand it back to the cooldown owner instead of deciding here.
             frame._arcBypassDesatHook = true
             if iconTex.SetDesaturation then
                 iconTex:SetDesaturation(0)
@@ -58,6 +69,15 @@ local function ApplyUsabilityDesat(frame, iconTex, desaturate)
                 iconTex:SetDesaturated(false)
             end
             frame._arcBypassDesatHook = false
+            -- Re-assert the cooldown owner's decision. It is the authority for
+            -- cooldown desaturation; if it wants grey it repaints immediately,
+            -- so the "snap to colored" behaviour above is preserved for icons
+            -- nothing else claims.
+            if ns.CooldownState and ns.CooldownState.Apply then
+                local cfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame
+                    and ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+                if cfg then ns.CooldownState.Apply(frame, cfg) end
+            end
         end
         return
     end

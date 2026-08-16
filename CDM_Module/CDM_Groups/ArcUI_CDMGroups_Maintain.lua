@@ -346,6 +346,29 @@ local function DeferredHideFight(self)
     if not isGrouped and not isFree then return end
 
     C_Timer.After(0, function()
+        -- ROLLBACK for the INSTANT resurrect (see InstantResurrect below). Must
+        -- run BEFORE the IsShown early-out: the instant Show makes IsShown true,
+        -- which would skip every check and leave a genuinely-released frame
+        -- alive = the duplicate-icon clone bug. Now that the pool resetter has
+        -- run, the release signals are trustworthy, so verify and undo if wrong.
+        local instant = self._arcInstantResurrect
+        self._arcInstantResurrect = nil
+        if instant then
+            local released = false
+            if self.GetCooldownID then
+                if self.cooldownID == nil or self.layoutIndex == nil then released = true end
+            end
+            local p0 = self:GetParent()
+            if not ((p0 and p0._isCDMGContainer) or self._cdmgIsFreeIcon) then released = true end
+            if self._arcAllowHide or self._arcHiddenByBar or self._arcHiddenUnequipped
+               or self._arcSlotEmpty then released = true end
+            if released then
+                self._arcRollbackHiding = true   -- stops InstantResurrect re-firing on this Hide
+                self:Hide()
+                self._arcRollbackHiding = nil
+            end
+            return   -- verdict delivered either way
+        end
         if self:IsShown() then return end                     -- re-acquired/re-shown: moot
         if self._arcAllowHide then return end                 -- state may have moved a frame
         if self._arcHiddenByBar or self._arcHiddenUnequipped or self._arcSlotEmpty then return end
@@ -354,19 +377,29 @@ local function DeferredHideFight(self)
             if self.cooldownID == nil then return end         -- released (id cleared)
             if self.layoutIndex == nil then return end        -- released (pool resetter finished)
         end
-        -- Blizzard's own Hide When Inactive: an INACTIVE frame with the
-        -- setting on is a LEGITIMATE hide (target swap away from a debuffed
-        -- unit, aura dropped) — resurrecting it defeated the user's setting
-        -- ("debuff icon should disappear when not applied but stays up").
-        -- Secrecy checked BEFORE any boolean test (secret booleans throw on
-        -- truthiness); nil/secret isActive = unknown = keep fighting.
-        local hwi = self.hideWhenInactive
-        if not (issecretvalue and issecretvalue(hwi)) and hwi then
-            local bIsActive = self.isActive
-            if not (issecretvalue and issecretvalue(bIsActive)) and bIsActive == false then
-                return
-            end
-        end
+        -- NO DEFERENCE TO BLIZZARD'S "Hide When Inactive" (3.8.0 regression,
+        -- removed 3.8.0.b). 3.8.0 added a bail here when hideWhenInactive was on
+        -- and isActive was false, so CDM's hide would stand. That was the wrong
+        -- layer: this resurrect is the ONLY reason "show the icon while its aura
+        -- is MISSING" works for users who have Hide When Inactive enabled in CDM,
+        -- and honouring the hide silently killed that feature in 3.8.0 (two
+        -- Discord reports, both "worked before 8/15", both fixed by downgrading;
+        -- unreproducible for anyone whose CDM setting is off).
+        --
+        -- ARCUI OWNS VISIBILITY FOR MANAGED FRAMES; ALPHA IS THE CONTROL.
+        -- CDM must never get a vote on show/hide for a frame we reparented:
+        --   aura-missing alpha > 0 -> icon stays visible while the aura is gone
+        --   aura-missing alpha = 0 -> icon renders invisible and DynamicLayout
+        --                             collapses the slot (GAP(faded), verified)
+        -- That serves BOTH complaints -- including the "debuff should disappear
+        -- when not applied" one that motivated the 3.8.0 block -- through the
+        -- icon's own setting instead of by surrendering ownership.
+        --
+        -- The C_Timer.After(0) defer above is LOAD-BEARING, do not inline this:
+        -- cooldownID/layoutIndex only settle after CDM's pool resetter runs, and
+        -- those checks are what separate "CDM is RELEASING this frame" from
+        -- "CDM is HIDING a frame we own". A synchronous resurrect brings released
+        -- pool frames back -> the duplicate-icon clone bug.
         local p = self:GetParent()
         if (p and p._isCDMGContainer) or self._cdmgIsFreeIcon then
             self:Show()
@@ -374,12 +407,45 @@ local function DeferredHideFight(self)
     end)
 end
 
+-- INSTANT RESURRECT — kills the visible flicker.
+-- The deferred fight alone always costs a rendered gap: measured 13 ms on a
+-- plain aura drop (Maintain wins the race) and 48 ms when a spell override
+-- rebinds the frame (the deferred pass declines on the transiently-nil
+-- cooldownID, so nothing restores it until AuraFrames' next pass). Both are
+-- visible to the user, and the whole point of owning visibility is that CDM's
+-- hide should never RENDER.
+--
+-- So act first, verify after: re-Show synchronously in the same frame as the
+-- hide, mark the frame, and let the deferred pass above roll it back if the
+-- release signals do materialise. That inverts the cost correctly -- a
+-- guaranteed gap on every inactive-hide becomes a possible one-frame FLASH of a
+-- frame that was genuinely being released mid-rebuild (rare, already noisy).
+--
+-- Deliberately does NOT check layoutIndex: that is the slow-settling signal the
+-- rollback exists to evaluate. cooldownID == nil is checked because an already
+-- cleared id means the frame is gone right now, not "maybe".
+-- No recursion: Maintain hooks Hide/SetShown, and Show() triggers neither.
+local function InstantResurrect(self)
+    if self._arcRollbackHiding then return end   -- our own rollback Hide
+    if self._arcAllowHide then return end
+    if self._arcHiddenByBar or self._arcHiddenUnequipped or self._arcSlotEmpty then return end
+    if self._groupDragging or self._freeDragging then return end
+    if IsReleasedCDMFrame(self) then return end
+    if self.GetCooldownID and self.cooldownID == nil then return end
+    local p = self:GetParent()
+    if not ((p and p._isCDMGContainer) or self._cdmgIsFreeIcon) then return end
+    self._arcInstantResurrect = true
+    self:Show()
+end
+
 local function OnSetShown_Managed(self, shown)
     if shown then return end  -- Only fight SetShown(false)
+    InstantResurrect(self)
     DeferredHideFight(self)
 end
 
 local function OnHide_Managed(self)
+    InstantResurrect(self)
     DeferredHideFight(self)
 end
 

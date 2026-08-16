@@ -1,3 +1,24 @@
+## 3.8.0.b
+
+### Improvements
+
+- **Display Export** — "Bars Export" is now "Display Export" and includes your textures and castbar, so one string moves your whole setup.
+- **Textures ask for a tracking type** — New textures now show "Type Not Set" until you pick Buff, Debuff, Pet Buff, Totem or Ground, just like bars.
+
+### Bug Fixes
+
+- **Icons set to show while a buff is missing didn't appear** — They stayed hidden if Cooldown Manager's "Hide when inactive" was on. Your Aura Missing opacity controls this again.
+- **Icons flickered when a buff ended** — The brief blink as an aura dropped is gone.
+- **Totem icons stayed bright on cooldown** — Totem spells that show a cooldown, like Surging Totem, now grey out properly.
+- **Pandemic glow stayed on** — It could keep glowing after the aura expired until you switched target.
+- **Cooldown Manager tooltip errors** — Hovering an icon could spam errors. Fixed at the source this time.
+- **Spell usability tinting removed desaturation** — Icons randomly stopped greying out while on cooldown.
+- **Error spam when a spell changed form** — Fixed a burst of errors in dungeons and raids.
+- **Hidden Opacity ignored in combat** — Bars could sit at the wrong opacity once combat began.
+- **Arc icon tooltips** — Hovering showed an internal window instead of the normal spell tooltip.
+- **Timer icons flickered** — Custom timers no longer blink when their group refreshes.
+- **Icons hidden by bars could stay hidden** — They now come back when they should.
+
 ## 3.8.0.a
 
 ### Bug Fixes

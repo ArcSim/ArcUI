@@ -328,6 +328,22 @@ end
 -- ===================================================================
 -- ACTIVE-TEXTURE SELECTOR VALUES
 -- ===================================================================
+-- MISSING-SETUP check (mirrors the bar rows): a texture needs BOTH an aura
+-- identification and a tracking type. Returns a reason string, or nil when
+-- fully configured.
+local function TextureMissingSetup(cfg)
+  local t = cfg and cfg.tracking
+  if not t then return "no tracking config" end
+  local hasAura = (t.spellID and t.spellID > 0)
+    or (t.cooldownID and t.cooldownID > 0)
+    or (t.buffName and t.buffName ~= "")
+  local hasType = t.trackType and t.trackType ~= ""
+  if not hasAura and not hasType then return "no aura and no tracking type" end
+  if not hasAura then return "no aura selected" end
+  if not hasType then return "no tracking type chosen" end
+  return nil
+end
+
 local function GetTextureSelectorValues()
   local out = {}
   local db = ns.API and ns.API.GetDB and ns.API.GetDB()
@@ -335,7 +351,8 @@ local function GetTextureSelectorValues()
   for _, num in ipairs(ActiveTextures()) do
     local cfg = db.textures[num]
     local name = (cfg and cfg.tracking and cfg.tracking.buffName) or "(unconfigured)"
-    out[num] = string.format("#%d  %s", num, name)
+    local miss = TextureMissingSetup(cfg) and "  |cffffff00[MISSING SETUP]|r" or ""
+    out[num] = string.format("#%d  %s%s", num, name, miss)
   end
   return out
 end
@@ -1364,6 +1381,25 @@ function ns.GetTexturesOptionsTable()
       fontSize = "medium",
       order = 2,
       hidden = function() return HasAnyTexture() end,
+    },
+    needsSetup = {
+      type = "description",
+      fontSize = "medium",
+      order = 1.5,
+      width = "full",
+      hidden = function()
+        if not HasAnyTexture() then return true end
+        local cfg = ns.API.GetTextureConfig and ns.API.GetTextureConfig(CurNum())
+        return TextureMissingSetup(cfg) == nil
+      end,
+      name = function()
+        local cfg = ns.API.GetTextureConfig and ns.API.GetTextureConfig(CurNum())
+        local why = TextureMissingSetup(cfg)
+        if not why then return "" end
+        return "|cffffff00[MISSING SETUP]|r  |cffff9900This texture has " .. why
+          .. ". Open |r|cffffd700Buffs/Debuffs|r|cffff9900 and use the texture's row: the "
+          .. "|r|cffffd700Type|r|cffff9900 dropdown sets what it tracks, and the Catalog picks the aura.|r\n"
+      end,
     },
 
     -- Editor tabs (hidden until at least one texture exists).

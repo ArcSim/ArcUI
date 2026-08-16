@@ -2606,6 +2606,34 @@ ns.CDMEnhance.ApplyForceHideText = ApplyForceHideText
 -- ===================================================================
 -- APPLY ICON STYLING
 -- ===================================================================
+-- PANDEMIC GLOW RELEASE — the single clearer, callable from any aura-gone site.
+-- Was a per-frame local reachable ONLY from the HidePandemicStateFrame hook, and
+-- that hook stops firing exactly when it is needed: CDM drives Show/Hide
+-- PandemicStateFrame from CheckPandemicTimeDisplay, which only runs while the
+-- frame is registered for OnUpdate, and NeedsOnUpdateRegistration() is
+-- `pandemicAlertTriggerTime or next(alertsByEvent)` — Blizzard nils
+-- pandemicAlertTriggerTime as soon as the alert PLAYS and unregisters the frame,
+-- with the glow still up. The flag then survives until an unrelated refresh
+-- (target swap → OnNewTarget → RefreshData) clears it. AuraFrames' FrameActive
+-- OnChanged(inactive) now calls this, which is the authoritative aura-gone edge.
+-- The FLAG is released unconditionally (every setter is config-gated, so a
+-- config-gated clear strands it when the user disables glowFollowPandemic);
+-- only the HIDE stays config-gated, so this never kills an unrelated glow.
+local function ClearPandemicGlow(frame)
+  if not frame then return end
+  frame._arcPandemicGlowActive = nil
+  frame._arcPandemicLastFire   = nil
+  local cfgW = GetEffectiveIconSettingsForFrame(frame)
+  local aasW = cfgW and cfgW.auraActiveState
+  local svW  = cfgW and GetEffectiveStateVisuals(cfgW)
+  if aasW and aasW.glow == true and aasW.glowFollowPandemic == true then
+    HideAuraActiveGlow(frame)
+  elseif svW and svW.readyGlow and svW.glowFollowPandemic then
+    if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(frame) end
+  end
+end
+ns.CDMEnhance.ClearPandemicGlow = ClearPandemicGlow
+
 ApplyIconStyle = function(frame, cdID)
   if not cdID then return end
   
@@ -2825,18 +2853,9 @@ ApplyIconStyle = function(frame, cdID)
     -- Zero timers, zero closures, zero allocations. Just a GetTime() stamp and a compare.
     local PANDEMIC_LINGER = 0.1  -- allow ~6 frames of Hide before killing (handles hitches)
 
-    local function PandemicGlowKill(self)
-      self._arcPandemicGlowActive = nil
-      self._arcPandemicLastFire   = nil
-      local pfCfgW = GetEffectiveIconSettingsForFrame(self)
-      local aasFW  = pfCfgW and pfCfgW.auraActiveState
-      local svFW   = pfCfgW and GetEffectiveStateVisuals(pfCfgW)
-      if aasFW and aasFW.glow == true and aasFW.glowFollowPandemic == true then
-        HideAuraActiveGlow(self)
-      elseif svFW and svFW.readyGlow and svFW.glowFollowPandemic then
-        if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(self) end
-      end
-    end
+    -- Single clearer, shared with the aura-gone edge in AuraFrames (see
+    -- ClearPandemicGlow above for why this hook alone is not enough).
+    local PandemicGlowKill = ClearPandemicGlow
 
     hooksecurefunc(frame, "ShowPandemicStateFrame", function(self)
       local pi = self.PandemicIcon
@@ -2855,6 +2874,20 @@ ApplyIconStyle = function(frame, cdID)
       local hasFollowPandemic = (aasF and aasF.glow == true and aasF.glowFollowPandemic == true)
                              or (svF and svF.readyGlow and svF.glowFollowPandemic)
       if not hasFollowPandemic then return end
+
+      -- STALE-WINDOW GUARD. Blizzard's CheckPandemicTimeDisplay decides purely on
+      -- `pandemicStartTime and timeNow >= start and timeNow <= end` — it NEVER
+      -- re-checks that the aura still exists. After the aura drops those times
+      -- survive until an unrelated refresh nils them, so CDM keeps calling
+      -- ShowPandemicStateFrame and we kept re-arming the glow one frame after
+      -- AuraFrames released it on the aura-gone edge. Timeline-proven live
+      -- (icon 113506): STOP ReadyGlow then START ReadyGlow in the same second
+      -- with aura=false, and it only really stopped on a target swap, when
+      -- RefreshData finally nilled pandemicStartTime/EndTime.
+      -- No aura and no totem => no pandemic window, whatever the stale times say.
+      -- `auraInstanceID ~= nil` is the correct presence test (0 EXISTS, nil = gone)
+      -- and both are nil-compares, so this stays secret-safe in restricted content.
+      if self.auraInstanceID == nil and self.totemData == nil then return end
 
       -- Stamp every fire so HidePandemicStateFrame knows the window is still live
       self._arcPandemicLastFire = GetTime()
@@ -4617,8 +4650,12 @@ ApplyIconStyle = function(frame, cdID)
             ns.Glows.Start(self, "ArcUI_Alert", "pixel", {color = color, lines = 8, frequency = 0.15, thickness = 2, xOffset = glowOffset, yOffset = glowOffset})
           end
         end
-        -- glowFollowPandemic: CDM fires eventType 2 at exact pandemic entry — use it directly
-        local panCfg = GetEffectiveIconSettingsForFrame(self)
+        -- glowFollowPandemic: CDM fires eventType 2 at exact pandemic entry — use it directly.
+        -- Same stale-window guard as the ShowPandemicStateFrame hook: never arm the
+        -- pandemic glow on a frame whose aura is already gone (0 EXISTS, nil = gone;
+        -- nil-compares, so secret-safe).
+        local panCfg = (self.auraInstanceID ~= nil or self.totemData ~= nil)
+                       and GetEffectiveIconSettingsForFrame(self) or nil
         local aas = panCfg and panCfg.auraActiveState
         local sv  = panCfg and GetEffectiveStateVisuals(panCfg)
         if aas and aas.glow == true and aas.glowFollowPandemic == true then
@@ -10922,7 +10959,19 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
       local frame = data.frame
       if frame and frame._arcStyled then
         local ci = frame.cooldownInfo
-        if ci and ci.spellID == baseSpellID then
+        -- SECRET GUARD: cooldownInfo.spellID is SECRET in restricted content
+        -- (dungeon / M+ / raid), and comparing a secret from tainted execution
+        -- throws — 54x error storms that only stop on reload (Twizz report).
+        -- Prefer the plain cached id we already keep for exactly this reason;
+        -- only touch the live field when it is readable. A frame we cannot
+        -- identify is skipped: it simply keeps its current override state,
+        -- which the next unrestricted refresh corrects.
+        local ciSpellID = ci and ci.spellID
+        if ciSpellID ~= nil and issecretvalue and issecretvalue(ciSpellID) then
+          ciSpellID = frame._arcCachedSpellID   -- plain, cached while readable
+          if ciSpellID ~= nil and issecretvalue(ciSpellID) then ciSpellID = nil end
+        end
+        if ciSpellID == baseSpellID then
           local newSpellID = overrideSpellID or baseSpellID
           -- Update cache immediately — per-frame listener uses this for event matching
           frame._arcCachedSpellID    = newSpellID

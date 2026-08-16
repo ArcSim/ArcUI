@@ -1954,9 +1954,22 @@ local function HandleCooldownLogic(frame, iconTex, cfg, stateVisuals)
 
   local cfgHasIgnoreAura = (cfg.auraActiveState and cfg.auraActiveState.ignoreAuraOverride)
                         or (cfg.cooldownSwipe and cfg.cooldownSwipe.ignoreAuraOverride)
-  local hasActiveAuraDisplay = not cfgHasIgnoreAura
-                               and ((frame.wasSetFromAura == true)
-                                    or (frame.totemData ~= nil))
+  -- BLIZZARD'S VERDICT, NOT OUR GUESS. CheckCacheCooldownValuesFromAura adopts the
+  -- totem/aura duration ONLY when CanUseAuraForDisplay() passes -- i.e. the spell's
+  -- cooldownInfo.flags does NOT carry Enum.CooldownSetSpellFlags.HideAura (=1) -- and
+  -- signals that by setting wasSetFromAura (+ cooldownUseAuraDisplayTime=true,
+  -- cooldownDesaturated=false). RefreshTotemData still POPULATES totemData either way,
+  -- so bare `totemData ~= nil` is NOT "an aura is being displayed".
+  --   Earthgrab Totem 29982: flags=0 -> wasSetFromAura=true  -> CDM shows totem duration
+  --   Surging Totem  29970: flags=1 -> wasSetFromAura=false -> CDM shows the COOLDOWN
+  --                                                            and sets cooldownDesaturated=true
+  -- The old `or (frame.totemData ~= nil)` fired only for that second class (the
+  -- dispatcher already sent wasSetFromAura frames to HandleAuraLogic), pinning
+  -- force=0 saturation for the whole cooldown and overriding CDM's own decision.
+  -- The dispatcher asks this exact question correctly via useAuraLogic; match it.
+  -- Also strictly safer in combat: wasSetFromAura is assigned from literals only, so
+  -- it is never secret, while totemData is a SECRET TABLE in combat.
+  local hasActiveAuraDisplay = not cfgHasIgnoreAura and (frame.wasSetFromAura == true)
 
   frame:Show()
 

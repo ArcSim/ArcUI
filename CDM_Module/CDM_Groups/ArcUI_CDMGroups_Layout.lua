@@ -93,6 +93,10 @@ ns.CDMGroups.ShouldMakeClickThrough = ShouldMakeClickThrough
 
 -- Apply click-through to a frame and all its overlays
 -- CDMGroups owns this - CDMEnhance should NOT handle click-through
+-- Forward declaration: ApplyClickThrough calls this but it is DEFINED below.
+-- A direct call would capture a nil upvalue and luac -p cannot see that.
+local ApplyMouseMotionState
+
 local function ApplyClickThrough(frame, enable)
     if not frame then return end
     
@@ -134,6 +138,9 @@ local function ApplyClickThrough(frame, enable)
     else
         -- Re-enable mouse on frame
         frame:EnableMouse(true)
+        -- EnableMouse(true) re-enables MOTION too, which would undo a
+        -- "tooltips off" choice - re-assert it from the stored intent.
+        ApplyMouseMotionState(frame)
         
         -- CRITICAL: For CDMGroups-managed frames, NEVER enable overlay mouse!
         -- The overlay sits on TOP of the frame and would INTERCEPT all clicks.
@@ -202,37 +209,39 @@ ns.CDMGroups.GetSlotDimensions = GetSlotDimensions
 -- Apply tooltip settings to a frame (enable/disable OnEnter/OnLeave)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TOOLTIPS: SUPPRESS HOVER, NEVER WRITE BLIZZARD'S SCRIPTS
+--
+-- Blizzard's CDM tooltip is KEPT (it carries the cooldownID readout). The fix
+-- for the "Auras cannot be accessed when secret while tainted by 'ArcUI'"
+-- mouseover error is to stop ArcUI owning the BINDING:
+--   * SetScript called by addon code makes that script binding addon-owned, so
+--     Blizzard's own CooldownViewerItemDataMixin:OnEnter afterwards executes
+--     "tainted by ArcUI" EVEN THOUGH the function is entirely theirs. Their
+--     RefreshTooltip then calls SetUnitAuraByAuraInstanceID with a SECRET
+--     auraInstanceID, which is only permitted from untainted execution -> throw.
+--   * The level-4 taint log supports this: there is NO taint seed anywhere
+--     inside the CooldownViewer path, which is what you see when the execution
+--     is already tainted before their code runs, i.e. via the binding.
+-- So: never SetScript. Suppress hover with SetMouseMotionEnabled (OnEnter/
+-- OnLeave simply never fire) and leave the binding exactly as Blizzard made it.
+-- Clicks are unaffected - click-through is a separate option owned by
+-- ApplyClickThrough/EnableMouse.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Assert hover state from stored intent. ApplyClickThrough calls this too, so
+-- the two options are ORDER-INDEPENDENT (EnableMouse(true) re-enables motion).
+function ApplyMouseMotionState(frame)
+    if not frame or not frame.SetMouseMotionEnabled then return end
+    if frame.CanBeAccessedInContext and not frame:CanBeAccessedInContext() then return end
+    frame:SetMouseMotionEnabled(not frame._arcTooltipsDisabled)
+end
+ns.CDMGroups.ApplyMouseMotionState = ApplyMouseMotionState
+
 local function ApplyTooltipSettings(frame, disableTooltips)
     if not frame then return end
-    
-    -- ALWAYS store original handlers if we don't have them yet and frame has scripts
-    -- This ensures we capture CDM's scripts before we ever modify them
-    if not frame._arcOrigOnEnter then
-        local currentOnEnter = frame:GetScript("OnEnter")
-        if currentOnEnter then
-            frame._arcOrigOnEnter = currentOnEnter
-        end
-    end
-    if not frame._arcOrigOnLeave then
-        local currentOnLeave = frame:GetScript("OnLeave")
-        if currentOnLeave then
-            frame._arcOrigOnLeave = currentOnLeave
-        end
-    end
-    
-    if disableTooltips then
-        -- Disable tooltips
-        frame:SetScript("OnEnter", nil)
-        frame:SetScript("OnLeave", nil)
-    else
-        -- Restore original handlers if we have them
-        if frame._arcOrigOnEnter then
-            frame:SetScript("OnEnter", frame._arcOrigOnEnter)
-        end
-        if frame._arcOrigOnLeave then
-            frame:SetScript("OnLeave", frame._arcOrigOnLeave)
-        end
-    end
+    frame._arcTooltipsDisabled = disableTooltips and true or nil
+    ApplyMouseMotionState(frame)
 end
 ns.CDMGroups.ApplyTooltipSettings = ApplyTooltipSettings
 

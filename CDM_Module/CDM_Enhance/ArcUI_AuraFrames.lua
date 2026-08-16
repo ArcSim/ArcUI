@@ -748,6 +748,35 @@ function AF.InstallHooks(frame, cdID)
       end
     end
 
+    -- PANDEMIC FLAG RELEASE (aura gone => no pandemic window, by definition).
+    -- This MUST live here, not only on Blizzard's HidePandemicStateFrame hook.
+    -- CDM only calls CheckPandemicTimeDisplay (the sole caller of Show/Hide
+    -- PandemicStateFrame) from its per-frame OnUpdate, and
+    -- NeedsOnUpdateRegistration() is `pandemicAlertTriggerTime or next(alertsByEvent)`.
+    -- Blizzard nils pandemicAlertTriggerTime the moment the alert PLAYS
+    -- ("Just clear the alert state once it plays") and re-runs
+    -- RefreshOnUpdateRegistration -> the frame is UNREGISTERED from OnUpdate
+    -- while the glow is still up. So HidePandemicStateFrame never fires again
+    -- and PandemicGlowKill -- previously the ONLY clearer of this flag -- never
+    -- ran: the glow stayed until an unrelated refresh (target swap ->
+    -- OnNewTarget -> RefreshData) happened to clear it. That is the reported
+    -- "pandemic glow doesn't go away until I stop looking at the target".
+    -- Clearing is UNCONDITIONAL on config on purpose: every SETTER is gated on
+    -- glowFollowPandemic, so a gated clear strands the flag forever when the
+    -- user turns that option off (observed live: _arcPandemicGlowActive=true
+    -- with glowFollowPandemic=false). A stranded true is not inert -- it
+    -- suppresses HideAuraActiveGlow in the guards here and in CooldownState.
+    -- Hiding stays config-gated inside ClearPandemicGlow; only the flag is
+    -- released here, before the glow decision below re-derives from live state.
+    if not isActive and self._arcPandemicGlowActive then
+      if ns.CDMEnhance and ns.CDMEnhance.ClearPandemicGlow then
+        ns.CDMEnhance.ClearPandemicGlow(self)
+      else
+        self._arcPandemicGlowActive = nil
+        self._arcPandemicLastFire   = nil
+      end
+    end
+
     local cfg = GetEffectiveIconSettingsForFrame(self)
     local aaCfg = cfg and cfg.auraActiveState
 

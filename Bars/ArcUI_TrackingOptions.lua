@@ -1893,20 +1893,30 @@ local function CreateActiveTextureEntry(num, orderBase)
         local nm = (cfg and cfg.tracking and cfg.tracking.buffName) or "(Not configured)"
         local icon = (cfg and cfg.tracking and cfg.tracking.iconTextureID) or 134400
 
-        -- Buff/Debuff type (textures track buff/debuff), same colors as bars
-        local trackType = (cfg and cfg.tracking and cfg.tracking.trackType) or "buff"
-        local typeLabel = (trackType == "debuff") and "|cffff6b6bDebuff|r" or "|cff00ff00Buff|r"
+        -- Tracking type — same labels as bars, plus the new texture types.
+        -- UNSET is loud: new textures require a type pick (no silent "buff").
+        local trackType = (cfg and cfg.tracking and cfg.tracking.trackType) or ""
+        local typeLabel
+        if trackType == "debuff" then typeLabel = "|cffff6b6bDebuff|r"
+        elseif trackType == "petbuff" then typeLabel = "|cffaa88ffPet Buff|r"
+        elseif trackType == "pet" then typeLabel = "|cffaa88ffPet|r"
+        elseif trackType == "totem" then typeLabel = "|cffff9900Totem|r"
+        elseif trackType == "ground" then typeLabel = "|cffff9900Ground|r"
+        elseif trackType == "buff" then typeLabel = "|cff00ff00Buff|r"
+        else typeLabel = "|cffffff00Type Not Set|r" end
 
         -- Textures are duration-driven (they drain with the aura)
         local modeLabel = " |cffff9900[Duration]|r"
 
-        -- OK / FAIL / MISSING SETUP, mirroring the bar rows
+        -- OK / FAIL / MISSING SETUP, mirroring the bar rows: a texture needs
+        -- BOTH an aura identification AND a tracking type (same rule as bars'
+        -- hasSpellIdentification + hasTrackType).
         local statusLabel = ""
         local cooldownID = cfg and cfg.tracking and cfg.tracking.cooldownID
         local spellID = cfg and cfg.tracking and cfg.tracking.spellID
         local buffName = cfg and cfg.tracking and cfg.tracking.buffName
         local hasAura = (spellID and spellID > 0) or (cooldownID and cooldownID > 0) or (buffName and buffName ~= "")
-        if not hasAura then
+        if not hasAura or trackType == "" then
           statusLabel = " |cffffff00[MISSING SETUP]|r"
         elseif cooldownID and cooldownID > 0 and ns.API._FindCDMFrameForCooldownID then
           local trackingOK = ns.API._FindCDMFrameForCooldownID(cooldownID) ~= nil

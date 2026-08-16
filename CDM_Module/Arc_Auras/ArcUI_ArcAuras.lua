@@ -2859,6 +2859,26 @@ function ArcAuras.ShowTooltip(frame)
             GameTooltip:AddLine(config.name or "Custom Timer", 1, 1, 1)
         end
         GameTooltip:AddLine("|cffFFCC00Custom Timer|r", 1, 0.8, 0)
+    else
+        -- AURA ICONS (arc_aura_<spellID>) and anything else without a typed
+        -- config: show the real SPELL tooltip. Without this the holder fell
+        -- through every branch and rendered only the "Arc Auras" header + the
+        -- ID readout — visible whenever the engine button is hidden, i.e. the
+        -- aura-missing GHOST state (while the aura is up the engine button
+        -- covers the holder and Blizzard's own aura tooltip shows instead).
+        -- The spellID is carried by the arcID; fall back to stored config.
+        local spellID = config.spellID
+        if not spellID then
+            local arcID = frame._arcAuraID or frame._arcCooldownID
+            if type(arcID) == "string" then
+                spellID = tonumber(arcID:match("^arc_aura_(%d+)$"))
+            end
+        end
+        if spellID then
+            GameTooltip:SetSpellByID(spellID)
+        elseif config.name then
+            GameTooltip:AddLine(config.name, 1, 1, 1)
+        end
     end
     
     GameTooltip:AddLine(" ")
@@ -4169,8 +4189,20 @@ function ArcAuras.RefreshVisibility()
 
         if not config then
             -- Frame exists but config missing — hide but don't destroy
-            -- (SyncToProfile handles destruction, this is visibility-only)
-            frame:Hide()
+            -- (SyncToProfile handles destruction, this is visibility-only).
+            -- TIMERS / TOTEMS / AURA HOLDERS: their configs live in their OWN
+            -- stores, never in trackedSpells/trackedItems — this lookup
+            -- ALWAYS misses for them, and the unconditional Hide here blinked
+            -- every such icon on every RefreshVisibility while the group
+            -- maintenance re-showed it ~15ms later (the in-combat flicker;
+            -- timeline-proven: Hide@here vs Maintain:372 Show, repeating).
+            -- Their engines own their visibility — never touch them here.
+            local engineOwned = frame._arcIsCustomTimer or frame._arcIsAuraIcon
+                or (type(arcID) == "string" and (arcID:match("^arc_timer_")
+                    or arcID:match("^arc_totem_") or arcID:match("^arc_aura_")))
+            if not engineOwned then
+                frame:Hide()
+            end
         else
             local shouldDestroy = false
             local shouldHide = false

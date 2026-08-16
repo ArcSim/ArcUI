@@ -2306,7 +2306,20 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       end
     end
   end
-  if barFrames[barNumber] then barFrames[barNumber]._arcHideWhenAlpha = hideWhenFadeAlpha end
+  if barFrames[barNumber] then
+    local bfSet = barFrames[barNumber]
+    if bfSet._arcHideWhenAlpha ~= hideWhenFadeAlpha then
+      bfSet._arcHideWhenAlpha = hideWhenFadeAlpha
+      -- APPLY ON THE SPOT (Rule 0): the appearance styler is the only other
+      -- writer of this alpha and it never runs on combat/condition edges —
+      -- a >0 Hidden Opacity painted out of combat stayed painted IN combat
+      -- (the Freezing-stacks 15% report; 0% worked because that path hides
+      -- instead of fading). Repaint the moment the multiplier changes.
+      if bfSet.barFrame then
+        bfSet.barFrame:SetAlpha((bfSet._arcBaseOpacity or 1) * hideWhenFadeAlpha)
+      end
+    end
+  end
   
   -- Inactive check — defer hide by 2 frames to prevent flicker on quick buff refresh
   if shouldShow and not optionsOpen and not active and barConfig.behavior and barConfig.behavior.hideWhenInactive then
@@ -4174,7 +4187,20 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       end
     end
   end
-  if barFrames[barNumber] then barFrames[barNumber]._arcHideWhenAlpha = hideWhenFadeAlpha end
+  if barFrames[barNumber] then
+    local bfSet = barFrames[barNumber]
+    if bfSet._arcHideWhenAlpha ~= hideWhenFadeAlpha then
+      bfSet._arcHideWhenAlpha = hideWhenFadeAlpha
+      -- APPLY ON THE SPOT (Rule 0): the appearance styler is the only other
+      -- writer of this alpha and it never runs on combat/condition edges —
+      -- a >0 Hidden Opacity painted out of combat stayed painted IN combat
+      -- (the Freezing-stacks 15% report; 0% worked because that path hides
+      -- instead of fading). Repaint the moment the multiplier changes.
+      if bfSet.barFrame then
+        bfSet.barFrame:SetAlpha((bfSet._arcBaseOpacity or 1) * hideWhenFadeAlpha)
+      end
+    end
+  end
   
   -- Inactive check (if hideWhenInactive and not active, but show in options for editing)
   if shouldShow and not optionsOpen and not active and barConfig.behavior and barConfig.behavior.hideWhenInactive then
@@ -5767,6 +5793,10 @@ function ns.Display.ApplyAppearance(barNumber)
   
   -- NOTE: We do NOT use SetScale anymore - it causes position drift
   -- barFrame:SetScale(cfg.barScale) -- REMOVED - scale is now applied to size
+  -- Remember the base opacity: the hide-condition evaluators repaint alpha
+  -- on the spot when the fade multiplier changes (combat edges fire no aura
+  -- event, so waiting for this styler left a >0 Hidden Opacity stuck).
+  if barFrames[barNumber] then barFrames[barNumber]._arcBaseOpacity = cfg.opacity end
   barFrame:SetAlpha(cfg.opacity * (barFrames[barNumber] and barFrames[barNumber]._arcHideWhenAlpha or 1.0))
   
   -- Bar padding (always 0 - no UI option exposed)

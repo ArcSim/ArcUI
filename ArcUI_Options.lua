@@ -681,7 +681,7 @@ local function GetOptionsTable()
       
       -- ═══════════════════════════════════════════════════════════════
       -- IMPORT / EXPORT
-      -- Tabs: CDM Export | Bars Export | Master Export | Import (unified)
+      -- Tabs: CDM Export | Display Export | Master Export | Import (unified)
       -- ═══════════════════════════════════════════════════════════════
       importExport = {
         type = "group",
@@ -703,10 +703,11 @@ local function GetOptionsTable()
           barsExport = (function()
             local tbl = ns.GetBarsExportOnlyOptionsTable and ns.GetBarsExportOnlyOptionsTable() or {
               type = "group",
-              name = "Bars Export",
+              name = "Display Export",
               args = { loading = { type = "description", name = "Loading...", order = 1 } }
             }
-            tbl.name = "Bars Export"
+            -- "Display Export": bars AND textures (and the castbar) ride one string
+            tbl.name = "Display Export"
             tbl.order = 2
             return tbl
           end)(),
