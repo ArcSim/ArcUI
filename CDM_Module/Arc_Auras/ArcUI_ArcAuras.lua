@@ -259,8 +259,14 @@ GetDB = function()
     if not db.trackedSpells then db.trackedSpells = {} end
     if not db.positions then db.positions = {} end
     if not db.globalSettings then db.globalSettings = {} end
+    -- OPT-IN, per the addon's own rule. This used to seed trinket slots 13 and 14
+    -- ON, so ArcUI recreated an icon for whatever was equipped every login and
+    -- deleting one was meaningless. The seeded value is PERSISTED, so every
+    -- character that has already logged in owns a stored copy and keeps whatever
+    -- it has -- changing the seed flips ONLY brand-new characters and profiles.
+    -- No migration needed, nobody who likes it on loses it.
     if not db.autoTrackSlots then
-        db.autoTrackSlots = { [13] = true, [14] = true }
+        db.autoTrackSlots = {}
     end
     if db.enabled == nil then db.enabled = true end
     if db.autoTrackEquippedTrinkets == nil then db.autoTrackEquippedTrinkets = false end
@@ -374,7 +380,9 @@ function ArcAuras.ParseArcID(arcID)
         local slot = tonumber(arcID:sub(#ID_PREFIX.TOTEM + 1))
         return "totem", slot
     elseif arcID:find("^" .. ID_PREFIX.AURA) then
-        local spellID = tonumber(arcID:sub(#ID_PREFIX.AURA + 1))
+        -- Same "_N" dedup suffix as timers (copies of one aura): leading digits
+        -- only, or tonumber("356_2") returns nil and the id is lost.
+        local spellID = tonumber(arcID:sub(#ID_PREFIX.AURA + 1):match("^(%d+)") or "")
         return "aura", spellID
     end
 
@@ -1099,6 +1107,39 @@ end
 -- FRAME MANAGEMENT
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Seed a brand-new icon at screen centre, slightly above the middle, and
+-- persist it so the placement survives a reload before the user ever drags it.
+-- ONLY legal once the position store is loaded -- see the restore guard in
+-- CreateFrame. Kept as one function so the guarded path and the deferred retry
+-- can never drift apart.
+local DEFAULT_FREE_X, DEFAULT_FREE_Y, DEFAULT_FREE_SIZE = 0, 50, 36
+local seedRetryQueued = {}
+
+local function SeedDefaultFreePosition(arcID)
+    local G = ns.CDMGroups
+    if not G or not G.savedPositions then return end
+    G.savedPositions[arcID] = {
+        type     = "free",
+        x        = DEFAULT_FREE_X,
+        y        = DEFAULT_FREE_Y,
+        iconSize = DEFAULT_FREE_SIZE,
+    }
+    -- Also register in freeIcons so the drag handler can find it.
+    if G.freeIcons then
+        G.freeIcons[arcID] = G.freeIcons[arcID] or {}
+        G.freeIcons[arcID].x        = DEFAULT_FREE_X
+        G.freeIcons[arcID].y        = DEFAULT_FREE_Y
+        G.freeIcons[arcID].iconSize = DEFAULT_FREE_SIZE
+    end
+    if G.SavePositionToSpec then
+        G.SavePositionToSpec(arcID, G.savedPositions[arcID])
+    end
+    if G.SaveFreeIconToSpec then
+        G.SaveFreeIconToSpec(arcID,
+            { x = DEFAULT_FREE_X, y = DEFAULT_FREE_Y, iconSize = DEFAULT_FREE_SIZE })
+    end
+end
+
 function ArcAuras.CreateFrame(arcID, config)
     if ArcAuras.frames[arcID] then
         return ArcAuras.frames[arcID]
@@ -1148,33 +1189,36 @@ function ArcAuras.CreateFrame(arcID, config)
         -- the savedPositions[arcID] check and skip the seed entirely so we
         -- don't stomp their placements.
         -- ─────────────────────────────────────────────────────────────────
-        if ns.CDMGroups and ns.CDMGroups.savedPositions
+        --
+        -- RESTORE GUARD (the totems-at-screen-centre bug): "no entry in
+        -- savedPositions" only means NEW once that table is actually loaded.
+        -- At login it fills in asynchronously, so anything created during the
+        -- restore window saw an empty table, decided every icon was brand new,
+        -- and PERSISTED this centre seed over the real layout (SavePositionToSpec
+        -- below writes to disk immediately). Totems hit it every time because
+        -- their rebuild used to run on PLAYER_LOGIN with no delay. Defer the
+        -- seed instead of inventing a position; the icon is placed by the normal
+        -- restore, and if it really is new the retry seeds it a moment later.
+        local storeReady = ns.CDMShared and ns.CDMShared.IsGroupStoreReady
+            and ns.CDMShared.IsGroupStoreReady()
+        if ns.CDMGroups and ns.CDMGroups.savedPositions and not storeReady
+           and not ns.CDMGroups.savedPositions[arcID] and not seedRetryQueued[arcID] then
+            seedRetryQueued[arcID] = true
+            C_Timer.After(2.0, function()
+                seedRetryQueued[arcID] = nil
+                local G = ns.CDMGroups
+                if not G or not G.savedPositions then return end
+                if G.savedPositions[arcID] then return end        -- restore placed it
+                if not (ns.CDMShared and ns.CDMShared.IsGroupStoreReady
+                        and ns.CDMShared.IsGroupStoreReady()) then return end
+                if not (ns.ArcAuras and ns.ArcAuras.frames and ns.ArcAuras.frames[arcID]) then return end
+                SeedDefaultFreePosition(arcID)
+            end)
+        end
+
+        if storeReady and ns.CDMGroups and ns.CDMGroups.savedPositions
            and not ns.CDMGroups.savedPositions[arcID] then
-            local DEFAULT_X = 0       -- horizontal center
-            local DEFAULT_Y = 50      -- slightly above vertical center
-            local iconSize  = 36      -- matches CDMGroups default
-            ns.CDMGroups.savedPositions[arcID] = {
-                type     = "free",
-                x        = DEFAULT_X,
-                y        = DEFAULT_Y,
-                iconSize = iconSize,
-            }
-            -- Also register in freeIcons so the drag handler can find it.
-            if ns.CDMGroups.freeIcons then
-                ns.CDMGroups.freeIcons[arcID] = ns.CDMGroups.freeIcons[arcID] or {}
-                ns.CDMGroups.freeIcons[arcID].x        = DEFAULT_X
-                ns.CDMGroups.freeIcons[arcID].y        = DEFAULT_Y
-                ns.CDMGroups.freeIcons[arcID].iconSize = iconSize
-            end
-            -- Persist to spec profile so the centered position survives a
-            -- /reload immediately, even before the user drags the icon.
-            if ns.CDMGroups.SavePositionToSpec then
-                ns.CDMGroups.SavePositionToSpec(arcID, ns.CDMGroups.savedPositions[arcID])
-            end
-            if ns.CDMGroups.SaveFreeIconToSpec then
-                ns.CDMGroups.SaveFreeIconToSpec(arcID,
-                    { x = DEFAULT_X, y = DEFAULT_Y, iconSize = iconSize })
-            end
+            SeedDefaultFreePosition(arcID)
         end
 
         -- Aura icons (12.1) register as viewerType "aura": that is the
@@ -2871,7 +2915,8 @@ function ArcAuras.ShowTooltip(frame)
         if not spellID then
             local arcID = frame._arcAuraID or frame._arcCooldownID
             if type(arcID) == "string" then
-                spellID = tonumber(arcID:match("^arc_aura_(%d+)$"))
+                -- unanchored: copies are keyed arc_aura_<id>_2, _3, ...
+                spellID = tonumber(arcID:match("^arc_aura_(%d+)"))
             end
         end
         if spellID then
@@ -3195,6 +3240,15 @@ function ArcAuras.RemoveTrackedItem(arcID)
     if not db or not db.trackedItems then return end
     
     if db.trackedItems[arcID] then
+        -- DELETING AN AUTO-TRACKED SLOT ICON MUST DISABLE THE SLOT. Otherwise the
+        -- auto-track pass recreates it on the next login and the delete was a
+        -- no-op -- the "icons keep coming back after I delete them" report.
+        -- Deleting the icon IS the instruction to stop tracking that slot.
+        local cfg = db.trackedItems[arcID]
+        if cfg.isAutoTrackSlot and cfg.slotID and db.autoTrackSlots then
+            db.autoTrackSlots[cfg.slotID] = nil
+        end
+
         db.trackedItems[arcID] = nil
         ArcAuras.DestroyFrame(arcID)
         
@@ -4019,6 +4073,30 @@ end
 -- Diffs existing frames vs current char DB: creates missing, destroys removed.
 -- Does NOT destroy-all/recreate-all. Frames that already exist survive.
 -- ═══════════════════════════════════════════════════════════════════════════
+-- ENGINE-OWNED FRAMES: aura icons, custom timers and totems keep their configs in
+-- their OWN stores (db.auraIcons / db.customTimers / db.totemSlots), never in
+-- trackedItems or trackedSpells. The two sync functions below each decide
+-- "untracked, destroy it" from a SINGLE store, and between them their tests cover
+-- every frame: SyncToProfile destroys what is NOT _arcIsSpellCooldown,
+-- SyncSpellFrames destroys what IS. Aura icons fell in the first net; TOTEMS fall
+-- in the second, because they deliberately borrow the spell visual path and set
+-- _arcIsSpellCooldown = true while living in db.totemSlots.
+-- Both proven by lifecycle traces during a shared-profile Pull: correct state
+-- restored, then Hide + ClearAllPoints + SetParent(nil) milliseconds later.
+-- ONE shared predicate so the two can never drift again.
+local function IsEngineOwnedFrame(arcID, frame)
+    if frame and (frame._arcIsCustomTimer or frame._arcIsAuraIcon or frame._arcIsCustomTotem) then
+        return true
+    end
+    if type(arcID) == "string" then
+        if arcID:match("^arc_aura_") or arcID:match("^arc_timer_")
+           or arcID:match("^arc_totem_") then
+            return true
+        end
+    end
+    return false
+end
+
 function ArcAuras.SyncToProfile()
     if not ArcAuras.isEnabled then return end
     local db = GetDB()
@@ -4032,10 +4110,25 @@ function ArcAuras.SyncToProfile()
     -- NOTE: spells are discovered by ArcAurasCooldown timer, not synced here
 
     -- Destroy frames no longer tracked
+    --
+    -- ENGINE-OWNED FRAMES ARE NOT ITEMS. `shouldExist` is built from
+    -- db.trackedItems ALONE, but aura icons live in db.auraIcons, custom timers
+    -- in db.customTimers and totems in db.totemSlots. Those holders are never in
+    -- trackedItems, and only totems carry _arcIsSpellCooldown -- so aura icons
+    -- and timers failed BOTH tests and got DESTROYED here on every call. Proven
+    -- by a lifecycle trace: the shared pull restored the correct position
+    -- (TrackFreeIcon x=-351.7 y=250.8) and 0.00s later this loop ran Hide +
+    -- ClearAllPoints + SetParent(nil) on the same frame. That is the "icons show
+    -- for a second on the alt then vanish", and why a reload looked fine (no
+    -- pull, so SyncToProfile never ran).
+    -- Same defect and same exemption list as the RefreshVisibility
+    -- missing-config branch fixed earlier -- this copy never got it.
     local toDestroy = {}
     for arcID, frame in pairs(ArcAuras.frames) do
-        -- Only check item/trinket frames (spells managed by ArcAurasCooldown)
-        if not frame._arcIsSpellCooldown and not shouldExist[arcID] then
+        -- Only check item/trinket frames (spells managed by ArcAurasCooldown,
+        -- aura icons / timers / totems by their own modules)
+        if not frame._arcIsSpellCooldown and not shouldExist[arcID]
+           and not IsEngineOwnedFrame(arcID, frame) then
             table.insert(toDestroy, arcID)
         end
     end
@@ -4085,7 +4178,10 @@ function ArcAuras.SyncSpellFrames()
     -- Destroy spell frames no longer tracked
     local toDestroy = {}
     for arcID, frame in pairs(ArcAuras.frames) do
-        if frame._arcIsSpellCooldown and not shouldExist[arcID] then
+        -- TOTEMS set _arcIsSpellCooldown but live in db.totemSlots, so they match
+        -- this test and were destroyed on every pull. See IsEngineOwnedFrame.
+        if frame._arcIsSpellCooldown and not shouldExist[arcID]
+           and not IsEngineOwnedFrame(arcID, frame) then
             toDestroy[#toDestroy + 1] = arcID
         end
     end
@@ -4120,6 +4216,18 @@ function ArcAuras.SyncAfterSharedPull()
     if not ArcAuras.isEnabled then return end
     ArcAuras.SyncToProfile()    -- items
     ArcAuras.SyncSpellFrames()  -- spells
+    -- DELIBERATELY NOT rebuilding aura icons / timers / totems here.
+    -- The pull replaces those stores on disk, and a rebuild looks like the
+    -- obvious follow-up, but every one of those entry points re-evaluates
+    -- visibility and TEARS DOWN anything that fails: AuraIcons.RefreshVisibility
+    -- calls TeardownIcon whenever ShouldBeVisible is false, and it would be
+    -- judging the SOURCE's freshly-copied showOnSpecs / talentConditions
+    -- against this character -- with GetSpecialization() not necessarily
+    -- resolved yet during the login pull. In game that deleted live aura icons
+    -- on every manual pull while the stored data was perfectly fine, which is
+    -- why a reload afterwards looked correct.
+    -- The stores are on disk; the normal login build picks them up. A pull must
+    -- never destroy frames, so it does not touch them at all.
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

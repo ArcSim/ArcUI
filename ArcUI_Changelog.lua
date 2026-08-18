@@ -29,6 +29,41 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.1",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Aura icons pick a type and a set of units", desc = "Choose Buff, Debuff or both, then tick who to watch: you, target, focus, pet or party. The icon lights up when any ticked unit has the aura, so one icon can cover several people. Icons you already made keep working exactly as before." },
+          { title = "Aura picker", desc = "Add an aura icon by clicking it from a grid of everything the Cooldown Manager knows for your spec, instead of hunting for a spell ID. Auras you already track are dimmed, and ones in the database but missing from your CDM display are marked." },
+          { title = "Own auras only", desc = "An aura icon can ignore other players' copies of the same buff or debuff and react only to yours." },
+          { title = "More than one icon for the same aura", desc = "You can now create several icons for one spell, to watch it on different units or give each a different look." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Account sharing now has one owner", desc = "Only the character you push from sends its layout out. Everyone else receives it and keeps their own edits local, so an alt can no longer take the profile over just by moving something. Press Push to make the character you are on the source." },
+          { title = "More of your setup travels between characters", desc = "Aura icons, custom icons and totem slots now sync with shared profiles. Until now they never left the source character, so alts quietly ended up with a different set." },
+          { title = "Trinket auto-tracking starts turned off", desc = "New characters no longer track trinket slots on their own. Characters that already have it on are untouched." },
+          { title = "Deleting a trinket icon turns its slot off", desc = "It no longer reappears on your next login." },
+          { title = "New Icon routing shows deleted groups", desc = "If a routing option points at a group you have since deleted, the panel says so instead of showing a blank dropdown." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Cooldown bars vanished on charge spells", desc = "The bar disappeared when the first charge came back. It now runs through the whole recharge." },
+          { title = "Pulling a shared profile removed your Arc icons", desc = "Aura icons, custom icons and totem icons were destroyed every time a profile was pulled. They now survive it." },
+          { title = "Deleted groups came back", desc = "Deleting a group in a shared layout now removes it for every character using that layout. Another character could previously rebuild it on login and hand it back to everyone." },
+          { title = "Icons from a deleted group", desc = "They become free icons you can place, instead of quietly recreating the group they pointed at." },
+          { title = "Totem icons jumped to the middle of the screen", desc = "They no longer lose their position when you log in." },
+          { title = "Icons drifted off the side of the screen", desc = "Icons could be pushed further right each time until they left the screen entirely." },
+          { title = "Stray icons appeared after logging in", desc = "Untracked icons with borders and working tooltips no longer show up." },
+          { title = "Errors with potions, healthstones and trinkets", desc = "Fixed an error that could repeat in dungeons and raids for anyone tracking them." },
+          { title = "Icons stranded when a group was removed", desc = "Icons whose group disappeared during a profile or spec change are no longer left styled but unplaceable." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.0.b",
     sections = {
       {

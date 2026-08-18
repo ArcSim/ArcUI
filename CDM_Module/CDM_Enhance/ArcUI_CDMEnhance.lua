@@ -4500,14 +4500,31 @@ ApplyIconStyle = function(frame, cdID)
   local glowCfg = cfg.procGlow
   if glowCfg then
     -- Store spellID for reference (this is stable, not a config reference)
+    -- ONLY EVER CACHE A READABLE ID (3.8.0.c). This runs from ApplyIconStyle, so
+    -- it fires on every styling pass -- enhance, settings change, refresh, rebind
+    -- -- and the cooldownInfo branch was UNGUARDED. Any pass that happened while
+    -- the id was secret stored the secret, and the proc-glow lookup (~10845) then
+    -- compared it: "attempt to compare local 'frameSpellID' (a secret number
+    -- value)". CDM ITEM entries (potions / healthstones / trinkets) carry a secret
+    -- spellID by design, which is why only users tracking those hit it.
+    -- Same rule already used for _arcChargeCheckSpellID: write only when readable.
     local spellID = nil
     if frame.cooldownInfo then
-      spellID = frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
+      spellID = NonSecretSpellID(frame.cooldownInfo.overrideSpellID)
+             or NonSecretSpellID(frame.cooldownInfo.spellID)
     end
     if not spellID and frame.GetSpellID then
       spellID = NonSecretSpellID(frame:GetSpellID())
     end
-    frame._arcSpellID = spellID
+    -- STICKY, per cooldownID: keep the last id we could actually READ, so a later
+    -- pass during a secret window cannot blank a good value. Reset on REBIND --
+    -- CDM recycles frames between occupants, and carrying the previous spell's id
+    -- onto a new one would make the proc-glow lookup match the wrong icon.
+    if frame._arcSpellIDFor ~= cdID then
+      frame._arcSpellID   = nil
+      frame._arcSpellIDFor = cdID
+    end
+    frame._arcSpellID = spellID or frame._arcSpellID
     
     -- PRE-WARM: Initialize proc glow frame ahead of time to prevent first-show glitch
     -- "default" remaps to "proc" internally, so pre-warm it too
@@ -7223,6 +7240,22 @@ EnhanceFrame = function(frame, cdID, viewerType, viewerName)
     local timeSinceSpecChange = GetTime() - ns.CDMGroups.lastSpecChangeTime
     if timeSinceSpecChange < 5 then
       skipMasque = true  -- Let the delayed Masque refresh handle it
+    end
+  end
+  -- PHANTOM BORDER GATE. This registration was gated ONLY on a 5s spec-change
+  -- window, so anything reaching EnhanceFrame got a Masque skin - including the
+  -- POOLED / RELEASED viewer children the login rescans sweep up after
+  -- ForceCDMFrameCreation (ArcUI_CDMEnhance.lua ~7795-7870), which enhance every
+  -- child carrying a non-zero cooldownID with no check that CDM is displaying it.
+  -- Combined with the CDM side never calling RemoveFrame, that skin was permanent:
+  -- untracked buttons with Masque borders and working tooltips on login, cleared
+  -- by a reload because the pool is rebuilt. Require the frame to still own this
+  -- cooldownID and to be a live parented frame before handing it to Masque.
+  if not skipMasque then
+    if frame.cooldownID ~= nil and frame.cooldownID ~= cdID then
+      skipMasque = true   -- recycled out from under us mid-pass
+    elseif frame.GetParent and frame:GetParent() == nil then
+      skipMasque = true   -- released frame, owns nothing
     end
   end
   if not skipMasque and ns.Masque and ns.Masque.AddFrame then

@@ -41,7 +41,10 @@ local cacheInvalidated = true
 local pendingItemID = ""
 local pendingSpellID = ""
 local pendingAuraID = ""
-local pendingAuraMode = "buff"   -- "buff" | "debuff" | "both" (12.1 aura icons)
+-- Aura builder state: TYPE plus a SET of units. Each ticked unit becomes its own
+-- engine slot on the same holder, so the set behaves as an OR.
+local pendingAuraType = "buff"                    -- "buff" | "debuff" | "both"
+local pendingAuraUnits = { player = true }        -- keys from AURA_UNITS
 local pendingAuraOwnOnly = false
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -467,8 +470,10 @@ local AURA_PRESETS = {
 }
 
 local function IsAuraPresetInstalled(preset)
-    if not (ns.AuraIcons and ns.AuraIcons.MakeID and ns.AuraIcons.Get) then return false end
-    return ns.AuraIcons.Get(ns.AuraIcons.MakeID(preset.spellID)) ~= nil
+    -- FindBySpellID, not the arcID key: copies mean the icon watching this spell
+    -- may live under arc_aura_<id>_2 rather than the base key.
+    if not (ns.AuraIcons and ns.AuraIcons.FindBySpellID) then return false end
+    return ns.AuraIcons.FindBySpellID(preset.spellID) ~= nil
 end
 
 local function AddAuraPreset(preset)
@@ -486,16 +491,47 @@ local function AddAuraPreset(preset)
     return true, preset.name, arcID
 end
 
+-- A spell-ID filter is SILENTLY IGNORED when the aura type is inverted against
+-- the unit's disposition: AuraContainerUtil.CanApplyIdentityCandidateFilters
+-- bails on "harmful aura on a unit you can assist", and you can assist yourself.
+-- So a self-debuff icon would match ANY debuff on you rather than the one asked
+-- for. The one exemption is spells whose aura secrecy is NeverSecret, and that
+-- IS queryable, so the builder checks instead of shipping a silent trap.
+-- Returns true when the entered spell can actually be filtered on that lane.
+-- every def needs its OWN units table, or edits to one icon would mutate the
+-- builder state (and every other icon created from it)
+local function CopyUnitSet(src)
+    local t = {}
+    for k, v in pairs(src or {}) do if v then t[k] = true end end
+    if not next(t) then t.player = true end
+    return t
+end
+
+local function SelfDebuffFilterUsable(spellID)
+    if not (C_Secrets and C_Secrets.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel) then
+        return false
+    end
+    return C_Secrets.GetSpellAuraSecrecy(spellID) == Enum.SecrecyLevel.NeverSecret
+end
+
 local function SubmitAddAura(val)
     val = val:gsub("[^%d]", "")
     local spellID = tonumber(val)
     pendingAuraID = ""
     if not spellID or spellID <= 0 then return nil end
     if not (ns.AuraIcons and ns.AuraIcons.Create) then return nil end
+    -- SAFETY NET. The unit dropdown no longer offers permanently-friendly units
+    -- once a debuff is involved, so this cannot be reached from the UI -- it only
+    -- catches a def built some other way, and stops a silently-unfilterable icon.
+    if pendingAuraType ~= "buff" and pendingAuraUnits.player
+       and not SelfDebuffFilterUsable(spellID) then
+        return false, "Blizzard ignores spell-ID filters for debuffs on you, so this icon would light for ANY debuff."
+    end
     local arcID = ns.AuraIcons.Create({
-        spellID = spellID,
-        unitMode = pendingAuraMode,
-        ownOnly = pendingAuraOwnOnly,
+        spellID  = spellID,
+        auraType = pendingAuraType,
+        units    = CopyUnitSet(pendingAuraUnits),
+        ownOnly  = pendingAuraOwnOnly,
     })
     if arcID then
         local def = ns.AuraIcons.Get(arcID)
@@ -504,9 +540,11 @@ local function SubmitAddAura(val)
         NotifyCatalogChanged()
         return true, name, arcID
     end
-    print("|cff00CCFF[Arc Auras]|r Could not add aura icon (invalid ID or already tracked)")
+    -- "already tracked" is no longer a failure: duplicates of the same spell are
+    -- allowed, so the only way to land here is an id the client does not accept.
+    print("|cff00CCFF[Arc Auras]|r Could not add aura icon (invalid spell ID)")
     NotifyCatalogChanged()
-    return false, "Invalid ID or already tracked"
+    return false, "Invalid spell ID"
 end
 
 local function SubmitAddTimer(idVal, durVal)
@@ -701,7 +739,9 @@ local function ShowAddPopup()
 
     local P = CreateFrame("Frame", "ArcUIAddIconPopup", UIParent, "BackdropTemplate")
     addPopup = P
-    P:SetSize(410, 340)
+    -- wide enough for the aura row (type + units + ID + Add) to sit inside the
+    -- well on one line, and it buys the picker grid more columns / fewer rows
+    P:SetSize(560, 340)
     P:SetFrameStrata("TOOLTIP")   -- above the options window (FULLSCREEN_DIALOG)
     P:SetMovable(true)
     P:EnableMouse(true)
@@ -729,9 +769,10 @@ local function ShowAddPopup()
 
     -- status line (above the drop zone)
     P.status = PopupText(P, "", "GameFontHighlightSmall")
-    P.status:SetPoint("BOTTOMLEFT", 12, 84)
-    P.status:SetPoint("BOTTOMRIGHT", -12, 84)
     P.status:SetJustifyH("LEFT")
+    -- re-anchored under the well once it exists (see below). It used to sit 84px
+    -- off the popup's BOTTOM, which reserved a slab of empty window under every
+    -- page and grew with the popup instead of following the content.
     local statusToken = 0
     local function SetStatus(msg)
         P.status:SetText(msg or "")
@@ -778,12 +819,21 @@ local function ShowAddPopup()
     }
     local kindBtns, pages = {}, {}
     local currentKind
+    -- pages may need different heights (the aura page carries a picker grid).
+    -- The well and the popup BOTH resize, so nothing is ever drawn outside the
+    -- window: pages that do not ask for a height keep the original one.
+    -- chrome = 64 above the well (title + tab row) + the status line and margin
+    -- below it. Anything larger is dead window.
+    local WELL_BASE_H, POPUP_CHROME_H = 126, 100
     local function SelectKind(key)
         currentKind = key
         for k, btn in pairs(kindBtns) do
             btn:SetLabelSelected(k == key)
         end
         for k, page in pairs(pages) do page:SetShown(k == key) end
+        local pg = pages[key]
+        if P.ResizeToPage then P.ResizeToPage() end
+        if pg and pg.OnResized then pg.OnResized() end
         if P.UpdateDropShown then P.UpdateDropShown(DROP_KINDS[key] and true or false) end
     end
 
@@ -810,6 +860,26 @@ local function ShowAddPopup()
     well:SetPoint("TOPRIGHT", -14, -64)
     well:SetHeight(126)
     SkinWell(well)
+    P.well = well
+
+    -- status follows the well, so the popup ends just under it
+    P.status:ClearAllPoints()
+    P.status:SetPoint("TOPLEFT", well, "BOTTOMLEFT", 2, -8)
+    P.status:SetPoint("TOPRIGHT", well, "BOTTOMRIGHT", -2, -8)
+
+    -- pages can ask for a taller well (the aura picker does, and re-asks as its
+    -- row count changes). Everything resizes from one place so nothing is ever
+    -- drawn outside the window and no page leaves dead space behind it.
+    -- kinds that show the drag square need room for it UNDER the well
+    local DROP_EXTRA_H = 62
+    P.ResizeToPage = function()
+        local pg = pages[currentKind]
+        local wantH = (pg and pg.wellHeight) or WELL_BASE_H
+        local total = POPUP_CHROME_H + wantH
+            + (DROP_KINDS[currentKind] and DROP_EXTRA_H or 0)
+        if well:GetHeight() ~= wantH then well:SetHeight(wantH) end
+        if P:GetHeight() ~= total then P:SetSize(P:GetWidth(), total) end
+    end
 
     local function NewPage(key)
         local pg = CreateFrame("Frame", nil, well)
@@ -895,37 +965,125 @@ local function ShowAddPopup()
     -- AURA page (12.1)
     if auraOK then
         local pg = NewPage("aura")
-        local modeBtns = {}
-        local function SelectMode(m)
-            pendingAuraMode = m
-            for key, btn in pairs(modeBtns) do
-                btn:SetLabelSelected(key == m)
+        local SyncAuraControls   -- fwd: assigned once AURA_UNITS exists
+        -- TYPE x UNITS, not a fixed combination list. The units are checkboxes
+        -- because each ticked unit becomes its own engine slot stacked on the one
+        -- holder, so the set reads as an OR: the icon lights when ANY of them
+        -- carries the aura.
+        local AURA_TYPES = {
+            { "buff", "Buff" }, { "debuff", "Debuff" }, { "both", "Buff and Debuff" },
+        }
+        -- `hostile` marks units that CAN be hostile. A spell-ID filter is only
+        -- applied when the aura type matches the unit's disposition, so a debuff
+        -- lane on a permanently friendly unit (you, pet, party) silently matches
+        -- ANY debuff. Rather than warn about it, those units are simply not
+        -- offered once a debuff is involved.
+        local AURA_UNITS = {
+            { "player", "You" }, { "target", "Target", hostile = true },
+            { "focus", "Focus", hostile = true }, { "pet", "Pet" }, { "party", "Party" },
+        }
+        local function UnitAllowed(u)
+            if pendingAuraType == "buff" then return true end
+            return u.hostile == true
+        end
+
+        SyncAuraControls = function()
+            -- Switching to a debuff type drops units that can never be hostile.
+            -- Pruning the SELECTION as well as the menu is what removes the need
+            -- for a warning: an unfilterable combination cannot be built. Derived
+            -- from the same `hostile` flag the menu uses, so the two cannot drift.
+            local kept
+            for _, u in ipairs(AURA_UNITS) do
+                if pendingAuraUnits[u[1]] and not UnitAllowed(u) then
+                    pendingAuraUnits[u[1]] = nil
+                elseif pendingAuraUnits[u[1]] then
+                    kept = true
+                end
             end
-            -- own-debuffs filter only means something on the target lane
-            local showOwn = (m == "debuff" or m == "both")
-            if pg.ownCheck then pg.ownCheck:SetShown(showOwn) end
-            if pg.ownLbl then pg.ownLbl:SetShown(showOwn) end
+            if not kept then
+                for _, u in ipairs(AURA_UNITS) do
+                    if UnitAllowed(u) then pendingAuraUnits[u[1]] = true break end
+                end
+            end
+            if pg.unitDrop then pg.unitDrop:GenerateMenu() end
         end
-        local mx = 10
-        for _, m in ipairs({ { "buff", "Buff (you)" }, { "debuff", "Debuff (target)" }, { "both", "Both" }, { "pet", "Buff (pet)" } }) do
-            local b = PopupBtn(pg, m[2], nil, 22)
-            b:SetPoint("TOPLEFT", mx, -10)
-            b:SetScript("OnClick", function() SelectMode(m[1]) end)
-            modeBtns[m[1]] = b
-            mx = mx + b:GetWidth() + 6
+        local function TypeLabel(t)
+            for _, e in ipairs(AURA_TYPES) do if e[1] == t then return e[2] end end
+            return "Buff"
         end
+        -- Blizzard's own modern dropdown rather than a hand-rolled button+list:
+        -- it draws, sizes and closes itself, and matches every other dropdown the
+        -- user sees. Selection state comes from the IsSelected callback, so the
+        -- button label needs no manual updating.
+        local trackLbl = PopupText(pg, "Track:")
+        trackLbl:SetPoint("TOPLEFT", 10, -16)
+        local modeDrop = CreateFrame("DropdownButton", nil, pg, "WowStyle1DropdownTemplate")
+        modeDrop:SetSize(118, 22)
+        modeDrop:SetPoint("LEFT", trackLbl, "RIGHT", 8, 0)
+        modeDrop:SetDefaultText(TypeLabel(pendingAuraType))
+        modeDrop:SetupMenu(function(_, root)
+            for _, e in ipairs(AURA_TYPES) do
+                root:CreateRadio(e[2],
+                    function() return pendingAuraType == e[1] end,
+                    function() pendingAuraType = e[1]; SyncAuraControls() end)
+            end
+        end)
+        pg.modeDrop, pg.ModeLabel = modeDrop, TypeLabel
+
+        -- UNITS: a multi-select dropdown (checkbox entries). The ticked set is an
+        -- OR -- one engine slot per unit, all stacked on the same holder.
+        local onLbl = PopupText(pg, "On:")
+        onLbl:SetPoint("LEFT", modeDrop, "RIGHT", 12, 0)
+        local unitDrop = CreateFrame("DropdownButton", nil, pg, "WowStyle1DropdownTemplate")
+        unitDrop:SetSize(124, 22)
+        unitDrop:SetPoint("LEFT", onLbl, "RIGHT", 8, 0)
+        unitDrop:SetSelectionText(function()
+            local names = {}
+            for _, u in ipairs(AURA_UNITS) do
+                if pendingAuraUnits[u[1]] and UnitAllowed(u) then names[#names + 1] = u[2] end
+            end
+            if #names == 0 then return "You" end
+            if #names > 2 then return #names .. " units" end
+            return table.concat(names, ", ")
+        end)
+        unitDrop:SetupMenu(function(_, root)
+            for _, u in ipairs(AURA_UNITS) do
+                if UnitAllowed(u) then
+                    root:CreateCheckbox(u[2],
+                        function() return pendingAuraUnits[u[1]] and true or false end,
+                        function()
+                            if pendingAuraUnits[u[1]] then
+                                pendingAuraUnits[u[1]] = nil
+                            else
+                                pendingAuraUnits[u[1]] = true
+                            end
+                            -- never leave an icon with nothing to watch
+                            if not next(pendingAuraUnits) then
+                                pendingAuraUnits[u[1]] = true
+                            end
+                            SyncAuraControls()
+                        end)
+                end
+            end
+        end)
+        pg.unitDrop = unitDrop
+
         pg.ownCheck = CreateFrame("CheckButton", nil, pg, "UICheckButtonTemplate")
         pg.ownCheck:SetSize(24, 24)
-        pg.ownCheck:SetPoint("TOPLEFT", 6, -36)
+        pg.ownCheck:SetPoint("TOPLEFT", 8, -44)
         pg.ownCheck:SetScript("OnClick", function(s) pendingAuraOwnOnly = s:GetChecked() and true or false end)
-        pg.ownLbl = PopupText(pg, "Own debuffs only (ignore other players' copies)")
+        pg.ownLbl = PopupText(pg, "Own auras only (ignore other players' copies)")
         pg.ownLbl:SetPoint("LEFT", pg.ownCheck, "RIGHT", 2, 0)
-        local lbl = PopupText(pg, "Spell ID:")
-        lbl:SetPoint("TOPLEFT", 10, -70)
-        local edit = PopupEdit(pg, 100)
-        edit:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+
+        -- ONE ROW, one chain: Track -> type -> On -> units -> ID -> Add. This was
+        -- anchored off modeDrop like the On label, so the two stacked on top of
+        -- each other; every control now hangs off the one before it.
+        local lbl = PopupText(pg, "ID:")
+        lbl:SetPoint("LEFT", unitDrop, "RIGHT", 12, 0)
+        local edit = PopupEdit(pg, 70)
+        edit:SetPoint("LEFT", lbl, "RIGHT", 6, 0)
         edit:SetNumeric(true)
-        local go = PopupBtn(pg, "Add", 50)
+        local go = PopupBtn(pg, "Add", 46)
         go:SetPoint("LEFT", edit, "RIGHT", 6, 0)
         local function doAdd()
             local ok, msg, newID = SubmitAddAura(edit:GetText() or "")
@@ -935,66 +1093,156 @@ local function ShowAddPopup()
         end
         edit:SetScript("OnEnterPressed", doAdd)
         go:SetScript("OnClick", doAdd)
-        local imp = PopupBtn(pg, "Import CDM Tracked Buffs", 170, 22)
-        imp:SetPoint("TOPLEFT", 10, -94)
+        -- anchored to the page's RIGHT edge, not chained off Add: the chain ran
+        -- the button straight out of the window once the row got long
+        local imp = PopupBtn(pg, "Import all", 80, 20)
+        imp:SetPoint("TOPRIGHT", -10, -110)
         imp:SetScript("OnClick", function()
             local added = ns.AuraIcons.ImportFromCDM and ns.AuraIcons.ImportFromCDM()
             SetStatus((added and added > 0)
                 and ("|cff00ff00Imported " .. added .. " aura icon(s) from CDM|r")
                 or "|cff8298b4Nothing new to import|r")
             NotifyCatalogChanged()
+            if pg.RefreshPicker then pg.RefreshPicker() end
         end)
 
-        -- QUICK-ADD PRESETS: icon buttons (installed ones desaturated), same
-        -- shape as the timer page's preset row
-        local presetLbl = PopupText(pg, "Quick add:")
-        presetLbl:SetPoint("TOPLEFT", 192, -100)
-        pg.presetBtns = {}
-        local function RefreshAuraPresets()
-            for i, preset in ipairs(AURA_PRESETS) do
-                local pb = pg.presetBtns[i]
-                if not pb then
-                    pb = CreateFrame("Button", nil, pg)
-                    pb:SetSize(24, 24)
-                    pb.icon = pb:CreateTexture(nil, "ARTWORK")
-                    pb.icon:SetAllPoints()
-                    pb.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                    pb:SetPoint("TOPLEFT", 254 + (i - 1) * 28, -94)
-                    pg.presetBtns[i] = pb
-                end
+        -- PICKER GRID: the quick-add presets first, then everything CDM's
+        -- database holds for the CURRENT SPEC. Entries CDM is not displaying are
+        -- still listed (dimmed) so users can reach them without turning them on
+        -- in the Cooldown Manager first. Already-tracked entries grey out rather
+        -- than disappear, same language as the Pings catalog.
+        -- The aura page is the only one with a grid, so it asks for a taller
+        -- well. GRID_TOP is where the first row starts inside the page; the row
+        -- count is derived from the space actually left below it, never assumed.
+        local PK_CELL, GRID_TOP, GRID_PAD = 30, 132, 6
+        local PK_MAX_ROWS = 6
+        pg.wellHeight = GRID_TOP + PK_CELL + GRID_PAD   -- one row until we count
+        local pickLbl = PopupText(pg, "|cff8298b4Click an aura to add it with the type above|r")
+        pickLbl:SetPoint("TOPLEFT", 10, -112)
+        pg.pickCount = PopupText(pg, "", "GameFontHighlightSmall")
+        pg.pickCount:SetPoint("RIGHT", imp, "LEFT", -10, 0)
+        pg.pickBtns = {}
+
+        local function PickerEntries()
+            local list, seen = {}, {}
+            for _, preset in ipairs(AURA_PRESETS) do
                 local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(preset.spellID)
-                pb.icon:SetTexture(info and (info.iconID or info.originalIconID) or 134400)
-                local installed = IsAuraPresetInstalled(preset)
-                pb.icon:SetDesaturated(installed and true or false)
-                pb.icon:SetAlpha(installed and 0.4 or 1)
-                pb:SetScript("OnEnter", function(s)
-                    PopupTooltip(s)
-                    GameTooltip:SetText(preset.name or "?")
-                    if preset.desc then
-                        GameTooltip:AddLine(preset.desc, 0.65, 0.65, 0.65, true)
-                    end
-                    GameTooltip:AddLine(installed and "Already tracked" or "Click to add",
-                        0.6, 0.6, 0.6)
-                    GameTooltip:Show()
-                end)
-                pb:SetScript("OnLeave", function() GameTooltip:Hide() end)
-                pb:SetScript("OnClick", function()
-                    local ok, msg, newID = AddAuraPreset(preset)
-                    if ok then
-                        FinishAdd(newID)
-                    else
-                        SetStatus("|cff888888" .. tostring(msg) .. "|r")
-                        RefreshAuraPresets()
-                    end
-                end)
-                pb:Show()
+                seen[preset.spellID] = true
+                list[#list + 1] = {
+                    preset  = preset,
+                    spellID = preset.spellID,
+                    name    = preset.name,
+                    desc    = preset.desc,
+                    icon    = (info and (info.iconID or info.originalIconID)) or 134400,
+                    shown   = true,
+                    tracked = IsAuraPresetInstalled(preset) and true or false,
+                }
             end
+            for _, e in ipairs((ns.AuraIcons.GetCDMCatalog and ns.AuraIcons.GetCDMCatalog()) or {}) do
+                if not seen[e.spellID] then
+                    seen[e.spellID] = true
+                    list[#list + 1] = e
+                end
+            end
+            return list
         end
 
-        SelectMode(pendingAuraMode)
+        local function RefreshPicker()
+            local entries = PickerEntries()
+            local availW = (pg:GetWidth() or 0) - 20
+            if availW < 200 then availW = 380 end
+            local cols = math.max(4, math.floor(availW / PK_CELL))
+            -- Size the WELL to the rows we actually need, capped, instead of
+            -- reserving a fixed block: a short list left a slab of dead space and
+            -- a fixed cap drew rows outside the window. Height follows content,
+            -- content never exceeds the cap.
+            local rows = math.max(1, math.min(PK_MAX_ROWS, math.ceil(#entries / cols)))
+            local cap = cols * rows
+            local shown = math.min(#entries, cap)
+            local wantH = GRID_TOP + rows * PK_CELL + GRID_PAD
+            if pg.wellHeight ~= wantH then
+                pg.wellHeight = wantH
+                if P.ResizeToPage then P.ResizeToPage() end
+            end
+            for i = 1, math.max(shown, #pg.pickBtns) do
+                local b, e = pg.pickBtns[i], entries[i]
+                if e and i <= cap then
+                    if not b then
+                        b = CreateFrame("Button", nil, pg)
+                        b:SetSize(26, 26)
+                        b.icon = b:CreateTexture(nil, "ARTWORK")
+                        b.icon:SetAllPoints()
+                        b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                        pg.pickBtns[i] = b
+                    end
+                    local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+                    b:ClearAllPoints()
+                    b:SetPoint("TOPLEFT", 10 + col * PK_CELL, -GRID_TOP - row * PK_CELL)
+                    b.icon:SetTexture(e.icon or 134400)
+                    -- tracked = already an icon; not shown = in CDM's data but
+                    -- not on its display. Both dim, tracked dims harder.
+                    b.icon:SetDesaturated((e.tracked or not e.shown) and true or false)
+                    b.icon:SetAlpha(e.tracked and 0.35 or (e.shown and 1 or 0.6))
+                    b:SetScript("OnEnter", function(s)
+                        PopupTooltip(s)
+                        GameTooltip:SetText(e.name or ("Aura " .. tostring(e.spellID)))
+                        if e.desc then GameTooltip:AddLine(e.desc, 0.65, 0.65, 0.65, true) end
+                        GameTooltip:AddLine("Spell ID: " .. tostring(e.spellID), 0.6, 0.6, 0.6)
+                        if not e.shown then
+                            GameTooltip:AddLine("In CDM's data but not on its display", 1, 0.6, 0.2)
+                        end
+                        GameTooltip:AddLine(
+                            e.tracked and (e.preset and "Already tracked"
+                                or "Already tracked - click to add another copy")
+                                or "Click to add",
+                            0.6, 0.85, 1)
+                        GameTooltip:Show()
+                    end)
+                    b:SetScript("OnClick", function()
+                        local ok, msg, newID
+                        if e.preset then
+                            ok, msg, newID = AddAuraPreset(e.preset)
+                        elseif ns.AuraIcons.Create then
+                            newID = ns.AuraIcons.Create({
+                                spellID  = e.spellID,
+                                spellIDs = e.spellIDs,
+                                name     = e.name,
+                                auraType = pendingAuraType,
+                                units    = CopyUnitSet(pendingAuraUnits),
+                                ownOnly  = pendingAuraOwnOnly,
+                            })
+                            ok = newID and true or false
+                            msg = ok and e.name or "Could not add icon"
+                            if ok then NotifyCatalogChanged() end
+                        end
+                        if ok then
+                            FinishAdd(newID)
+                        else
+                            SetStatus("|cff888888" .. tostring(msg) .. "|r")
+                            RefreshPicker()
+                        end
+                    end)
+                    b:Show()
+                elseif b then
+                    b:Hide()
+                end
+            end
+            -- never silently truncate: say so when the grid could not fit them all
+            pg.pickCount:SetText(("|cff8298b4%d available%s|r"):format(#entries,
+                (shown < #entries) and (", showing " .. shown) or ""))
+        end
+        pg.RefreshPicker = RefreshPicker
+        pg.OnResized = RefreshPicker
+
+        SyncAuraControls()
         pg:SetScript("OnShow", function()
-            SelectMode(pendingAuraMode)
-            RefreshAuraPresets()
+            SyncAuraControls()
+            if pg.modeDrop then
+                pg.modeDrop:SetDefaultText(pg.ModeLabel(pendingAuraType))
+                if pg.modeDrop.GenerateMenu then pg.modeDrop:GenerateMenu() end
+            end
+            RefreshPicker()
         end)
     end
 
@@ -1168,7 +1416,10 @@ local function ShowAddPopup()
     -- ── drop SQUARE (item / trinkets / spell kinds only) ──
     local drop = CreateFrame("Button", nil, P, "BackdropTemplate")
     drop:SetSize(56, 56)
-    drop:SetPoint("BOTTOMLEFT", 16, 16)
+    -- anchored under the WELL, not to the popup's bottom edge. Pinned to the
+    -- popup it only stayed clear while the chrome was oversized; the moment the
+    -- window shrank to fit its content the square landed on top of the page.
+    drop:SetPoint("TOPLEFT", well, "BOTTOMLEFT", 2, -26)
     SkinWell(drop)
     drop.icon = drop:CreateTexture(nil, "ARTWORK")
     drop.icon:SetPoint("TOPLEFT", 5, -5)
@@ -1178,7 +1429,7 @@ local function ShowAddPopup()
     drop.icon:SetAlpha(0.35)
     local dropText = PopupText(P, "|cffffd700Drag an item or spell here to track it|r\n|cff888888Items and castable cooldowns only — use the Aura and Timer tabs for those kinds.|r")
     dropText:SetPoint("LEFT", drop, "RIGHT", 10, 0)
-    dropText:SetPoint("RIGHT", P, "RIGHT", -16, 0)
+    dropText:SetPoint("RIGHT", well, "RIGHT", -2, 0)
     dropText:SetJustifyH("LEFT")
     dropText:SetWordWrap(true)
     P.UpdateDropShown = function(shown)
@@ -1619,9 +1870,26 @@ local function CreateCatalogIconEntry(index)
             elseif entry.arcType == "aura" then
                 desc = desc .. "\nSpell ID: " .. (entry.spellID or "?")
                 desc = desc .. "\nArc ID: " .. entry.arcID
-                local mode = entry.unitMode == "debuff" and "Debuff (target)"
-                    or entry.unitMode == "both" and "Buff + Debuff"
-                    or entry.unitMode == "pet" and "Buff (pet)" or "Buff (you)"
+                -- new shape (auraType + units) when present, legacy unitMode
+                -- otherwise, so icons made before the split still read correctly
+                local mode
+                local cfg = entry.config
+                if cfg and type(cfg.units) == "table" and next(cfg.units) then
+                    local names = {}
+                    for _, u in ipairs({ { "player", "You" }, { "target", "Target" },
+                        { "focus", "Focus" }, { "pet", "Pet" }, { "party", "Party" } }) do
+                        if cfg.units[u[1]] then names[#names + 1] = u[2] end
+                    end
+                    local t = cfg.auraType or "buff"
+                    mode = (t == "both" and "Buff + Debuff" or t == "debuff" and "Debuff" or "Buff")
+                        .. " on " .. table.concat(names, " / ")
+                else
+                    mode = entry.unitMode == "debuff" and "Debuff (target)"
+                        or entry.unitMode == "both" and "Buff + Debuff"
+                        or entry.unitMode == "pet" and "Buff (pet)"
+                        or entry.unitMode == "focusdebuff" and "Debuff (focus)"
+                        or entry.unitMode == "selfdebuff" and "Debuff (you)" or "Buff (you)"
+                end
                 desc = desc .. "\nType: |cffff88ffAura Icon|r — " .. mode
                 if entry.hasIconOverride then
                     desc = desc .. "\n|cffFFCC00Custom Icon|r (ID: " .. (entry.config.iconOverrideID or "?") .. ")"

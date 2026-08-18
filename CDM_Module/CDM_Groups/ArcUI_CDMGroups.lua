@@ -611,6 +611,16 @@ local function ReturnFrameToCDM(frame, entry)
     -- These can cause issues if CDM reuses this frame for a different cooldownID
     frame:SetMovable(false)
     frame:EnableMouse(false)
+    -- TOOLTIP: EnableMouse is NOT the tooltip switch. Hover (OnEnter/OnLeave) is
+    -- governed by SetMouseMotionEnabled - see ArcUI_CDMGroups_Layout.lua:237 and
+    -- the never-SetScript rule that fix came from. Releasing a frame turned off
+    -- clicks but left HOVER on, so Blizzard's own CDM tooltip kept firing on a
+    -- frame that owns nothing: the working tooltip on the phantom login icons.
+    -- A frame CDM later reuses passes through the layout path, which re-applies
+    -- motion from _arcTooltipsDisabled, same as Masque is re-added on re-enhance.
+    if frame.SetMouseMotionEnabled then
+        frame:SetMouseMotionEnabled(false)
+    end
     frame:RegisterForDrag()  -- Unregister drag
     frame:SetScript("OnDragStart", nil)
     frame:SetScript("OnDragStop", nil)
@@ -633,6 +643,18 @@ local function ReturnFrameToCDM(frame, entry)
     -- Stop any glow effects
     if ns.CDMEnhance and ns.CDMEnhance.StopAllGlows then
         ns.CDMEnhance.StopAllGlows(frame)
+    end
+
+    -- MASQUE: hand the button back. CDM frames were REGISTERED by EnhanceFrame
+    -- (ArcUI_CDMEnhance.lua:7246) and, unlike Arc icons, were NEVER unregistered
+    -- anywhere - ArcAuras.DestroyFrame:1276 does exactly this and the CDM side
+    -- had no counterpart. A skinned button that outlives its purpose keeps its
+    -- Masque border for the rest of the session, which is the "phantom icon with
+    -- a Masque border" on login: the login rescan enhances pooled viewer children,
+    -- each is handed to Masque, and nothing ever takes them back.
+    -- Arc frames already returned above, so this only ever sees CDM frames.
+    if ns.Masque and ns.Masque.RemoveFrame then
+        ns.Masque.RemoveFrame(frame)
     end
 
     -- Clear all our custom properties
@@ -2877,7 +2899,22 @@ EnsureGroupID = function(groupName, specData)
     local id = layoutData and layoutData.id
     if not id then
         id = WELL_KNOWN_GROUP_IDS[groupName]
-            or string.format("g%d_%d",
+        -- DUPLICATE-ID GUARD: the well-known id is keyed by NAME, but a RENAMED
+        -- default keeps the id it was already given. So renaming "Essential" to
+        -- something else and then pressing "+ Default Groups" would hand the new
+        -- "Essential" the SAME arc_essential id the renamed one still holds --
+        -- two live groups, one stable id, and FindGroupByID iterates pairs() so
+        -- which one answers is undefined. Only claim the well-known id if no
+        -- other live group already owns it; otherwise fall through to a unique one.
+        if id then
+            for otherName, otherGroup in pairs(ns.CDMGroups.groups or {}) do
+                if otherName ~= groupName and otherGroup.id == id then
+                    id = nil
+                    break
+                end
+            end
+        end
+        id = id or string.format("g%d_%d",
                 math.floor((GetTime() or 0) * 1000) % 100000000,
                 math.random(1000, 9999))
         if layoutData then layoutData.id = id end
@@ -3112,11 +3149,15 @@ function ns.CDMGroups.ResolveNewIconDestination(defaultGroupName)
     if choice then
         local group, groupName = ns.CDMGroups.FindGroupByID(choice)
         if group then return "group", group, groupName end
-        -- The chosen group does not exist in THIS profile/spec (group ids are
-        -- per layout profile, so a destination picked elsewhere may not resolve
-        -- here). Free position is the backup: visible and movable, rather than
-        -- silently dumping the icons into a group the user did not pick.
-        return "free"
+        -- The chosen group does not resolve -- most often because it was DELETED
+        -- and the stored id outlived it. Returning "free" here (the old
+        -- behaviour) short-circuited the shipped-group resolution below, so the
+        -- panel reported "missing group -> Free Position" for every category
+        -- while the user's actual groups sat right there in the dropdown.
+        -- FALL THROUGH instead: try the shipped default (by stable id first, so a
+        -- RENAMED default is still found), and only land on free if that misses
+        -- too. A dead reference should degrade to the sane default, not scatter
+        -- icons across the screen.
     end
 
     if defaultGroupName then
@@ -4717,28 +4758,34 @@ function ns.CDMGroups.LoadProfile(profileName, skipActivation)
     -- load but only acts on the bug condition, so it is self-healing and a no-op
     -- in the normal case. DeleteGroup clears savedPositions for its members, so a
     -- normally-deleted group leaves no reference here and is not resurrected.
+    -- REPLACED: THE SAFETY NET IS FREE POSITION, NOT RESURRECTION.
+    -- The block above used to CREATE any group named by a savedPosition whose
+    -- definition was missing. Its stated precondition was "DeleteGroup clears
+    -- savedPositions for its members, so a normally-deleted group leaves no
+    -- reference here". That is false the moment more than one character is
+    -- involved: deletion is per character, so one surviving reference on an alt
+    -- rebuilt the group on every load, and with a LINKED layout the recreated
+    -- group was republished to everyone. Deleting a group became impossible.
+    -- Proven by /afi grouptrace: Pull, then CreateGroup from this net inside
+    -- LoadProfile, 0.31s apart, with exactly one dangling reference present.
+    -- A missing group is now treated as what it is -- gone. The reference is
+    -- dropped and the icon falls through to free placement, which every restore
+    -- path already handles. Deleted means deleted; nothing is lost, the icon is
+    -- simply loose instead of in a group that no longer exists.
     if profile.savedPositions then
-        local isLinked = profile.groupLayoutName ~= nil
-        local recovered = 0
-        for _cdID, saved in pairs(profile.savedPositions) do
+        local orphaned = 0
+        for cdID, saved in pairs(profile.savedPositions) do
             local target = saved and saved.type == "group" and saved.target
             if target and target ~= "" and not profileGroups[target] then
-                profileGroups[target] = true
-                -- Persist for non-linked profiles so the recovered group survives
-                -- future loads. Linked profiles read groups from the SHARED global
-                -- layout, which we must not mutate; the net re-runs each load and
-                -- stays self-healing for them.
-                if not isLinked then
-                    if not profile.groupLayouts then profile.groupLayouts = {} end
-                    if not profile.groupLayouts[target] then
-                        profile.groupLayouts[target] = {
-                            position = { x = 0, y = -100 - (recovered * 60) },
-                            gridRows = 2, gridCols = 4, iconSize = 36, spacing = 2,
-                        }
-                    end
-                end
-                recovered = recovered + 1
+                -- convert in place: keep the icon, forget the dead group
+                profile.savedPositions[cdID] = nil
+                if profile.freeIcons then profile.freeIcons[cdID] = nil end
+                orphaned = orphaned + 1
             end
+        end
+        if orphaned > 0 then
+            PrintMsg(string.format(
+                "%d icon(s) referenced a group that no longer exists - placed as free icons", orphaned))
         end
     end
 
@@ -12749,11 +12796,21 @@ function ns.CDMGroups.DeleteGroup(groupName)
         return false
     end
     
-    -- Return all frames to CDM
+    -- Return all frames to CDM.
+    -- CLEARING THE SAVED POSITION IS NOT GATED ON A LIVE FRAME (3.8.0.c): it used
+    -- to sit inside `if member.frame`, so any member whose icon did not exist at
+    -- delete time -- an unequipped trinket, an inactive cooldown, anything CDM had
+    -- not built -- kept a savedPosition pointing at a group that no longer exists.
+    -- That entry then dead-ends assignment forever after: the icon lands in no
+    -- group, not free, still parented to the Blizzard viewer, but styled, so it
+    -- looks like a normal ArcUI icon that simply cannot be dragged. Proven live:
+    -- deleting "FWF" stranded cdIDs 82363 and 198604 exactly this way.
+    -- Deletion is a POSITIVE, unambiguous signal, so mutating here is safe --
+    -- unlike a failed lookup during a spec/profile switch, where the group is
+    -- only transiently absent and clearing would destroy a valid layout.
     for cdID, member in pairs(group.members or {}) do
+        ClearPositionFromSpec(cdID)
         if member.frame then
-            -- Remove saved position - use ClearPositionFromSpec for verified profile access
-            ClearPositionFromSpec(cdID)
             -- Return to CDM (will be re-assigned next scan)
             member.frame:SetParent(UIParent)
             member.frame:Hide()
@@ -12761,6 +12818,26 @@ function ns.CDMGroups.DeleteGroup(groupName)
     end
     wipe(group.members)
     wipe(group.grid)
+
+    -- ROUTING CLEANUP (3.8.0.c): a New-Icon routing destination stores the group's
+    -- STABLE ID, so deleting the group leaves that choice pointing at nothing.
+    -- ResolveNewIconDestination then bails to "free" for that whole category and
+    -- the options panel reports "missing group -> Free Position" while the user's
+    -- other groups plainly exist. Clear only entries that name THIS group's id,
+    -- at every scope, so the category falls back to its shipped default.
+    -- Safe to mutate for the same reason as above: deletion is unambiguous.
+    do
+        local deletedID = group.id or (ns.CDMGroups.GetGroupID and ns.CDMGroups.GetGroupID(groupName))
+        if deletedID and ns.CDMGroups.GetIconRoutingAtScope and ns.CDMGroups.SetIconRoutingAtScope then
+            for _, categoryKey in pairs(ROUTING_CATEGORY) do
+                for _, scope in ipairs({ ROUTING_SCOPE_ACCOUNT, ROUTING_SCOPE_CHAR, ROUTING_SCOPE_SPEC }) do
+                    if ns.CDMGroups.GetIconRoutingAtScope(categoryKey, scope) == deletedID then
+                        ns.CDMGroups.SetIconRoutingAtScope(categoryKey, scope, nil)
+                    end
+                end
+            end
+        end
+    end
     
     -- ═══════════════════════════════════════════════════════════════════
     -- COMPREHENSIVE GROUP UI CLEANUP
@@ -12852,8 +12929,129 @@ function ns.CDMGroups.DeleteGroup(groupName)
         end
     end
     
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- SWEEP EVERY PROFILE AND EVERY SPEC FOR DANGLING REFERENCES.
+    -- Everything above is scoped to the ACTIVE profile of the CURRENT spec, so a
+    -- savedPosition in any OTHER profile or spec kept pointing at the deleted
+    -- group. On this character that looks fixed (the active profile is clean),
+    -- but a shared-profile Pull copies EVERY profile and EVERY spec, so an alt
+    -- inherited the dangling target and rebuilt the group from it. Confirmed in
+    -- SavedVariables: after deleting "FWF" the only survivors anywhere were two
+    -- entries reading target = "FWF", with no group definition left at all.
+    -- Also drops the group from other specs' groups tables and layout stores, so
+    -- deleting a group means deleted, not deleted-here.
+    -- ═══════════════════════════════════════════════════════════════════════
+    do
+        local cdmDB = ns.CDMShared and ns.CDMShared.GetCDMGroupsDB and ns.CDMShared.GetCDMGroupsDB()
+        local layoutsDB = ns.CDMShared and ns.CDMShared.GetGroupLayoutsDB and ns.CDMShared.GetGroupLayoutsDB()
+        local cleared = 0
+
+        local function SweepProfile(profile)
+            if type(profile) ~= "table" then return end
+            if profile.savedPositions then
+                for id, pos in pairs(profile.savedPositions) do
+                    if type(pos) == "table" and pos.type == "group" and pos.target == groupName then
+                        profile.savedPositions[id] = nil
+                        cleared = cleared + 1
+                    end
+                end
+            end
+            -- a profile with its OWN layouts (not linked) can still hold the group
+            if profile.groupLayouts then profile.groupLayouts[groupName] = nil end
+        end
+
+        if cdmDB and cdmDB.specData then
+            for _, sd in pairs(cdmDB.specData) do
+                if type(sd) == "table" then
+                    if sd.groups then sd.groups[groupName] = nil end
+                    if sd.layoutProfiles then
+                        for _, profile in pairs(sd.layoutProfiles) do SweepProfile(profile) end
+                    end
+                end
+            end
+        end
+
+        -- WHICH shared layout are we actually editing? Only that one, and only the
+        -- profiles connected to it, may be touched. Deleting a group called
+        -- "Utility" while on "Arc Layout" must not remove "Utility" from a
+        -- separate "PvP Layout" that other profiles use.
+        local linkName
+        do
+            local sd = GetSpecData()
+            local ap = sd and sd.layoutProfiles and sd.layoutProfiles[sd.activeProfile or "Default"]
+            linkName = ap and ap.groupLayoutName or nil
+        end
+
+        -- linked layouts live account-wide: the definition has to go from the
+        -- shared store, but ONLY from the layout this profile is linked to
+        if linkName and layoutsDB and type(layoutsDB[linkName]) == "table" then
+            layoutsDB[linkName][groupName] = nil
+        end
+
+        -- ═══════════════════════════════════════════════════════════════════
+        -- LINKED LAYOUTS MAKE DELETION ACCOUNT-WIDE, SO THE CLEANUP MUST BE TOO.
+        -- Clearing the definition is not enough. Another CHARACTER linked to the
+        -- same layout still holds a savedPosition pointing at the group; that
+        -- character recreates it at runtime from the dangling target, and because
+        -- the link is LIVE the autosave writes the definition straight back into
+        -- the shared layout for everyone. That is the resurrection loop: delete on
+        -- the main, reload, gone; log in on the alt, and it is back for both.
+        -- Proven by /afi refs: definition surviving in
+        -- global.groupLayouts["Arc Layout"], plus one dangling entry on EACH of
+        -- two characters, both profiles linked to that layout.
+        -- Only profiles linked to THIS SAME layout are touched. A profile that
+        -- owns its own layouts, or is linked to a different one, is a separate
+        -- universe and must not be edited from here.
+        -- ═══════════════════════════════════════════════════════════════════
+        local rawChar = linkName and _G.ArcUIDB and _G.ArcUIDB.char
+        if type(rawChar) == "table" then
+            local acct = 0
+            for _, charData in pairs(rawChar) do
+                local cg = type(charData) == "table" and charData.cdmGroups
+                if type(cg) == "table" and type(cg.specData) == "table" then
+                    for _, sd in pairs(cg.specData) do
+                        if type(sd) == "table" and type(sd.layoutProfiles) == "table" then
+                            for _, profile in pairs(sd.layoutProfiles) do
+                                if type(profile) == "table"
+                                   and profile.groupLayoutName == linkName
+                                   and type(profile.savedPositions) == "table" then
+                                    for id, pos in pairs(profile.savedPositions) do
+                                        if type(pos) == "table" and pos.type == "group"
+                                           and pos.target == groupName then
+                                            profile.savedPositions[id] = nil
+                                            acct = acct + 1
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if acct > 0 then
+                PrintMsg(string.format(
+                    "Cleared %d stale reference(s) to '%s' on other characters sharing this layout",
+                    acct, groupName))
+            end
+        end
+
+        -- runtime mirror of the active profile
+        if ns.CDMGroups.savedPositions then
+            for id, pos in pairs(ns.CDMGroups.savedPositions) do
+                if type(pos) == "table" and pos.type == "group" and pos.target == groupName then
+                    ns.CDMGroups.savedPositions[id] = nil
+                    cleared = cleared + 1
+                end
+            end
+        end
+
+        if cleared > 0 then
+            PrintMsg(string.format("Cleared %d icon position(s) that still pointed at '%s'", cleared, groupName))
+        end
+    end
+
     PrintMsg("Deleted group '" .. groupName .. "'")
-    
+
     -- Notify Masque about the deleted group
     if ns.Masque and ns.Masque.OnGroupDeleted then
         ns.Masque.OnGroupDeleted(groupName)

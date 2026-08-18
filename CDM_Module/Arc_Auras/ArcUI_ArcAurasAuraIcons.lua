@@ -69,6 +69,34 @@ end
 
 function AuraIcons.MakeID(spellID) return ID_PREFIX .. tostring(spellID) end
 
+-- COPIES OF THE SAME SPELL. The arcID used to BE the spell id, so a second icon
+-- for one aura was impossible (Create just handed back the existing one) and the
+-- id could never be edited. The FIRST icon for a spell still gets the historical
+-- key, so nothing anyone already made changes identity, position, styling or
+-- group slot; further copies get "_2", "_3", ... Every other consumer of the
+-- scheme matches on the arc_aura_ PREFIX, which a suffixed id still satisfies.
+local function NextFreeAuraID(db, spellID)
+    local base = AuraIcons.MakeID(spellID)
+    if not db.auraIcons[base] then return base end
+    local n = 2
+    while db.auraIcons[base .. "_" .. n] do n = n + 1 end
+    return base .. "_" .. n
+end
+
+-- "Is this spell already tracked by some icon?" Replaces the direct
+-- db.auraIcons[MakeID(id)] lookups, which only ever found the FIRST copy.
+-- Matches the PRIMARY spellID only, exactly like the key lookup it replaces --
+-- the candidate map (def.spellIDs) is a wider net and the callers that need it
+-- (the CDM import) build their own set from it.
+function AuraIcons.FindBySpellID(spellID)
+    local db = GetDB()
+    if not db or not spellID then return nil end
+    for arcID, def in pairs(db.auraIcons) do
+        if def.spellID == spellID then return arcID, def end
+    end
+    return nil
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- CONTAINERS — ONE PER ICON PER UNIT, never shared.
 --
@@ -94,10 +122,19 @@ local function ArmTargetSwapRefresh()
     if targetSwapWatcher then return end
     targetSwapWatcher = CreateFrame("Frame")
     targetSwapWatcher:RegisterEvent("PLAYER_TARGET_CHANGED")
+    -- containers do NOT self-refresh when their unit changes identity (Blizzard's
+    -- own UpdateAllAuras comment says it is exposed for exactly this), so focus
+    -- needs the same nudge target already had
+    targetSwapWatcher:RegisterEvent("PLAYER_FOCUS_CHANGED")
     targetSwapWatcher:RegisterEvent("UNIT_PET")
+    -- party lanes: partyN points at a different person after a roster change, so
+    -- those containers need the same nudge target and focus get
+    targetSwapWatcher:RegisterEvent("GROUP_ROSTER_UPDATE")
     targetSwapWatcher:SetScript("OnEvent", function(_, event, evUnit)
         if event == "UNIT_PET" and evUnit ~= "player" then return end
-        local wantUnit = (event == "UNIT_PET") and "pet" or nil
+        local wantUnit = (event == "UNIT_PET") and "pet"
+            or (event == "PLAYER_FOCUS_CHANGED") and "focus"
+            or nil
         for _, rec in ipairs(allContainers) do
             if rec.unit ~= "player" and (not wantUnit or rec.unit == wantUnit)
                and type(rec.frame.UpdateAllAuras) == "function" then
@@ -374,16 +411,62 @@ AuraIcons.WireAuraButton = WireAuraButton
 -- DEF HELPERS
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function UnitsFor(def)
-    if def.unitMode == "debuff" then return { "target" } end
-    if def.unitMode == "both" then return { "player", "target" } end
-    if def.unitMode == "pet" then return { "pet" } end   -- buffs the PET carries
-    return { "player" }   -- "buff"
+-- LANES: a def is (aura type) x (set of units). Every pair becomes its own
+-- engine slot, and EnsureSlots anchors them all to the SAME holder, so a
+-- multi-unit icon reads as one icon that lights when ANY of its units carries
+-- the aura. That OR falls out of compositing -- we never read presence.
+--
+-- BACKWARD COMPATIBILITY: existing icons store the old single `unitMode` and are
+-- translated here at runtime. Nothing is rewritten on disk and the arcID scheme
+-- is untouched, so every icon a user has already made keeps its identity,
+-- settings, group placement and behaviour.
+local LEGACY_LANES = {
+    buff        = { { unit = "player", harmful = false } },
+    debuff      = { { unit = "target", harmful = true } },
+    focusdebuff = { { unit = "focus",  harmful = true } },
+    selfdebuff  = { { unit = "player", harmful = true } },
+    pet         = { { unit = "pet",    harmful = false } },
+    -- legacy "both" is specifically buff-on-you PLUS debuff-on-target, NOT the
+    -- cartesian product, so it has to stay an explicit pair list
+    both        = { { unit = "player", harmful = false }, { unit = "target", harmful = true } },
+}
+
+-- one UI unit choice can expand to several real tokens
+local UNIT_TOKENS = {
+    player = { "player" },
+    target = { "target" },
+    focus  = { "focus" },
+    pet    = { "pet" },
+    party  = { "party1", "party2", "party3", "party4" },
+}
+local UNIT_ORDER = { "player", "target", "focus", "pet", "party" }
+
+local function LanesFor(def)
+    local units = def.units
+    if type(units) ~= "table" or not next(units) then
+        return LEGACY_LANES[def.unitMode] or LEGACY_LANES.buff
+    end
+    local t = def.auraType or "buff"
+    local lanes = {}
+    for _, choice in ipairs(UNIT_ORDER) do
+        if units[choice] then
+            for _, token in ipairs(UNIT_TOKENS[choice] or {}) do
+                if t ~= "debuff" then lanes[#lanes + 1] = { unit = token, harmful = false } end
+                if t ~= "buff"   then lanes[#lanes + 1] = { unit = token, harmful = true } end
+            end
+        end
+    end
+    if #lanes == 0 then return LEGACY_LANES.buff end
+    return lanes
 end
 
-local function FilterFor(def, unit)
-    -- friendly units carry HELPFUL auras; only the target lane hunts debuffs
-    if unit == "player" or unit == "pet" then return "HELPFUL" end
+local function FilterForLane(def, lane)
+    if not lane.harmful then
+        -- "Only mine" is the PLAYER token: auras cast by you, your pet or your
+        -- vehicle. It is NOT behind the identity gate, so it still narrows lanes
+        -- where a spell ID cannot (notably debuffs on yourself).
+        return def.ownOnly and "HELPFUL|PLAYER" or "HELPFUL"
+    end
     return def.ownOnly and "HARMFUL|PLAYER" or "HARMFUL"
 end
 
@@ -511,20 +594,24 @@ local function EnsureSlots(arcID, def, startParked)
     entry.parked = startParked and true or false
     entries[arcID] = entry
 
-    for _, unit in ipairs(UnitsFor(def)) do
+    for _, lane in ipairs(LanesFor(def)) do
+        local unit = lane.unit
         local c = CreateIconContainer(unit)
         if c then
             -- generation suffix: slots can never be unregistered, so a REWIRE
             -- (settings that live in create-time bindings, e.g. the stack
-            -- formatter) parks the old keys and adds fresh ones
-            local key = arcID .. "_" .. unit .. "_g" .. (entry.gen or 0)
-            local sub = { unit = unit, key = key, container = c }
+            -- formatter) parks the old keys and adds fresh ones.
+            -- The lane kind is part of the key too: one unit can now carry BOTH
+            -- a helpful and a harmful lane, and they must not collide.
+            local key = arcID .. "_" .. unit .. (lane.harmful and "_h" or "_b")
+                .. "_g" .. (entry.gen or 0)
+            local sub = { unit = unit, key = key, container = c, harmful = lane.harmful }
             table.insert(entry.subs, sub)
             -- ALL button setup lives in initializeFrame: the engine
             -- RE-CREATES slot buttons over the aura's life and re-runs this
             -- (MSUF-verified) — a one-time anchor after AddAuraSlot returns
             -- strands later buttons at the container's corner.
-            local btn = c:AddAuraSlot(key, FilterFor(def, unit), {
+            local btn = c:AddAuraSlot(key, FilterForLane(def, lane), {
                 maxFrameCount = 1,
                 initializeFrame = function(b)
                     WireAuraButton(b, arcID)
@@ -1501,8 +1588,11 @@ function AuraIcons.Create(defIn)
     local db = GetDB()
     if not db then return nil end
 
-    local arcID = AuraIcons.MakeID(spellID)
-    if db.auraIcons[arcID] then return arcID end   -- already tracked
+    -- Copies are allowed: same aura, several icons (one per unit, different
+    -- looks, one in a group and one free). Callers that must NOT duplicate --
+    -- the preset installer and the CDM bulk import -- check FindBySpellID
+    -- first, so the "don't add this twice" rule lives with them, not here.
+    local arcID = NextFreeAuraID(db, spellID)
 
     local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
     local def = {
@@ -1512,7 +1602,12 @@ function AuraIcons.Create(defIn)
         -- icon) read better as "Bloodlust / Heroism" than as the primary ID's name
         name     = defIn.name or (info and info.name) or ("Aura " .. spellID),
         icon     = (info and (info.iconID or info.originalIconID)) or 134400,
+        -- unitMode is kept for icons made before the type/units split (and as the
+        -- fallback LanesFor reads when `units` is absent); auraType + units are
+        -- the current shape
         unitMode = defIn.unitMode or "buff",
+        auraType = defIn.auraType,
+        units    = defIn.units,
         ownOnly  = defIn.ownOnly and true or false,
     }
     db.auraIcons[arcID] = def
@@ -1799,6 +1894,68 @@ local function GetDisplayedTrackedBuffIDs()
     return set
 end
 
+-- Ordered catalog of every tracked buff/bar CDM knows for the CURRENT spec, for
+-- the Add Arc Icon picker grid. Deliberately includes entries CDM is not
+-- currently DISPLAYING (flagged shown = false): the database has them and users
+-- want to reach them without first turning them on in the Cooldown Manager.
+-- Already-tracked entries are flagged rather than dropped, so the grid can grey
+-- them the way the Pings catalog greys unbound spells.
+function AuraIcons.GetCDMCatalog()
+    local out = {}
+    if not IS_121 then return out end
+    if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
+            and C_CooldownViewer.GetCooldownViewerCooldownInfo) then return out end
+    local cat = Enum.CooldownViewerCategory
+    if not (cat and cat.TrackedBuff) then return out end
+
+    local displayedSet = GetDisplayedTrackedBuffIDs()
+    local db = GetDB()
+    local tracked = {}
+    for _, def in pairs(db and db.auraIcons or {}) do
+        tracked[def.spellID] = true
+        for id in pairs(def.spellIDs or {}) do tracked[id] = true end
+    end
+
+    local seen = {}
+    local categories = { cat.TrackedBuff }
+    if cat.TrackedBar then table.insert(categories, cat.TrackedBar) end
+    for _, catID in ipairs(categories) do
+        for _, cooldownID in ipairs(C_CooldownViewer.GetCooldownViewerCategorySet(catID) or {}) do
+            if not (issecretvalue and issecretvalue(cooldownID)) then
+                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
+                local spellID = info and info.spellID
+                if spellID and not (issecretvalue and issecretvalue(spellID))
+                   and info.isKnown ~= false and not seen[spellID] then
+                    seen[spellID] = true
+                    local includeMap = { [spellID] = true }
+                    if type(info.overrideSpellID) == "number" then includeMap[info.overrideSpellID] = true end
+                    if type(info.overrideTooltipSpellID) == "number" then includeMap[info.overrideTooltipSpellID] = true end
+                    if type(info.linkedSpellIDs) == "table" then
+                        for _, linked in ipairs(info.linkedSpellIDs) do
+                            if type(linked) == "number" then includeMap[linked] = true end
+                        end
+                    end
+                    local si = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                    out[#out + 1] = {
+                        spellID  = spellID,
+                        spellIDs = includeMap,
+                        name     = (si and si.name) or ("Aura " .. spellID),
+                        icon     = (si and (si.iconID or si.originalIconID)) or 134400,
+                        shown    = (displayedSet == nil) or (displayedSet[cooldownID] and true or false),
+                        tracked  = tracked[spellID] and true or false,
+                    }
+                end
+            end
+        end
+    end
+    -- CDM-displayed entries first, then the rest of the database, each A-Z
+    table.sort(out, function(a, b)
+        if a.shown ~= b.shown then return a.shown end
+        return (a.name or "") < (b.name or "")
+    end)
+    return out
+end
+
 function AuraIcons.ImportFromCDM()
     if not IS_121 then return 0 end
     if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
@@ -1864,7 +2021,7 @@ function AuraIcons.ImportFromCDM()
                     for id in pairs(includeMap) do
                         if seen[id] then dupe = true break end
                     end
-                    if dupe or db.auraIcons[AuraIcons.MakeID(primary)] then
+                    if dupe or AuraIcons.FindBySpellID(primary) then
                         skipped = skipped + 1
                     else
                         -- BOTH units, like Blizzard's own CDM (buff-on-me OR
@@ -1935,7 +2092,8 @@ SlashCmdList.ARCAURAICONS = function(msg)
             local subInfo = ""
             if e then
                 for _, sub in ipairs(e.subs) do
-                    subInfo = subInfo .. " " .. sub.unit .. "/" .. FilterFor(def, sub.unit)
+                    subInfo = subInfo .. " " .. sub.unit
+                        .. "/" .. FilterForLane(def, { harmful = sub.harmful })
                         .. (sub.frame and "=btn" or "=NOBTN")
                 end
             end

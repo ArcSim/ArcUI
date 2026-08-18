@@ -543,15 +543,45 @@ evFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 evFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 evFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 
-evFrame:SetScript("OnEvent", function(self, event, arg1)
-    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+-- LOGIN REBUILD MUST WAIT FOR THE POSITION STORE.
+-- This used to call RebuildAll() straight off PLAYER_LOGIN / PLAYER_ENTERING_WORLD
+-- with no delay, which is earlier than CDMGroups finishes restoring. With
+-- savedPositions still empty, every slot looked brand new: CreateFrame seeded a
+-- screen-centre free position AND WROTE IT TO DISK, and CreateAndPlaceSlot saw
+-- no "group" type so it re-placed them. That is the "totems jump to the middle
+-- of the screen on login, but stay put if I move them and reload" report -- a
+-- race, which is why it looked intermittent. Every other Arc icon type is built
+-- on a delayed path already; totems were the only ones racing the restore.
+-- Same readiness gate the shared-profile sync poll uses.
+local REBUILD_POLL_INTERVAL = 0.5
+local REBUILD_POLL_MAX = 15.0
+local rebuildPollTimer
+
+local function RebuildWhenStoreReady()
+    if rebuildPollTimer then rebuildPollTimer:Cancel() end
+    local elapsed = 0
+    rebuildPollTimer = C_Timer.NewTicker(REBUILD_POLL_INTERVAL, function(ticker)
+        elapsed = elapsed + REBUILD_POLL_INTERVAL
+        local ready = ns.CDMShared and ns.CDMShared.IsGroupStoreReady
+            and ns.CDMShared.IsGroupStoreReady()
+        -- Safety timeout: rebuild anyway rather than leave the user with no
+        -- totem icons at all if something never settles.
+        if not ready and elapsed < REBUILD_POLL_MAX then return end
+        ticker:Cancel()
+        rebuildPollTimer = nil
         Totems.RebuildAll()
-        -- Deferred passes: 1.5s so CDMEnhance per-icon settings are populated
-        -- before we resolve readyAlpha/desat/glow; 4.5s to re-assert after
-        -- FrameController repositions free icons and calls SetAlpha(1) on the
-        -- ~1-2s settle (mirrors ArcAurasCooldown's 4.5s RefreshAllSpellVisuals).
+        -- Deferred passes: CDMEnhance per-icon settings need to be populated
+        -- before we resolve readyAlpha/desat/glow, and FrameController's settle
+        -- repositions free icons and calls SetAlpha(1) a second or two later.
+        Totems.ForceRefreshAll()
         C_Timer.After(1.5, Totems.ForceRefreshAll)
         C_Timer.After(4.5, Totems.ForceRefreshAll)
+    end)
+end
+
+evFrame:SetScript("OnEvent", function(self, event, arg1)
+    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        RebuildWhenStoreReady()
         return
     end
 

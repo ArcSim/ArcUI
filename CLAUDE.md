@@ -272,6 +272,15 @@ On CurseForge the project's **Automatic Packaging must be OFF** (Actions is the 
   the skill update ships with the code, exactly like `luac -p`. When reality
   contradicts a skill, fix the skill immediately (a stale claim gets trusted and
   is worse than no skill). Full contract in the global `wow-addon-dev` skill.
+- **LIVING MAP (definition of done, same weight as `luac -p`):** the code map at
+  `E:\WoWDev\projects\ArcUI\ArcUI_CDM_Code_Map.md` is the navigation index every session starts
+  from - READ IT BEFORE GREPPING. Every time a fix or change is CONFIRMED working, update it IN
+  THE SAME SESSION: correct any line numbers the change moved, add new functions / events /
+  timers / DB paths to that file's section and to the symbol index, and update "Where do I look
+  for X" and the LIFECYCLE TIMELINES whenever a change alters who owns a behaviour or when
+  something runs. Same rule as the skills: a stale map gets trusted and is worse than no map.
+  The companion `CDM_Destructive_Op_Index.md` gets the same treatment when a change adds,
+  removes or re-guards a destroy / hide / reposition site.
 - One bug or feature per session. Commit after each fix is confirmed working in-game.
 - Before any risky change, ensure the current state is committed so it can be rolled back.
 - After edits: `luac -p` every touched file, then summarize briefly what changed and why.

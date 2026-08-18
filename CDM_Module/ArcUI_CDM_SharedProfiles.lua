@@ -72,6 +72,28 @@ local function ParseClassID(specKey)
 end
 
 --- Get all specKeys for a given classID that exist in the current character's specData
+-- Is this spec key a REAL spec for that class?
+-- GetSpecialization() is documented Nilable=false, so it ALWAYS returns a number:
+-- before a real spec resolves (early login, or a character that has not chosen one)
+-- it hands back the initial/unchosen slot, index 5. The spec key is built straight
+-- from that with no validation, so junk like "class_9_spec_5" gets persisted for a
+-- 3-spec class. Harmless on its own, but SetEnabled treats any key with no shared
+-- ref as "nobody owns this yet" and pushes -- which is how one phantom key made an
+-- alt the source for an entire class. Validate before a key can drive anything.
+local function IsRealSpecKey(specKey, classID)
+    local idx = tonumber(tostring(specKey):match("_spec_(%d+)$"))
+    if not idx or idx < 1 then return false end
+    if GetNumSpecializationsForClassID then
+        local n = GetNumSpecializationsForClassID(classID)
+        if n and idx > n then return false end
+    end
+    if GetSpecializationInfoForClassID then
+        return GetSpecializationInfoForClassID(classID, idx) ~= nil
+    end
+    return true
+end
+SP.IsRealSpecKey = IsRealSpecKey
+
 local function GetAllSpecKeysForClass(classID)
     if not classID then return {} end
     local keys = {}
@@ -79,7 +101,7 @@ local function GetAllSpecKeysForClass(classID)
     local db = GetCDMGroupsDB()
     if db and db.specData then
         for specKey in pairs(db.specData) do
-            if ParseClassID(specKey) == classID then
+            if ParseClassID(specKey) == classID and IsRealSpecKey(specKey, classID) then
                 keys[#keys + 1] = specKey
             end
         end
@@ -87,7 +109,7 @@ local function GetAllSpecKeysForClass(classID)
     -- Also check global sharedProfiles for specs we might not have locally yet
     if ns.db and ns.db.global and ns.db.global.sharedProfiles then
         for specKey in pairs(ns.db.global.sharedProfiles) do
-            if ParseClassID(specKey) == classID then
+            if ParseClassID(specKey) == classID and IsRealSpecKey(specKey, classID) then
                 local found = false
                 for _, k in ipairs(keys) do
                     if k == specKey then found = true; break end
@@ -273,6 +295,37 @@ function SP.GetSharedRef(specKey)
     return ns.db.global.sharedProfiles[specKey]
 end
 
+-- ───────────────────────────────────────────────────────────────────────────
+-- OPT-IN SOURCE
+-- ───────────────────────────────────────────────────────────────────────────
+-- The automatic push (hooked to layout autosave, plus the logout push) used to
+-- fire on ANY character with sync enabled, so whoever saved last silently became
+-- the source and every other character inherited its layout on the next login.
+-- That is the "my alt became the source" report, and it is also how a main ends
+-- up pulling an alt's profile and losing placements for icons the alt never had.
+--
+-- Alts now only ever PULL. An automatic push is allowed exactly twice:
+--   * you already own the reference (you ARE the source), or
+--   * nobody owns it yet, so the first character to enable sync seeds it.
+-- Taking over is DELIBERATE: the Push button still works from any character and
+-- claims the source, which is the one place ownership is allowed to change.
+function SP.IsSource(specKey)
+    specKey = specKey or GetCurrentSpecKey()
+    if not specKey then return false end
+    local ref = SP.GetSharedRef(specKey)
+    if not ref or not ref.sourceChar then return false end
+    return ref.sourceChar == GetCharKey()
+end
+
+function SP.MayAutoPush(specKey)
+    specKey = specKey or GetCurrentSpecKey()
+    if not specKey then return false end
+    if not SP.IsEnabled(specKey) then return false end
+    local ref = SP.GetSharedRef(specKey)
+    if not ref or not ref.sourceChar then return true end   -- unowned: seed it
+    return ref.sourceChar == GetCharKey()
+end
+
 function SP.GetSharedInfo(specKey)
     specKey = specKey or GetCurrentSpecKey()
     local ref = SP.GetSharedRef(specKey)
@@ -351,9 +404,15 @@ function SP.SetEnabled(specKey, enabled)
             if ref and ref.sourceChar and ref.sourceChar ~= charKey then
                 -- Pull from existing source
                 SP.Pull(sk)
+            elseif ref and ref.sourceChar == charKey then
+                -- Already the source for this spec: refresh it, THIS SPEC ONLY.
+                SP.Push(sk, true)
             else
-                -- We're the source (or first to enable) — push
-                SP.Push(sk)
+                -- No source for this spec yet. Adopt ONLY this spec -- never the
+                -- whole class. Ticking a checkbox must not take ownership of specs
+                -- another character already owns (the "my alt became the source"
+                -- report): a single spec with no ref used to re-source everything.
+                SP.Push(sk, true)
             end
         end
         PrintMsg("Enabled shared sync for all specs of this class (" .. #specsToToggle .. " specs)")
@@ -397,15 +456,21 @@ end
 -- Push (store reference only — ~100 bytes)
 -- ───────────────────────────────────────────────────────────────────────────
 
-function SP.Push(specKey)
+-- singleSpecOnly: push JUST this spec key, no class-wide fan-out.
+-- The fan-out is correct for an explicit "Push" click (share my whole class), but
+-- catastrophic when Push is called per-key inside a loop: one spec with no shared
+-- ref made this rewrite sourceChar for EVERY spec of the class, so simply enabling
+-- sharing on an alt silently hijacked the main's profiles. Automatic callers pass
+-- singleSpecOnly.
+function SP.Push(specKey, singleSpecOnly)
     specKey = specKey or GetCurrentSpecKey()
     if not specKey then return end
     if not ns.db then return end
-    
+
     -- Determine which specs to push
     local specsToPush = { specKey }
     local classID = ParseClassID(specKey)
-    if classID then specsToPush = GetAllSpecKeysForClass(classID) end
+    if classID and not singleSpecOnly then specsToPush = GetAllSpecKeysForClass(classID) end
     
     if not ns.db.global then ns.db.global = {} end
     if not ns.db.global.sharedProfiles then ns.db.global.sharedProfiles = {} end
@@ -578,7 +643,28 @@ function SP.Pull(specKey)
             end
         end
     end
-    
+
+    -- ─── Aura icons / custom timers / totem slots (SOURCE AUTHORITATIVE) ────
+    -- These live in the same arcAuras store as the spells and items, and the
+    -- profile savedPositions this pull just replaced reference their arcIDs --
+    -- but they were never synced. So a pull overwrote the PLACEMENTS while
+    -- leaving the icon set behind, and arc icons (totems worst) came back
+    -- wrong on any character that pulled. Replace wholesale, matching
+    -- trackedSpells; after the opt-in source change this only ever runs on a
+    -- character that is NOT the source.
+    -- A store the source does not have at all (nil, e.g. an older client) is
+    -- LEFT ALONE -- only an explicitly empty one means "the source has none".
+    if source.arcAuras then
+        local arcDB = ns.db.char and ns.db.char.arcAuras
+        if arcDB then
+            for _, store in ipairs({ "auraIcons", "customTimers", "totemSlots" }) do
+                if source.arcAuras[store] then
+                    arcDB[store] = DeepCopy(source.arcAuras[store])
+                end
+            end
+        end
+    end
+
     -- ─── Sync bars (if bar sync toggle is on) ─────────────────────────
     -- Copies buff/debuff bars, cooldown bars, resource bars, timer bars,
     -- and active spell lists from the source character.
@@ -827,8 +913,9 @@ local PUSH_DEBOUNCE = 3.0
 function SP.DebouncedPush()
     local specKey = GetCurrentSpecKey()
     if not specKey then return end
-    if not SP.IsEnabled(specKey) then return end
-    
+    -- OPT-IN SOURCE: an autosave on an alt must never claim the profile.
+    if not SP.MayAutoPush(specKey) then return end
+
     if pushTimer then pushTimer:Cancel() end
     pushTimer = C_Timer.NewTimer(PUSH_DEBOUNCE, function()
         pushTimer = nil
@@ -1048,7 +1135,10 @@ function SP.GetOptionsTable()
             description = {
                 type = "description",
                 name = "Sync profiles and Arc Auras across all same-class characters. "
-                    .. "Profiles are shared per spec automatically — enable once and all alts stay in sync.\n\n"
+                    .. "Profiles are shared per spec automatically, so enable once and all alts stay in sync.\n\n"
+                    .. "|cffd4af37One character is the source.|r Only the source sends its layout out. "
+                    .. "Every other character receives it and keeps its own edits local. "
+                    .. "Press Push to make THIS character the source.\n\n"
                     .. "|cffff9900First Pass — this feature is new and may have rough edges. "
                     .. "If you run into any issues please report them in the Discord.|r\n",
                 order = 1,
@@ -1153,7 +1243,10 @@ function SP.GetOptionsTable()
                         if info then
                             local timeStr = info.timestamp and date("%b %d %I:%M%p", info.timestamp) or "?"
                             local src = info.sourceChar and info.sourceChar:match("^([^%-]+)") or "?"
-                            table.insert(lines, "|cffffd100" .. specLabel .. ":|r " .. (info.profileName or "?") .. "  from " .. src .. "  (" .. timeStr .. ")")
+                            -- Say plainly whether YOU are the source: it decides
+                            -- whether your edits go out or stay local.
+                            local mine = SP.IsSource(specKeyToShow) and " |cff88ff88(this character)|r" or ""
+                            table.insert(lines, "|cffffd100" .. specLabel .. ":|r " .. (info.profileName or "?") .. "  from " .. src .. mine .. "  (" .. timeStr .. ")")
                             if not info.sourceValid then
                                 table.insert(lines, "  |cffff8800Source not found.|r")
                             end
@@ -1175,7 +1268,9 @@ function SP.GetOptionsTable()
             forcePush = {
                 type = "execute",
                 name = "Push",
-                desc = "Push your current data to the shared reference.",
+                desc = "Make THIS character the source and send its current data out.\n\n"
+                    .. "Only the source pushes automatically. Every other character just receives, "
+                    .. "so an alt can never take the profile over by accident.",
                 order = 10,
                 width = 0.5,
                 func = function()
@@ -2190,7 +2285,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         
     elseif event == "PLAYER_LOGOUT" then
         local specKey = GetCurrentSpecKey()
-        if specKey and SP.IsEnabled(specKey) then
+        -- OPT-IN SOURCE: logging out on an alt must not hand it the profile.
+        if specKey and SP.MayAutoPush(specKey) then
             if pushTimer then
                 pushTimer:Cancel()
                 pushTimer = nil

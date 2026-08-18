@@ -1122,7 +1122,53 @@ local function AssignFrameToOwner(cdID, cdmData)
                 end
             end
             
-            return AssignFrameToGroup(cdID, frame, saved.target, targetRow, targetCol, viewerType, viewerName)
+            -- DEAD TARGET GUARD (3.8.0.c): the saved group may no longer exist --
+            -- deleting a group leaves savedPositions still pointing at it, and
+            -- this branch used to return REGARDLESS, so assignment dead-ended:
+            -- the icon landed in no group, not free, still parented to the
+            -- Blizzard viewer, yet fully styled = a normal-looking icon that
+            -- cannot be dragged, with no error. Proven live (`/afi orphans`):
+            -- two positions still targeting a deleted group "FWF".
+            --
+            -- CRITICAL: a missing group is NOT proof the group is gone. During
+            -- spec change / profile load the groups table is legitimately empty
+            -- for a window, and relocating icons then would scatter a correct
+            -- layout. So while ANY protection window is open we do nothing and
+            -- let the next pass retry; only outside one do we treat the target
+            -- as genuinely dead and fall through to routing.
+            -- We never DELETE the saved entry here either -- a lookup miss is a
+            -- transient signal, and clearing state on one is the code-red rule.
+            -- Deletion cleanup belongs in the delete path, where it is certain.
+            if not targetGroup then
+                local SM = ns.CDMGroups.StateManager
+                local protected = (SM and SM.IsInAnyProtection and SM.IsInAnyProtection())
+                               or (ns.CDMGroups.IsRestoring and ns.CDMGroups.IsRestoring())
+                if protected then
+                    Debug("AssignFrameToOwner: target group", saved.target,
+                          "missing during a protection window - deferring", cdID)
+                    return false
+                end
+                -- THE SAFETY NET IS FREE POSITION. A saved position naming a group
+                -- that no longer exists means the group was deleted, so honour the
+                -- deletion: drop the dead reference and place the icon loose. It
+                -- must NOT fall through to New Icon Routing, which is for icons
+                -- that were never placed - this one was placed, its group is just
+                -- gone, and routing would silently drop it into a default group
+                -- the user never chose. Matches what the arc-icon restore path
+                -- already does for a dead target.
+                Debug("AssignFrameToOwner: saved target group", saved.target,
+                      "no longer exists - placing as free icon", cdID)
+                if ns.CDMGroups.savedPositions then
+                    ns.CDMGroups.savedPositions[cdID] = nil
+                end
+                local fx, fy = 0, 0
+                if ns.CDMGroups.NextFreeDropPosition then
+                    fx, fy = ns.CDMGroups.NextFreeDropPosition(nil)
+                end
+                return AssignFrameToFree(cdID, frame, fx, fy, saved.iconSize, viewerType, viewerName)
+            else
+                return AssignFrameToGroup(cdID, frame, saved.target, targetRow, targetCol, viewerType, viewerName)
+            end
         elseif saved.type == "free" then
             return AssignFrameToFree(cdID, frame, saved.x, saved.y, saved.iconSize, viewerType, viewerName)
         end

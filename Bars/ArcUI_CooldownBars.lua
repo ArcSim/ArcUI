@@ -1663,14 +1663,20 @@ local function CreateChargeShadowForBar(barData)
   cd:SetDrawBling(false)
   cd:SetHideCountdownNumbers(true)
   cd:SetAlpha(0)
-  cd:HookScript("OnShow", function()
+  -- CHARGE BARS ONLY. This hook is a charge bar's recharge-boundary refresh.
+  -- A cooldown duration bar must never be driven from here: it has no
+  -- chargeSlots, so it used to fall into UpdateChargeBar's no-slots early-out
+  -- and get HIDDEN the moment a charge finished recharging, and routing it to
+  -- UpdateCooldownBar instead turned every transition into a full bar rebuild
+  -- (which re-armed this same shadow) and burned the frame rate. Cooldown bars
+  -- no longer create a shadow at all; this guard keeps it that way.
+  local function OnShadowStateChanged()
+    if not barData.chargeSlots then return end
     if barData._arcFeedingChargeShadow and barData._arcFeedingChargeShadow > 0 then return end
     if UpdateChargeBar then UpdateChargeBar(barData) end
-  end)
-  cd:HookScript("OnHide", function()
-    if barData._arcFeedingChargeShadow and barData._arcFeedingChargeShadow > 0 then return end
-    if UpdateChargeBar then UpdateChargeBar(barData) end
-  end)
+  end
+  cd:HookScript("OnShow", OnShadowStateChanged)
+  cd:HookScript("OnHide", OnShadowStateChanged)
   return cd
 end
 
@@ -2625,18 +2631,15 @@ UpdateCooldownBar = function(barData)
     end
   end
   
-  -- For charge spells: feed the charge shadow so IsCooldownReadyForBar can read it.
-  -- Charge shadow shows when a charge is actively recharging (not all full).
-  if chargeInfo and chargeInfo.maxCharges and chargeInfo.maxCharges > 1 then
-    local chargeShadow = GetChargeShadowForBar(barData)
-    barData._arcFeedingChargeShadow = (barData._arcFeedingChargeShadow or 0) + 1
-    CooldownFrame_Clear(chargeShadow)
-    local durObj = C_Spell.GetSpellChargeDuration(spellID)
-    if durObj then chargeShadow:SetCooldownFromDurationObject(durObj, true) end
-    barData._arcFeedingChargeShadow = barData._arcFeedingChargeShadow - 1
-  end
+  -- NO CHARGE SHADOW HERE. A cooldown duration bar used to feed one every tick
+  -- "so IsCooldownReadyForBar can read it" -- it never did: readiness comes from
+  -- GetSpellCharges().isActive / GetSpellCooldown().isActive, both NeverSecret.
+  -- The shadow was write-only, cost a Clear + an API call + a widget re-arm 10
+  -- times a second per bar, and its show/hide transitions (including the ones
+  -- from Show/Hide on the parent bar frame, which land outside the feed guard)
+  -- re-entered this function. Cooldown bars are driven by the update loop.
 
-  -- Visibility check - shadow Cooldown frame IsShown() is non-secret
+  -- Visibility check - isActive / isOnGCD are non-secret
   local isReady = IsCooldownReadyForBar(barData, spellID, isGCDTracker)
 
   -- GCD-RACE DEBOUNCE: cooldown reads taken during GCD event bursts can report
@@ -2943,7 +2946,11 @@ end
 
 UpdateChargeBar = function(barData)
   if not barData or not barData.spellID then return end
-  if not barData.chargeSlots or #barData.chargeSlots == 0 then
+  -- nil chargeSlots = NOT a charge bar (a cooldown duration bar reached us by
+  -- mistake). Never touch its visibility. Only a real charge bar with zero
+  -- built slots gets hidden as unrenderable.
+  if not barData.chargeSlots then return end
+  if #barData.chargeSlots == 0 then
     HideUnrenderableChargeBar(barData)
     return
   end
@@ -2993,7 +3000,9 @@ UpdateChargeBar = function(barData)
   local isPreviewMode = false
   local hideWhenFadeAlpha = 1.0
   -- Both hideWhenReady and hideWhenFull use the same shadow check:
-  -- all charges full = chargeShadow:IsShown()=false = IsCooldownReadyForBar returns true
+  -- all charges full = GetSpellCharges().isActive false = IsCooldownReadyForBar returns true
+  -- (this reads the API directly, NOT the charge shadow -- the shadow is only a
+  -- refresh trigger for this bar, nothing ever reads its shown state)
   local hideWhenReady = cfg and cfg.behavior and cfg.behavior.hideWhenReady
   local hideWhenFull  = cfg and cfg.behavior and cfg.behavior.hideWhenFullCharges
   if (hideWhenReady or hideWhenFull) and IsCooldownReadyForBar(barData, spellID, isGCDTracker) then

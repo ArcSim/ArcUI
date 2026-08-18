@@ -699,6 +699,25 @@ function Shared.GetGroupLayoutsDB()
     return ns.db.global.groupLayouts
 end
 
+-- Is the group POSITION store settled (safe to read as truth)?
+-- `ns.CDMGroups.savedPositions` is populated asynchronously at login, so a miss
+-- during that window means "not loaded yet", NOT "this icon is new". Anything
+-- that WRITES a default or reassigns placement on a missed lookup must gate on
+-- this first, or it persists invented state over the user's real layout -- the
+-- totem icons jumping to screen centre on login. Same rule as the hook-state
+-- code red: never act on a transient failed lookup.
+function Shared.IsGroupStoreReady()
+    local G = ns.CDMGroups
+    if not G then return false end
+    if not G.savedPositions then return false end
+    if G._profileNotLoaded then return false end
+    if G.initialLoadInProgress then return false end
+    if G.IsRestoring and G.IsRestoring() then return false end
+    local SM = G.StateManager
+    if SM and SM.IsInAnyProtection and SM.IsInAnyProtection() then return false end
+    return true
+end
+
 -- Get Group Template settings (default template, etc.)
 function Shared.GetGroupTemplateSettings()
     if not ns.db then return nil end

@@ -269,6 +269,20 @@ local function GetOptionsTable()
                 if id then values[id] = groupName end
             end
         end
+        -- SURFACE A DEAD STORED CHOICE. If this scope has a value naming a group
+        -- that no longer exists, it is not in the list above and AceConfig renders
+        -- the dropdown BLANK -- the user sees an empty control with no way to tell
+        -- what is wrong or clear it. Add it as a labelled entry so it is visible
+        -- and selecting anything else replaces it.
+        if ns.CDMGroups and ns.CDMGroups.GetIconRoutingAtScope then
+            for _, categoryKey in pairs({ "essential", "utility", "buffs" }) do
+                local stored = ns.CDMGroups.GetIconRoutingAtScope(categoryKey, routingEditScope)
+                if stored and stored ~= ROUTING_DEFAULT and stored ~= ROUTING_INHERIT
+                   and stored ~= "free" and stored ~= "none" and not values[stored] then
+                    values[stored] = "|cffff6666(deleted group)|r"
+                end
+            end
+        end
         return values
     end
 
@@ -304,9 +318,37 @@ local function GetOptionsTable()
         local labels = BuildRoutingValues()
         local parts = {}
         for _, pair in ipairs({ { "essential", "Essential" }, { "utility", "Utility" }, { "buffs", "Buffs" } }) do
+            -- Ask the RESOLVER, do not re-derive. This line used to look the
+            -- stored id up in `labels` itself, so it drifted from what actually
+            -- happens: a deleted group's stale id read as "missing group -> Free
+            -- Position" even though the resolver now falls back to the shipped
+            -- group. One source of truth, or the panel lies to the user.
             local v = ns.CDMGroups.GetIconRouting(pair[1])
             local text
-            if v == nil or v == ROUTING_DEFAULT or v == "none" then
+            if ns.CDMGroups.ResolveNewIconDestination then
+                local kind, _, gname = ns.CDMGroups.ResolveNewIconDestination(pair[2])
+                -- Test whether the stored id RESOLVES, not whether it is in the
+                -- label list: the list now deliberately contains dead ids so the
+                -- dropdown can show "(deleted group)" instead of rendering blank,
+                -- which silently disabled this warning.
+                local resolves = v and ns.CDMGroups.FindGroupByID
+                                 and (ns.CDMGroups.FindGroupByID(v) ~= nil) or false
+                local stale = (v ~= nil and v ~= ROUTING_DEFAULT and v ~= "none"
+                               and v ~= "free" and not resolves)
+                if kind == "group" and gname then
+                    text = "|cff00ff00" .. gname .. "|r"
+                elseif kind == "free" then
+                    text = "Free Position"
+                else
+                    text = "Default"
+                end
+                -- Say what happened in plain words. The old string read
+                -- "Utility: Utility (default; saved choice no longer exists)",
+                -- which is not a sentence anyone can act on.
+                if stale then
+                    text = text .. " |cffff9900(your saved group was deleted)|r"
+                end
+            elseif v == nil or v == ROUTING_DEFAULT or v == "none" then
                 text = "Default"
             else
                 text = labels[v] or "|cffff6666missing group -> Free Position|r"
