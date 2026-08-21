@@ -17,6 +17,12 @@ ns.CDMGroups = ns.CDMGroups or {}
 
 -- Use shared constants and helpers
 local Shared = ns.CDMShared
+local PlacementTrace = ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SHARED HELPER FUNCTIONS
@@ -1127,6 +1133,12 @@ local function ResolveGridConflicts(group)
         end
     end
     
+    if conflictsResolved > 0 then
+        TracePlacement("CDMGroups.Layout.ResolveGridConflicts", {
+            group = group.name,
+            conflicts = conflictsResolved,
+        })
+    end
     return conflictsResolved
 end
 ns.CDMGroups.ResolveGridConflicts = ResolveGridConflicts

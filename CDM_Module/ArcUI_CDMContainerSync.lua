@@ -16,6 +16,12 @@
 local ADDON_NAME, ns = ...
 
 ns.CDMContainerSync = ns.CDMContainerSync or {}
+local PlacementTrace = ns.CDMGroups and ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════
 -- CONFIGURATION
@@ -109,6 +115,15 @@ local function PushToViewer(groupName, skipLayoutSave)
 
     positionOverride[viewerName] = { x = posX, y = posY }
     sizeOverride[viewerName] = { w = w, h = h }
+    TracePlacement("CDMContainerSync.PushToViewer", {
+        group = groupName,
+        viewer = viewerName,
+        x = posX,
+        y = posY,
+        width = w,
+        height = h,
+        skipLayoutSave = skipLayoutSave == true,
+    })
 
     -- CDM viewers are protected — cannot SetSize/SetPoint in combat.
     if InCombatLockdown() then
@@ -221,6 +236,12 @@ local function PullFromViewer(viewerName)
         pushing = true
         group:SetPosition(posX, posY)
         pushing = false
+        TracePlacement("CDMContainerSync.PullFromViewer", {
+            group = groupName,
+            viewer = viewerName,
+            x = posX,
+            y = posY,
+        })
     end
 
     positionOverride[viewerName] = { x = posX, y = posY }

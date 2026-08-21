@@ -1605,6 +1605,42 @@ function BD.ApplyStyle(barFrame, durationFrame, showDuration, decimals, duration
     tostring(a.cooldownID), tostring(colorKey), tostring(textColorEnabled))
 end
 
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CONTAINER REPAIR (12.1 engine bug -- full write-up in ns.CDMShared)
+-- Candidate filters fail OPEN whenever UnitCanAssist fails (vehicles,
+-- cinematics, faction change, range, encounter end), so a bar can start lighting
+-- on an ARBITRARY aura. Bars previously had NO re-assertion at all: filters were
+-- written at attach/retarget/detach and never re-pushed, so a bar that lost its
+-- filter mid-fight stayed wrong until the next attach.
+-- Cycle the container (SetEnabled is guarded on change, so only false->true
+-- re-registers events and refreshes), then re-push each sub's believed-correct
+-- filter. Data-only, so it is legal in combat.
+-- ═══════════════════════════════════════════════════════════════════════════
+function BD.RepairContainers()
+  local Sh = ns.CDMShared
+  if Sh and Sh.RepairAuraContainer then
+    for _, perOwner in pairs(containers) do
+      for _, c in pairs(perOwner) do
+        Sh.RepairAuraContainer(c)
+      end
+    end
+  end
+  -- Re-push what each live sub should be filtering on. Everything still in
+  -- attached[] IS live: Detach parks the filters and then clears the entry
+  -- (attached[barFrame] = nil, ~line 1429), so there is no parked state to
+  -- preserve here and no need to branch on one.
+  for _, a in pairs(attached) do
+    local subs = a and a.subs
+    if subs and a.spellIDs then
+      for _, sub in pairs(subs) do
+        if sub.container and sub.key and sub.container.SetAuraSlotCandidateFilters then
+          sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = a.spellIDs })
+        end
+      end
+    end
+  end
+end
 -- ── combat deferral + eager container creation + target-swap refresh ─────────
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
@@ -1613,6 +1649,13 @@ ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- zone-out ends instance secrecy wi
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_PET")            -- pet summoned/dismissed/replaced: pet containers go stale
 ev:SetScript("OnEvent", function(_, event, evUnit)
+  -- LAZY REPAIR REGISTRATION. This file loads BEFORE ArcUI_CDM_Shared.lua (toc
+  -- line 42 vs 93), so ns.CDMShared does not exist at our file scope. Register
+  -- on the first event we receive instead, by which point every file is loaded.
+  -- Idempotent on the CDMShared side, so repeating it costs nothing.
+  if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
+    ns.CDMShared.RegisterAuraContainerRepair(BD.RepairContainers)
+  end
   if event == "PLAYER_TARGET_CHANGED" or (event == "UNIT_PET" and evUnit == "player") then
     -- Non-player containers do NOT self-refresh when their unit's IDENTITY changes (they only
     -- react to their own unit's UNIT_AURA), so a target debuff bar goes stale on target swap and

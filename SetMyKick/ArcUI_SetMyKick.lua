@@ -131,6 +131,18 @@ local MARKER_NAMES = {
 }
 
 local PREFIX = "|cff33ff99Kick Assist|r: "
+
+-- MACRO LIMITS. These used to be plain globals; on 12.x they live under
+-- Constants.MacroConsts and the bare globals are NIL, which broke every macro
+-- path in this file: three `numChar >= MAX_CHARACTER_MACROS` compares threw
+-- "attempt to compare nil with number" (Lua compiles a >= b as b <= a, so the
+-- NIL constant is the one reported on the left), and the macro-list builder did
+-- arithmetic on nil in `AddRow(MAX_ACCOUNT_MACROS + i)`.
+-- Declaring them as locals shadows the missing globals, so every existing use
+-- site works unchanged. Fallbacks are the live 12.1 values (120 / 30) verified
+-- against Blizzard_APIDocumentationGenerated/MacroConstantsDocumentation.lua.
+local MAX_ACCOUNT_MACROS   = (Constants and Constants.MacroConsts and Constants.MacroConsts.MAX_ACCOUNT_MACROS) or 120
+local MAX_CHARACTER_MACROS = (Constants and Constants.MacroConsts and Constants.MacroConsts.MAX_CHARACTER_MACROS) or 30
 local FOCUS_ICON = 132212  -- set-focus macro icon (fileID)
 
 -- Interrupt spell per class, spec overrides keyed by specialization ID.
@@ -500,6 +512,34 @@ local function ManageMarkerInBody(body)
 	return table.concat(lines, "\n")
 end
 
+-- Locate this module's managed macro.
+--
+-- WHY NOT GetMacroIndexByName ALONE: it searches the ACCOUNT bucket first and
+-- cannot be pointed at one bucket, so when the same name exists in both it
+-- returns the ACCOUNT index. Every CreateMacro in this file passes
+-- isCharacter = true, so the macro we manage is always a CHARACTER macro -- the
+-- old lookup would then edit the user's unrelated account macro of the same
+-- name and leave ours untouched. Character bucket is searched first here.
+--
+-- WHY THIS KEEPS A FALLBACK (and deliberately differs from the standalone
+-- KickAssist, which does a STRICT bucket search): that addon has a real
+-- account-wide mode and must never cross buckets. ArcUI has no such mode, so if
+-- the ONLY macro with this name lives in the account bucket it is still the
+-- user's macro and the one sitting on their action bar. Returning nil there
+-- would fall through to the create branch and make a SECOND macro with the same
+-- name, after which every edit would go to the invisible one. Prefer the
+-- character macro, but never pretend an existing account macro is not there.
+-- Nothing here deletes or rewrites a macro; it only reports an index.
+local function FindManagedMacroIndex(name)
+	if not name or name == "" then return nil end
+	local _, numChar = GetNumMacros()
+	for i = 1, (numChar or 0) do
+		local gi = MAX_ACCOUNT_MACROS + i
+		if GetMacroInfo(gi) == name then return gi end
+	end
+	return GetMacroIndexByName(name)
+end
+
 local function UpdateManagedMacro()
 	if not EnsureDB() then return end
 	if not GDB.enabled then return end
@@ -510,7 +550,7 @@ local function UpdateManagedMacro()
 	local body = tostring(DB.macroTemplate or DEFAULT_MACRO)
 	body = body:gsub("{interrupt}", interrupt):gsub("{marker}", tostring(DB.marker)):gsub("{kick}", tostring(DB.marker))
 	if body == "" then return end
-	local idx = GetMacroIndexByName(name)
+	local idx = FindManagedMacroIndex(name)
 	if idx and idx > 0 then
 		EditMacro(idx, name, "INV_Misc_QuestionMark", body)
 	else
@@ -530,7 +570,7 @@ local function UpdateSetFocusMacro(create)
 	local name = DB.setFocusName ~= "" and DB.setFocusName or DEFAULTS.setFocusName
 	local interrupt = GetMyInterruptName() or ""
 	local body = tostring(DB.setFocusTemplate or SET_FOCUS_MACRO):gsub("{interrupt}", interrupt):gsub("{marker}", tostring(DB.marker)):gsub("{kick}", tostring(DB.marker))
-	local idx = GetMacroIndexByName(name)
+	local idx = FindManagedMacroIndex(name)
 	if idx and idx > 0 then
 		EditMacro(idx, name, FOCUS_ICON, body)
 	elseif create then
@@ -550,7 +590,7 @@ local function UpdateAutoTabMacro(create)
 	local name = DB.autoTabName ~= "" and DB.autoTabName or DEFAULTS.autoTabName
 	local interrupt = GetMyInterruptName() or ""
 	local body = tostring(DB.autoTabTemplate or AUTOTAB_MACRO):gsub("{interrupt}", interrupt):gsub("{marker}", tostring(DB.marker)):gsub("{kick}", tostring(DB.marker))
-	local idx = GetMacroIndexByName(name)
+	local idx = FindManagedMacroIndex(name)
 	if idx and idx > 0 then
 		EditMacro(idx, name, "INV_Misc_QuestionMark", body)
 	elseif create then
@@ -761,7 +801,7 @@ local function CreateUI()
 		if InCombatLockdown() then return end
 		local name = (DB[nameKey] and DB[nameKey] ~= "") and DB[nameKey] or defName
 		updateFn(true)
-		local idx = GetMacroIndexByName(name)
+		local idx = FindManagedMacroIndex(name)
 		if idx and idx > 0 then PickupMacro(idx) end
 	end
 
@@ -1041,9 +1081,13 @@ function SMK.ShowMacroEditor()
 			end)
 			r:Show()
 		end
+		-- `or 0`: a nil limit makes a numeric for throw ("'for' limit must be a
+		-- number"). GetNumMacros should always return two numbers, but this
+		-- builder sits on the ShowUI path that was already crashing, so it is
+		-- not the place to assume.
 		local numAccount, numChar = GetNumMacros()
-		for i = 1, numAccount do AddRow(i) end
-		for i = 1, numChar do AddRow(MAX_ACCOUNT_MACROS + i) end
+		for i = 1, (numAccount or 0) do AddRow(i) end
+		for i = 1, (numChar or 0) do AddRow(MAX_ACCOUNT_MACROS + i) end
 		pickChild:SetHeight(math.max(1, count * 18))
 		pickScroll:SetVerticalScroll(0)
 	end

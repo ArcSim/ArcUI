@@ -1,3 +1,19 @@
+## 3.8.2
+
+### Improvements
+
+- **Aura icons and bars fix themselves** — They could start showing a completely different aura after a vehicle, cinematic, faction change or boss kill. They now correct themselves right away.
+
+### Bug Fixes
+
+- **Aura icon borders stayed visible when the icon was hidden** — With Aura Missing opacity at 0 the border kept showing, usually after a group join or zone change.
+- **Castbar imports landed in the wrong place** — A string from someone on a different interface scale now puts the bar where they had it.
+- **Kick Assist macro errors** — The Macros tab could error, and managed macros could not be created or edited.
+- **Kick Assist edited the wrong macro** — Edits could go to an account macro with the same name instead of yours.
+- **Errors while tracking potions, healthstones and trinkets** — Opening the options panel could throw repeating errors.
+- **Error when adding a custom cooldown in a dungeon or raid** — The duration auto-fill could error instead of leaving the field for you.
+- **Stray icons after logging in** — Untracked icons with borders and tooltips could appear.
+
 ## 3.8.1
 
 ### New Features

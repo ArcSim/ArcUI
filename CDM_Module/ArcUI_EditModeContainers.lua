@@ -19,6 +19,12 @@
 local ADDON_NAME, ns = ...
 
 ns.EditModeContainers = ns.EditModeContainers or {}
+local PlacementTrace = ns.CDMGroups and ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════
 -- CONFIGURATION
@@ -210,6 +216,12 @@ local function SyncWrapperToGroup(groupName, force)
     group.position = group.position or {}
     group.position.x = offsetX
     group.position.y = offsetY
+    TracePlacement("EditModeContainers.SyncWrapperToGroup", {
+        group = groupName,
+        x = offsetX,
+        y = offsetY,
+        forced = force == true,
+    })
     
     -- Move group container
     group.container:ClearAllPoints()
@@ -465,6 +477,11 @@ local function CreateWrapper(groupName)
         group.position = group.position or {}
         group.position.x = offsetX
         group.position.y = offsetY
+        TracePlacement("EditModeContainers.WrapperDragStop", {
+            group = groupName,
+            x = offsetX,
+            y = offsetY,
+        })
         
         -- Re-anchor container cleanly
         group.container:ClearAllPoints()

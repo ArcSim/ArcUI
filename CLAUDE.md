@@ -9,9 +9,10 @@ integration, custom icons/timers, and proc tracking. Related addon: ArcUI_ProcTr
 > sources, and the changelog template (`changelog-template.md`). Reference it for release/packaging
 > and general addon-dev tasks; this file is ArcUI's project-specific layer on top of it.
 
-Target client: WoW 12.0.5 (Midnight), Interface 120005 — current live build 12.0.5.67823.
-(The .toc supports 120000/120001/120005. Verify the live build against the API mirror per the
-build-check protocol in Reference Sources before doing API work.)
+Target client: WoW 12.1 (Midnight), current live build 12.1.0.69382.
+(The .toc declares Interface 120000, 120001, 120005, 120007, 120100. Verify the live build
+against the API mirror per the build-check protocol in Reference Sources before doing API
+work - this line has gone stale before, so re-check it rather than trusting it.)
 
 ---
 

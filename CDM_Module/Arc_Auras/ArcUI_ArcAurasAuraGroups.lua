@@ -757,3 +757,25 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- END OF ArcUI_ArcAurasAuraGroups.lua
 -- ═══════════════════════════════════════════════════════════════════════════
+
+-- CONTAINER REPAIR (12.1 engine bug -- full write-up in ns.CDMShared).
+-- Aura GROUPS use AddAuraGroup rather than AddAuraSlot, so there are no
+-- per-slot candidate filters to re-push here: the group carries its own filter
+-- from creation. Cycling the container is therefore the ONLY repair available,
+-- and it is the one that matters, since the reported symptom is the container
+-- being bricked outright by a vehicle or cinematic.
+function ns.AuraIconGroups.RepairContainers()
+    local Sh = ns.CDMShared
+    if not (Sh and Sh.RepairAuraContainer) then return end
+    for _, rt in pairs(runtimes) do
+        if rt and rt.engines then
+            for _, c in pairs(rt.engines) do
+                Sh.RepairAuraContainer(c)
+            end
+        end
+    end
+end
+
+if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
+    ns.CDMShared.RegisterAuraContainerRepair(ns.AuraIconGroups.RepairContainers)
+end

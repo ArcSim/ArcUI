@@ -15,6 +15,83 @@ _G.ARCUI_USE_FRAME_CONTROLLER = true
 ns.CDMShared = ns.CDMShared or {}
 local Shared = ns.CDMShared
 
+-- Runtime-only placement diagnostic seam. It deliberately has no SavedVariables
+-- or scheduling; consumers must explicitly start recording.
+ns.CDMGroups = ns.CDMGroups or {}
+local PlacementTrace = ns.CDMGroups.PlacementTrace or {}
+ns.CDMGroups.PlacementTrace = PlacementTrace
+
+local PLACEMENT_TRACE_MAX = 500
+local placementTraceEntries = {}
+local placementTraceFirst = 1
+local placementTraceCount = 0
+local placementTraceEnabled = false
+
+local function IsPlainTraceValue(value)
+    if value == nil then return false end
+    if issecretvalue and issecretvalue(value) then return false end
+    local valueType = type(value)
+    return valueType == "string" or valueType == "number" or valueType == "boolean"
+end
+
+function PlacementTrace.Record(reason, data)
+    if not placementTraceEnabled or type(reason) ~= "string" then return end
+
+    local entry = {
+        reason = reason,
+        timestamp = GetTime(),
+    }
+    if type(data) == "table" then
+        for key, value in pairs(data) do
+            if type(key) == "string" and key ~= "reason" and key ~= "timestamp" and IsPlainTraceValue(value) then
+                entry[key] = value
+            end
+        end
+    end
+
+    local index
+    if placementTraceCount < PLACEMENT_TRACE_MAX then
+        index = ((placementTraceFirst + placementTraceCount - 1) % PLACEMENT_TRACE_MAX) + 1
+        placementTraceCount = placementTraceCount + 1
+    else
+        index = placementTraceFirst
+        placementTraceFirst = (placementTraceFirst % PLACEMENT_TRACE_MAX) + 1
+    end
+    placementTraceEntries[index] = entry
+end
+
+function PlacementTrace.Start()
+    placementTraceEnabled = true
+end
+
+function PlacementTrace.Stop()
+    placementTraceEnabled = false
+end
+
+function PlacementTrace.Clear()
+    wipe(placementTraceEntries)
+    placementTraceFirst = 1
+    placementTraceCount = 0
+end
+
+function PlacementTrace.GetEntries()
+    local copy = {}
+    for index = 1, placementTraceCount do
+        local sourceIndex = ((placementTraceFirst + index - 2) % PLACEMENT_TRACE_MAX) + 1
+        local source = placementTraceEntries[sourceIndex]
+        local entry = {}
+        for key, value in pairs(source) do
+            entry[key] = value
+        end
+        copy[index] = entry
+    end
+    return copy
+end
+
+function PlacementTrace.IsEnabled()
+    return placementTraceEnabled
+end
+
 -- ===================================================================
 -- LIBPLEEBUG PROFILING SETUP
 -- ===================================================================
@@ -715,6 +792,96 @@ function Shared.IsGroupStoreReady()
     if G.IsRestoring and G.IsRestoring() then return false end
     local SM = G.StateManager
     if SM and SM.IsInAnyProtection and SM.IsInAnyProtection() then return false end
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- AURA CONTAINER REPAIR (12.1 engine bug, Blizzard hotfix pending)
+--
+-- AuraContainer candidate filters BREAK in any situation that fails
+-- UnitCanAssist, and they fail OPEN: the slot stops filtering and displays an
+-- ARBITRARY aura instead of nothing. That is the Bonegrinder wrong-aura report
+-- (a permanently-active rep bonus wins a filterless HELPFUL slot).
+-- Confirmed by Blizzard in WoWUIDev on 2026-08-20, hotfix in progress. Known
+-- triggers: vehicles (Silvermoon carts brick every container; Mchimba's entomb
+-- is the same class), cinematics and movies, faction change, range, and the end
+-- of a boss encounter.
+--
+-- THE REPAIR, both halves verified against the 12.1 source:
+--   * AuraContainerSharedMixin:SetEnabled (Blizzard_AuraContainer.lua:28) is
+--     GUARDED ON CHANGE, so SetEnabled(true) on a live container is a NO-OP.
+--     Repair therefore has to CYCLE false -> true, which re-runs
+--     UpdateEventRegistrations + UpdateAllAuras and revives a container that
+--     stopped listening.
+--   * SetAuraSlotCandidateFilters ends with UpdateAllAuras, so re-pushing the
+--     filter both restores the data and forces a rescan.
+-- Neither creates a frame, so both are legal IN COMBAT under aura secrecy --
+-- which matters, because the entomb case happens mid-pull.
+--
+-- Subscribers are coalesced to ONE pass per event on a zero-delay timer: a
+-- container exists per icon per unit, so a cinematic start must not rebuild
+-- every container inline in a single frame.
+-- ═══════════════════════════════════════════════════════════════════════════
+Shared.AURA_CONTAINER_REPAIR_EVENTS = {
+    "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED",   -- vehicles AND entomb-style control loss
+    "UNIT_ENTERED_VEHICLE", "UNIT_EXITED_VEHICLE",
+    "CINEMATIC_START", "CINEMATIC_STOP",
+    "PLAY_MOVIE", "STOP_MOVIE",
+    "UNIT_FACTION",
+    "ENCOUNTER_END",
+}
+
+local repairSubscribers = {}
+local repairWatcher, repairQueued
+
+local function FlushAuraContainerRepair()
+    repairQueued = false
+    for i = 1, #repairSubscribers do
+        local cb = repairSubscribers[i]
+        if cb then cb() end
+    end
+end
+
+--- Subscribe to the aura-container repair pass. Callback takes no arguments and
+--- should re-enable and re-filter every container the module owns.
+function Shared.RegisterAuraContainerRepair(callback)
+    if type(callback) ~= "function" then return end
+    for _, existing in ipairs(repairSubscribers) do
+        if existing == callback then return end   -- idempotent
+    end
+    repairSubscribers[#repairSubscribers + 1] = callback
+
+    if not repairWatcher then
+        repairWatcher = CreateFrame("Frame")
+        for _, e in ipairs(Shared.AURA_CONTAINER_REPAIR_EVENTS) do
+            repairWatcher:RegisterEvent(e)
+        end
+        repairWatcher:SetScript("OnEvent", function(_, event, evUnit)
+            -- unit-filtered events: only our own transitions matter
+            if (event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE"
+                or event == "UNIT_FACTION") and evUnit ~= "player" then
+                return
+            end
+            if repairQueued then return end
+            repairQueued = true
+            C_Timer.After(0, FlushAuraContainerRepair)
+        end)
+    end
+end
+
+--- Cycle one container off and on. Returns true if it was cycled.
+--- Exposed so both consumers use ONE implementation of the guarded-setter dance.
+function Shared.RepairAuraContainer(container)
+    if not container or type(container.SetEnabled) ~= "function" then return false end
+    -- IsEnabled may be absent on an older client; assume enabled and cycle anyway.
+    local wasEnabled = (type(container.IsEnabled) ~= "function") or container:IsEnabled()
+    if wasEnabled then
+        container:SetEnabled(false)
+        container:SetEnabled(true)
+    else
+        -- Left disabled on purpose (parked / hidden owner): do not force it on.
+        return false
+    end
     return true
 end
 

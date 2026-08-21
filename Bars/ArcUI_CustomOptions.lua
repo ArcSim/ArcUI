@@ -782,9 +782,15 @@ function ns.CustomOptions.ShowCooldownDialog(editingCdID)
         cooldownDialogData.iconTextureID = icon
       end
       -- Try to auto-detect cooldown duration
+      -- GetSpellCooldown().duration is SECRET in restricted contexts, so a bare
+      -- `> 0` throws, and STORING it would also save as nil. This is only a
+      -- convenience prefill, so guard the read and skip it when unreadable:
+      -- the user types the duration themselves rather than getting an error.
+      -- Twin of the startTime compare fixed in ArcUI_CDMEnhance.lua (~8313).
       local cdInfo = C_Spell.GetSpellCooldown(id)
-      if cdInfo and cdInfo.duration and cdInfo.duration > 0 then
-        cooldownDialogData.cooldown.baseDuration = cdInfo.duration
+      local dur = cdInfo and cdInfo.duration
+      if dur and not (issecretvalue and issecretvalue(dur)) and dur > 0 then
+        cooldownDialogData.cooldown.baseDuration = dur
       end
     end
     widget:ClearFocus()

@@ -66,7 +66,13 @@ function IE.GetExportPayload()
             out[k] = DeepCopy(v)
         end
     end
-    return { v = EXPORT_VERSION, config = out }, nil
+    -- Record the author's UIParent size so the importer can place the bar in the
+    -- same spot at a different interface scale. barPosition is stored as absolute
+    -- UIParent units, and UIParent's WIDTH in units changes with the UI scale, so
+    -- the raw numbers are only meaningful alongside the screen they came from.
+    return { v = EXPORT_VERSION, config = out,
+             uiW = UIParent and UIParent:GetWidth() or nil,
+             uiH = UIParent and UIParent:GetHeight() or nil }, nil
 end
 
 -- ===================================================================
@@ -188,6 +194,24 @@ function IE.Import(data, opts)
 
     local cfg = GetCastbarDB()
     if not cfg then return false, "Castbar config not available" end
+
+    -- UI SCALE PORTABILITY. barPosition is absolute UIParent units (frame:GetPoint),
+    -- and UIParent's width in units changes with the interface scale: a lower scale
+    -- fits MORE units across the same screen. So a string authored at one scale put
+    -- the bar somewhere else on import, and at a big enough difference off screen
+    -- entirely. Scale the offsets by the ratio of the two screens.
+    -- Strings made before this shipped carry no uiW/uiH and are left EXACTLY as they
+    -- were, so nothing that imports correctly today changes.
+    local pos = config.barPosition
+    if type(pos) == "table" and tonumber(pos.x) and tonumber(pos.y) then
+        local srcW, srcH = tonumber(payload.uiW), tonumber(payload.uiH)
+        local dstW = UIParent and UIParent:GetWidth()
+        local dstH = UIParent and UIParent:GetHeight()
+        if srcW and srcH and srcW > 0 and srcH > 0 and dstW and dstH and dstW > 0 and dstH > 0 then
+            pos.x = math.floor(tonumber(pos.x) * (dstW / srcW) + 0.5)
+            pos.y = math.floor(tonumber(pos.y) * (dstH / srcH) + 0.5)
+        end
+    end
 
     wipe(cfg)
     local applied = 0

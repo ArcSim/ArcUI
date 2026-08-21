@@ -636,4 +636,36 @@ scOvLoader:SetScript("OnEvent", function(self, event)
   C_Timer.After(5, function() SC.RefreshOverlays() end)
 end)
 
+
+-- CONTAINER REPAIR (12.1 engine bug -- full write-up in ns.CDMShared).
+-- Stack overlays hold one container per unit per frame. Cycle them, then
+-- re-push the ACTIVE overlay's candidate ids; an inactive overlay keeps its
+-- released (empty) filter, which is already the correct state for it.
+-- MUST live INSIDE the IS_121_SC block: overlayRecs and ResolveIDs are locals
+-- scoped to it, and a copy of this placed after the closing `end` compiled fine
+-- and then failed at runtime with "bad argument #1 to 'pairs'" because the
+-- reference resolved to a nil GLOBAL instead.
+function ns.StackColor.RepairContainers()
+  local Sh = ns.CDMShared
+  for _, rec in pairs(overlayRecs) do
+    if rec and rec.subs then
+      for _, sub in ipairs(rec.subs) do
+        if sub.container then
+          if Sh and Sh.RepairAuraContainer then
+            Sh.RepairAuraContainer(sub.container)
+          end
+          if sub.key and sub.container.SetAuraSlotCandidateFilters then
+            local ids = (rec.active and type(rec.cdID) == "number") and ResolveIDs(rec.cdID) or nil
+            sub.container:SetAuraSlotCandidateFilters(sub.key,
+              { includeSpellIDs = ids or {} })
+          end
+        end
+      end
+    end
+  end
+end
+
+if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
+  ns.CDMShared.RegisterAuraContainerRepair(ns.StackColor.RepairContainers)
+end
 end -- IS_121_SC

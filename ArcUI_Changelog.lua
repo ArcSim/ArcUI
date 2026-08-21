@@ -29,6 +29,27 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.2",
+    sections = {
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Aura icons and bars fix themselves", desc = "They could start showing a completely different aura after a vehicle, cinematic, faction change or boss kill. They now correct themselves right away." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Aura icon borders stayed visible when the icon was hidden", desc = "With Aura Missing opacity at 0 the border kept showing, usually after a group join or zone change." },
+          { title = "Castbar imports landed in the wrong place", desc = "A string from someone on a different interface scale now puts the bar where they had it." },
+          { title = "Kick Assist macro errors", desc = "The Macros tab could error, and managed macros could not be created or edited." },
+          { title = "Kick Assist edited the wrong macro", desc = "Edits could go to an account macro with the same name instead of yours." },
+          { title = "Errors while tracking potions, healthstones and trinkets", desc = "Opening the options panel could throw repeating errors." },
+          { title = "Error when adding a custom cooldown in a dungeon or raid", desc = "The duration auto-fill could error instead of leaving the field for you." },
+          { title = "Stray icons after logging in", desc = "Untracked icons with borders and tooltips could appear." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.1",
     sections = {
       {

@@ -38,6 +38,12 @@ local DL = ns.CDMGroups.DynamicLayout
 
 -- Shared helper for DB access
 local Shared = ns.CDMShared
+local PlacementTrace = ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SECRET-SAFE AURA INSTANCE ID CHECK
@@ -2450,6 +2456,13 @@ local function SavePosition(cdID, groupName, row, col, sortIndex)
         col = col,
         sortIndex = sortIndex or (row * 100 + col),
     }
+    TracePlacement("DynamicLayout.SavePosition", {
+        id = cdID,
+        group = groupName,
+        row = row,
+        col = col,
+        sortIndex = sortIndex,
+    })
 end
 
 -- Collect and categorize group members for reflow
@@ -2773,6 +2786,11 @@ function DL.ReflowGroup(group)
     for row = 0, maxRows - 1 do
         group.grid[row] = {}
     end
+    TracePlacement("DynamicLayout.ReflowGroup.rebuildGrid", {
+        group = group.name,
+        rows = maxRows,
+        columns = maxCols,
+    })
     
     -- ═══════════════════════════════════════════════════════════════════════
     -- CRITICAL FIX: Reserve toSkip members' positions BEFORE building slots
@@ -2808,12 +2826,24 @@ function DL.ReflowGroup(group)
             local member = iconData.member
             
             -- Update member position
+            local previousRow, previousCol = member.row, member.col
             member.row = slot.row
             member.col = slot.col
             
             -- CRITICAL: Set _dynamicSlot for proper tracking
             -- This is the compacted slot index (0-based)
             member._dynamicSlot = i - 1
+            if previousRow ~= slot.row or previousCol ~= slot.col then
+                TracePlacement("DynamicLayout.ReflowGroup.memberPosition", {
+                    id = cdID,
+                    group = group.name,
+                    previousRow = previousRow,
+                    previousCol = previousCol,
+                    row = slot.row,
+                    col = slot.col,
+                    dynamicSlot = member._dynamicSlot,
+                })
+            end
             
             -- Update grid
             group.grid[slot.row][slot.col] = cdID

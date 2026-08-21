@@ -549,6 +549,33 @@ function AuraIcons.ReassertFilters()
     end
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CONTAINER REPAIR (12.1 engine bug -- see ns.CDMShared for the full write-up)
+-- Filters fail OPEN whenever UnitCanAssist fails: vehicles, cinematics, faction
+-- change, range, encounter end. Re-pushing the filter is not always enough when
+-- the CONTAINER itself stops listening, so cycle SetEnabled off/on first (the
+-- setter is guarded on change, so only a false->true cycle re-registers events
+-- and refreshes) and then re-assert every slot's believed-correct filter.
+-- Both operations are data-only, so this works IN COMBAT -- which is the point,
+-- since the entomb case happens mid-pull.
+-- ═══════════════════════════════════════════════════════════════════════════
+function AuraIcons.RepairContainers()
+    if not IS_121 then return end
+    local Sh = ns.CDMShared
+    if Sh and Sh.RepairAuraContainer then
+        for _, rec in ipairs(allContainers) do
+            Sh.RepairAuraContainer(rec.frame)
+        end
+    end
+    -- Re-push filters last: SetAuraSlotCandidateFilters ends with UpdateAllAuras,
+    -- so this both restores the data and forces the rescan.
+    AuraIcons.ReassertFilters()
+end
+
+if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
+    ns.CDMShared.RegisterAuraContainerRepair(AuraIcons.RepairContainers)
+end
+
 local regenWatcher = CreateFrame("Frame")
 regenWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
 regenWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -1213,6 +1240,14 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
     local bcfg = settings and settings.border
     local ghostHost = holder._arcBorderOverlay or holder
     ApplyBorderEdges(ghostHost, holder, "_arcAuraGhostBorder", bcfg, missAlpha)
+    -- CDMEnhance's holder edges are now EXEMPTED at the source: UpdateIconBorder
+    -- returns early on _arcIsAuraIcon, because AuraIcons owns aura-holder
+    -- borders (the ghost edges above plus the button edges). This zeroing stays
+    -- as a belt for edges created before that exemption, and for any path that
+    -- creates them without going through UpdateIconBorder. It is NOT the
+    -- mechanism any more: it used to be, and it lost the race every time a
+    -- restyle ran after ApplySettings, leaving a bare border floating with
+    -- Aura Missing alpha at 0 (surfaced on group joins and zone changes).
     if holder._arcBorderEdges then
         for _, edgeTex in pairs(holder._arcBorderEdges) do
             if edgeTex.SetAlpha then edgeTex:SetAlpha(0) end

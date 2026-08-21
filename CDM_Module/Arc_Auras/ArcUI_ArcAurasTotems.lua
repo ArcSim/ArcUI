@@ -38,6 +38,12 @@ end
 
 local Totems = {}
 ns.ArcAurasTotems = Totems
+local PlacementTrace = ns.CDMGroups and ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- arcID scheme: "arc_totem_<slot>"
 local ID_PREFIX = "arc_totem_"
@@ -392,6 +398,11 @@ local function EnsureTotemGroup()
         if ns.CDMGroups.SnapContainerPositionToPixel then
             ns.CDMGroups.SnapContainerPositionToPixel(g)
         end
+        TracePlacement("ArcAurasTotems.EnsureTotemGroup.created", {
+            group = GROUP_NAME,
+            x = 0,
+            y = 0,
+        })
     end
     return g
 end
@@ -413,7 +424,22 @@ local function CreateAndPlaceSlot(slot, group, cols)
         local idx = slot - 1
         local row = math.floor(idx / cols)
         local col = idx % cols
+        TracePlacement("ArcAurasTotems.CreateAndPlaceSlot.assignGroup", {
+            id = arcID,
+            group = GROUP_NAME,
+            slot = slot,
+            row = row,
+            col = col,
+        })
         ns.CDMGroups.Integration.AssignToGroup(arcID, entry.frame, GROUP_NAME, row, col, "cooldown")
+    else
+        TracePlacement("ArcAurasTotems.CreateAndPlaceSlot.preservePlacement", {
+            id = arcID,
+            slot = slot,
+            hasSavedPosition = sp ~= nil,
+            alreadyGrouped = alreadyGrouped,
+            groupAvailable = group ~= nil,
+        })
     end
     return entry
 end

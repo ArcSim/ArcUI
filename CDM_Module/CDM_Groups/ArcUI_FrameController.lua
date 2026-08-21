@@ -27,6 +27,12 @@ local Controller = ns.FrameController
 -- Dependencies
 local Shared = ns.CDMShared
 local Registry = ns.FrameRegistry
+local PlacementTrace = ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- FRAME REBIND CALLBACK REGISTRY
@@ -666,6 +672,13 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         Debug("AssignFrameToGroup: Group", groupName, "not found for cdID", cdID)
         return false
     end
+    TracePlacement("FrameController.AssignFrameToGroup", {
+        id = cdID,
+        group = groupName,
+        row = row,
+        col = col,
+        viewerType = viewerType,
+    })
     
     -- CRITICAL: Detect if this was a placeholder becoming real
     -- If so, we need to restore all icons to their saved positions first
@@ -740,6 +753,13 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         if not (occMember and occMember.frame and occMember.frame.cooldownID == occupant) then
             return r, c  -- stale grid entry, safe to take over
         end
+        TracePlacement("FrameController.AssignFrameToGroup.collision", {
+            id = cdID,
+            group = groupName,
+            row = r,
+            col = c,
+            occupant = occupant,
+        })
         if group.FindAdjacentFreeSlot then
             local fr, fc = group:FindAdjacentFreeSlot(r, c, true)
             if fr and fc then return fr, fc end
@@ -942,6 +962,12 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
     
     state.stats.framesAssigned = state.stats.framesAssigned + 1
     Debug("AssignFrameToGroup:", cdID, "->", groupName, "[" .. (row or 0) .. "," .. (col or 0) .. "]")
+    TracePlacement("FrameController.AssignFrameToGroup.complete", {
+        id = cdID,
+        group = groupName,
+        row = member.row,
+        col = member.col,
+    })
     return true
 end
 AssignFrameToGroup = (Track and Track("FC.AssignFrameToGroup", AssignFrameToGroup)) or AssignFrameToGroup
@@ -1105,6 +1131,12 @@ local function AssignFrameToOwner(cdID, cdmData)
     
     -- Check savedPositions for existing assignment
     local saved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID]
+    TracePlacement("FrameController.AssignFrameToOwner", {
+        id = cdID,
+        viewerType = viewerType,
+        defaultGroup = defaultGroup,
+        hasSavedPosition = saved ~= nil,
+    })
     
     if saved then
         if saved.type == "group" and saved.target then
@@ -1158,6 +1190,10 @@ local function AssignFrameToOwner(cdID, cdmData)
                 -- already does for a dead target.
                 Debug("AssignFrameToOwner: saved target group", saved.target,
                       "no longer exists - placing as free icon", cdID)
+                TracePlacement("FrameController.AssignFrameToOwner.deadTarget", {
+                    id = cdID,
+                    group = saved.target,
+                })
                 if ns.CDMGroups.savedPositions then
                     ns.CDMGroups.savedPositions[cdID] = nil
                 end
@@ -1167,9 +1203,20 @@ local function AssignFrameToOwner(cdID, cdmData)
                 end
                 return AssignFrameToFree(cdID, frame, fx, fy, saved.iconSize, viewerType, viewerName)
             else
+                TracePlacement("FrameController.AssignFrameToOwner.savedGroup", {
+                    id = cdID,
+                    group = saved.target,
+                    row = targetRow,
+                    col = targetCol,
+                })
                 return AssignFrameToGroup(cdID, frame, saved.target, targetRow, targetCol, viewerType, viewerName)
             end
         elseif saved.type == "free" then
+            TracePlacement("FrameController.AssignFrameToOwner.savedFree", {
+                id = cdID,
+                x = saved.x,
+                y = saved.y,
+            })
             return AssignFrameToFree(cdID, frame, saved.x, saved.y, saved.iconSize, viewerType, viewerName)
         end
     end
@@ -1215,6 +1262,11 @@ local function AssignFrameToOwner(cdID, cdmData)
         if importOverride and importOverride.type == "free" then
             -- Place as free icon during import mode
             Debug("AssignFrameToOwner: Import mode override - placing as free icon at", importOverride.x, importOverride.y)
+            TracePlacement("FrameController.AssignFrameToOwner.importFree", {
+                id = cdID,
+                x = importOverride.x,
+                y = importOverride.y,
+            })
             return AssignFrameToFree(cdID, frame, importOverride.x, importOverride.y, importOverride.iconSize, viewerType, viewerName)
         end
     end
@@ -1232,6 +1284,10 @@ local function AssignFrameToOwner(cdID, cdmData)
 
         if kind == "none" then
             Debug("AssignFrameToOwner: routing = none for", defaultGroup)
+            TracePlacement("FrameController.AssignFrameToOwner.routeNone", {
+                id = cdID,
+                defaultGroup = defaultGroup,
+            })
             return false
         elseif kind == "free" then
             -- Screen CENTRE (offsets from UIParent centre), fanned out so a batch
@@ -1242,11 +1298,23 @@ local function AssignFrameToOwner(cdID, cdmData)
                 fx, fy = ns.CDMGroups.NextFreeDropPosition(nil)
             end
             Debug("AssignFrameToOwner: routing = free position for", defaultGroup)
+            TracePlacement("FrameController.AssignFrameToOwner.routeFree", {
+                id = cdID,
+                defaultGroup = defaultGroup,
+                x = fx,
+                y = fy,
+            })
             return AssignFrameToFree(cdID, frame, fx, fy, nil, viewerType, viewerName)
         elseif kind == "group" and group and group.AddMember then
             if group:AddMember(cdID) then
                 local member = group.members[cdID]
                 if member then
+                    TracePlacement("FrameController.AssignFrameToOwner.routeGroup", {
+                        id = cdID,
+                        group = groupName,
+                        row = member.row,
+                        col = member.col,
+                    })
                     return AssignFrameToGroup(cdID, frame, groupName, member.row, member.col, viewerType, viewerName)
                 end
             end

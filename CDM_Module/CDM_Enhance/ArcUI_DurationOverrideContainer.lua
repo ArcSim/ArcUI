@@ -265,3 +265,26 @@ SlashCmdList["ARCDUROVC"] = function(msg)
     Log("attaching aura %s (%s) onto icon %s ...", tostring(spellID), tostring(sName or "?"), tostring(cdKey))
     DOC.Attach(frame, spellID, rest or "player")
 end
+
+-- CONTAINER REPAIR (12.1 engine bug -- full write-up in ns.CDMShared).
+-- Cycle each attached container, then re-push its slot's spell filter so a
+-- duration override cannot start following an arbitrary aura after a vehicle,
+-- cinematic or faction change.
+function DOC.RepairContainers()
+    local Sh = ns.CDMShared
+    for _, a in pairs(attached) do
+        if a and a.container then
+            if Sh and Sh.RepairAuraContainer then
+                Sh.RepairAuraContainer(a.container)
+            end
+            if a.key and a.spellID and a.container.SetAuraSlotCandidateFilters then
+                a.container:SetAuraSlotCandidateFilters(a.key,
+                    { includeSpellIDs = { [a.spellID] = true } })
+            end
+        end
+    end
+end
+
+if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
+    ns.CDMShared.RegisterAuraContainerRepair(DOC.RepairContainers)
+end

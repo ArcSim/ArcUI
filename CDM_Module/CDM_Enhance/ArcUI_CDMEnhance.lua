@@ -1724,6 +1724,31 @@ end
 
 local function UpdateIconBorder(frame, cdID, iconWidth, iconHeight, padding, zoom)
   if not cdID then return end
+  -- AURA HOLDERS OWN THEIR OWN BORDER. Do not paint _arcBorderEdges on them.
+  -- An aura icon has THREE border paths: the engine button's (_arcBtnBorder,
+  -- only rendered while the aura is active), the ghost border
+  -- (_arcAuraGhostBorder, painted at the aura-MISSING alpha), and these holder
+  -- edges. AuraIcons paints the first two itself with identical geometry, and
+  -- used to SUPPRESS these by setting them to alpha 0 inside ApplySettings.
+  -- That made it a race: the holder deliberately stays at alpha 1 so the button
+  -- can render, so whenever this function ran AFTER ApplySettings it repainted
+  -- these edges at FULL alpha and nothing re-zeroed them. Result: with Aura
+  -- Missing alpha at 0 the icon was correctly invisible but a bare border
+  -- floated on screen, surfacing on group joins and zone changes because those
+  -- drive a restyle sweep. One owner per property: AuraIcons owns aura-holder
+  -- borders, so this returns instead of competing.
+  if frame._arcIsAuraIcon then
+    local existing = frame._arcBorderEdges
+    if existing then
+      -- edges created before this exemption existed: retire them for good
+      for _, t in pairs(existing) do
+        if t.Hide then t:Hide() end
+        if t.SetAlpha then t:SetAlpha(0) end
+      end
+    end
+    return
+  end
+
   
   local cfg = GetIconSettings(cdID)
   if not cfg or not cfg.border then return end
@@ -8018,9 +8043,24 @@ function ns.CDMEnhance.ForceShowAllCDMIcons()
         end
         -- Otherwise skip - it's an orphaned frame from spec change
       else
-        -- Frame is in a CDM viewer or group container, safe to show
-        data.frame:SetAlpha(1)
-        data.frame:Show()
+        -- NOT unconditionally safe to show. A POOLED / RELEASED frame is ALSO a
+        -- viewer child, and CDM hides it on purpose. enhancedFrames is keyed by
+        -- the id the frame carried when we STYLED it, so a frame CDM has since
+        -- released still has an entry here and used to be force-shown: a skinned,
+        -- hover-enabled icon with a spell but NO cooldownID, which is the phantom
+        -- icon report. Require the frame to still hold the id we know it by.
+        -- Works for both families: Arc frames set frame.cooldownID = arcID at
+        -- creation (ArcUI_ArcAuras.lua:857) and CDM never rebinds them, so this
+        -- always passes for them and is inert.
+        -- Failing CLOSED is correct for a force-SHOW: skipping a frame that is
+        -- genuinely mid-rebind costs nothing, because the next SetCooldownID ->
+        -- EnhanceFrame pass shows it. Showing a released one is the bug. That is
+        -- why this is safe here while the same nil-test would violate the
+        -- hook-state rule in Maintain, where it would CLEAR state instead.
+        if data.frame.cooldownID == cdID then
+          data.frame:SetAlpha(1)
+          data.frame:Show()
+        end
       end
     end
   end
@@ -8270,7 +8310,16 @@ local function ApplyCooldownPreview(frame, cdID, enable)
         and (frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID)
       if spellID and frame.Cooldown then
         local cdInfo = C_Spell.GetSpellCooldown(spellID)
-        if cdInfo and cdInfo.startTime and cdInfo.startTime > 0 then
+        -- isActive, NOT startTime. The comment above is right and the old code
+        -- ignored it: `cdInfo.startTime > 0` COMPARES A SECRET and throws
+        -- ("attempt to compare field 'startTime' (a secret number value, while
+        -- execution tainted by 'ArcUI')"). It surfaces on CDM ITEM entries -
+        -- potions and healthstones carry a secret spellID, so every field
+        -- GetSpellCooldown returns for them is secret too - and it fires from
+        -- the options-panel callback, which is always tainted.
+        -- isActive is annotated NeverSecret in SpellCooldownInfo and carries the
+        -- same meaning this check wanted: is a cooldown running right now.
+        if cdInfo and cdInfo.isActive == true then
           local durObj = C_Spell.GetSpellCooldownDuration(spellID, true)
           if durObj then
             frame._arcBypassCDHook = true

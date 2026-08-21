@@ -19,6 +19,12 @@ ns.CDMGroups.Integration = ns.CDMGroups.Integration or {}
 local Integration = ns.CDMGroups.Integration
 local Shared = ns.CDMShared
 local Registry = ns.FrameRegistry
+local PlacementTrace = ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- REGISTER EXTERNAL FRAME
@@ -65,6 +71,12 @@ function Integration.RegisterExternalFrame(id, frame, viewerType, defaultGroup)
     -- CHECK FOR SAVED POSITION FIRST
     -- ═══════════════════════════════════════════════════════════════════════════
     local saved = ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[id]
+    TracePlacement("Integration.RegisterExternalFrame", {
+        id = id,
+        viewerType = viewerType,
+        defaultGroup = defaultGroup,
+        hasSavedPosition = saved ~= nil,
+    })
     
     if saved then
         -- Use FrameController if available
@@ -122,6 +134,12 @@ function Integration.RegisterExternalFrame(id, frame, viewerType, defaultGroup)
     local offsetX = START_X + (arcAuraCount * SPACING)
     local offsetY = START_Y
     
+    TracePlacement("Integration.RegisterExternalFrame.noSavedPosition", {
+        id = id,
+        viewerType = viewerType,
+        x = offsetX,
+        y = offsetY,
+    })
     return Integration.AssignAsFreeIcon(id, frame, offsetX, offsetY, 36, viewerType)
 end
 
@@ -132,6 +150,13 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 function Integration.AssignToGroup(id, frame, groupName, row, col, viewerType)
+    TracePlacement("Integration.AssignToGroup", {
+        id = id,
+        group = groupName,
+        row = row,
+        col = col,
+        viewerType = viewerType,
+    })
     -- Try FrameController first
     local Controller = ns.FrameController
     if Controller and Controller.AssignFrameToGroup then
@@ -225,6 +250,13 @@ function Integration.AssignAsFreeIcon(id, frame, x, y, iconSize, viewerType)
     x = x or 0
     y = y or 0
     iconSize = iconSize or 36
+    TracePlacement("Integration.AssignAsFreeIcon", {
+        id = id,
+        viewerType = viewerType,
+        x = x,
+        y = y,
+        iconSize = iconSize,
+    })
     
     -- Try FrameController first
     local Controller = ns.FrameController
@@ -303,6 +335,15 @@ function Integration.SavePosition(id, posType, groupName, row, col, x, y, iconSi
     end
     
     ns.CDMGroups.savedPositions[id] = positionData
+    TracePlacement("Integration.SavePosition", {
+        id = id,
+        positionType = posType,
+        group = groupName,
+        row = row,
+        col = col,
+        x = x,
+        y = y,
+    })
     
     -- Save to spec data if function exists
     if ns.CDMGroups.SavePositionToSpec then

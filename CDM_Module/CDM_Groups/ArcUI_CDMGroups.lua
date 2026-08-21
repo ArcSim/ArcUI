@@ -40,6 +40,12 @@ local MSG_PREFIX = "|cff00ccffArcUI|r: "
 -- Local aliases for frequently used helpers (avoids table lookups in hot paths)
 -- Use cached versions from Shared to avoid DB lookups on every call
 local Shared = ns.CDMShared
+local PlacementTrace = ns.CDMGroups.PlacementTrace
+local function TracePlacement(reason, data)
+    if PlacementTrace then
+        PlacementTrace.Record(reason, data)
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- MODULE-LEVEL CACHED ENABLED STATE
@@ -5953,6 +5959,13 @@ local function SaveGroupPosition(cdID, groupName, row, col, forceSave, sortIndex
     -- Write to the verified profile table
     if _G.ArcUI_SaveDebug then _G.ArcUI_SaveDebug("SaveGroupPosition", cdID, groupName, row, col, forceSave) end  -- [TEMP DEBUG]
     profileSavedPositions[cdID] = positionData
+    TracePlacement("CDMGroups.SaveGroupPosition", {
+        id = cdID,
+        group = groupName,
+        row = row,
+        col = col,
+        forced = forceSave == true,
+    })
 end
 ns.CDMGroups.SaveGroupPosition = SaveGroupPosition
 
@@ -8671,6 +8684,13 @@ function ns.CDMGroups.CreateGroup(name, groupType)
             if hasFrame or not expansionBlocked then
                 self.layout.gridCols = col + 1
                 if db and profileFullyLoaded then db.gridCols = self.layout.gridCols end
+                TracePlacement("CDMGroups.AddMemberAt.expandColumns", {
+                    id = cooldownID,
+                    group = self.name,
+                    row = row,
+                    col = col,
+                    columns = self.layout.gridCols,
+                })
             end
         end
 
@@ -8832,6 +8852,13 @@ function ns.CDMGroups.CreateGroup(name, groupType)
                         if newCol >= self.layout.gridCols then
                             self.layout.gridCols = newCol + 1
                             if db and profileFullyLoaded then db.gridCols = self.layout.gridCols end
+                            TracePlacement("CDMGroups.AddMemberAtWithFrame.expandColumns", {
+                                id = existingCdID,
+                                group = self.name,
+                                row = newRow,
+                                col = newCol,
+                                columns = self.layout.gridCols,
+                            })
                         end
                         
                         -- Now move the existing member (grid is big enough)
@@ -8899,6 +8926,13 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         if col >= self.layout.gridCols then
             self.layout.gridCols = col + 1
             if db and profileFullyLoaded then db.gridCols = self.layout.gridCols end
+            TracePlacement("CDMGroups.AddMemberAtWithFrame.expandColumns", {
+                id = cooldownID,
+                group = self.name,
+                row = row,
+                col = col,
+                columns = self.layout.gridCols,
+            })
         end
         
         -- Force save if this icon didn't have a saved position (new/legacy icons)
@@ -10678,8 +10712,20 @@ function ns.CDMGroups.CreateGroup(name, groupType)
                 -- CRITICAL: Update member.row/col to match actual rendered position
                 -- This keeps member state in sync with visual layout
                 -- savedPositions remain unchanged (authoritative for user's intended layout)
+                local previousRow, previousCol = member.row, member.col
                 member.row = row
                 member.col = col
+                if previousRow ~= row or previousCol ~= col then
+                    TracePlacement("CDMGroups.Layout.memberPosition", {
+                        id = cdID,
+                        group = self.name,
+                        previousRow = previousRow,
+                        previousCol = previousCol,
+                        row = row,
+                        col = col,
+                        dynamic = usesDynamicPosition == true,
+                    })
+                end
                 
                 -- Backfill viewerType if missing using CDM category
                 if not member.viewerType then
@@ -11294,6 +11340,13 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         self.layout.gridCols = maxCols + 1
         local db = getDB()
         if db then db.gridCols = self.layout.gridCols end
+        TracePlacement("CDMGroups.InsertColumnAt", {
+            group = self.name,
+            insertColumn = insertCol,
+            previousColumns = maxCols,
+            columns = self.layout.gridCols,
+            rows = maxRows,
+        })
         
         -- Compensate container position for growth direction
         local _rp = (function() local _,_h=GetPhysicalScreenSize() local _s=UIParent:GetScale() if _h and _h>0 and _s and _s>0 then return (768/_h)/_s end return 1 end)()
@@ -11350,6 +11403,11 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         self.layout.gridCols = self.layout.gridCols + 1
         local db = getDB()
         if db then db.gridCols = self.layout.gridCols end
+        TracePlacement("CDMGroups.AddColumnAtEnd", {
+            group = self.name,
+            columns = self.layout.gridCols,
+            rows = self.layout.gridRows,
+        })
         
         -- Compensate container position for growth direction
         local _rp = (function() local _,_h=GetPhysicalScreenSize() local _s=UIParent:GetScale() if _h and _h>0 and _s and _s>0 then return (768/_h)/_s end return 1 end)()
