@@ -1336,6 +1336,86 @@ local function GetIconSettings(cooldownID)
   return GetEffectiveIconSettings(cooldownID)
 end
 
+-- ═══════════════════════════════════════════════════════════════════════
+-- ICON TEXTURE — THE SINGLE AUTHORITY for what art a CDM icon shows.
+--
+-- Every writer (style pass, texture hook, cleanup, rebind) resolves through
+-- here, so no two of them can ever disagree. Resolution is ALWAYS from the
+-- frame's LIVE occupant (frame.cooldownID), NEVER a style-time bake: CDM
+-- reassigns frames across cooldownIDs on every rebuild (constantly in
+-- dungeons), and a baked decision put the custom icon on the WRONG spell
+-- while the custom spell's frame showed its default, alternating as CDM
+-- refreshed ("icons keep fighting in combat").
+--
+-- Priority: custom icon > ignore-aura-override > no opinion (CDM paints).
+-- The two features are INDEPENDENT — ignoreAuraOverride works on its own
+-- when the user has set no custom icon, and a custom icon wins outright
+-- when both are configured.
+--
+-- Returns nil = we have no opinion; CDM's own texture stands.
+-- ═══════════════════════════════════════════════════════════════════════
+local function ResolveIconTexture(frame)
+  if not frame then return nil end
+  local cdID = frame.cooldownID
+  if not cdID then return nil end
+  local cfg = GetEffectiveIconSettings(cdID)
+  if not cfg then return nil end
+
+  -- 1. Custom Icon Override (spell ID or texture file ID)
+  local customID = cfg.customIconID
+  if customID and customID ~= 0 and customID ~= "" then
+    return C_Spell.GetSpellTexture(customID) or customID
+  end
+
+  -- 2. Ignore Aura Override: while the aura is up CDM swaps the art to the
+  --    aura's icon — force the SPELL icon back. Only meaningful while the
+  --    aura is actually active; otherwise CDM is already showing the spell.
+  local iao = (cfg.cooldownSwipe and cfg.cooldownSwipe.ignoreAuraOverride)
+    or (cfg.auraActiveState and cfg.auraActiveState.ignoreAuraOverride)
+  if iao and frame._arcAuraActive == true then
+    local ci = frame.cooldownInfo
+    local sid = ci and (ci.overrideSpellID or ci.spellID)
+    if sid then return C_Spell.GetSpellTexture(sid) end
+  end
+
+  return nil
+end
+
+-- Apply the resolved texture to a frame's Icon.
+--
+-- fromStylePass: only a settings-driven pass may HAND THE ART BACK to CDM.
+-- The hook must never do that — when Ignore Aura Override is off and an aura
+-- goes up, CDM legitimately paints the aura icon, and a hook-side "restore"
+-- would stomp it with the spell icon. The _arcTextureOwned latch makes the
+-- hand-back fire exactly once, on the transition out of ownership.
+local function ApplyIconTexture(frame, fromStylePass)
+  if not frame or not frame.Icon then return end
+
+  local tex = ResolveIconTexture(frame)
+  if tex then
+    frame._arcTextureOwned = true
+    frame._arcBypassTextureHook = true
+    frame.Icon:SetTexture(tex)
+    frame._arcBypassTextureHook = false
+    return
+  end
+
+  if fromStylePass and frame._arcTextureOwned then
+    frame._arcTextureOwned = nil
+    local ci = frame.cooldownInfo
+    local sid = ci and (ci.overrideSpellID or ci.spellID)
+    if sid then
+      local t = C_Spell.GetSpellTexture(sid)
+      if t then
+        frame._arcBypassTextureHook = true
+        frame.Icon:SetTexture(t)
+        frame._arcBypassTextureHook = false
+      end
+    end
+  end
+end
+ns.CDMEnhance.ApplyIconTexture = ApplyIconTexture
+
 -- Ensure per-icon settings entry exists (call this when user makes a change)
 -- Get or create per-icon settings with full structure (for setters)
 -- NOW USES SPEC-BASED STORAGE (per-character, per-spec)
@@ -3285,8 +3365,11 @@ ApplyIconStyle = function(frame, cdID)
   frame._arcIgnoreAuraOverride = ignoreAuraOverride or false
   
   -- Custom Icon Override: spell ID or texture file ID
+  -- NOTE: deliberately NOT baked onto the frame. A style-time snapshot of the
+  -- override is what put custom icons on the wrong spell after a CDM rebind;
+  -- ResolveIconTexture reads it live instead. Kept as a local only for the
+  -- Masque routing check below.
   local customIconID = cfg.customIconID
-  frame._arcCustomIconID = customIconID
     
   -- ═══════════════════════════════════════════════════════════════════
   -- MASQUE CONTROLS COOLDOWNS: Skip cooldown styling but keep No GCD Swipe
@@ -3828,109 +3911,6 @@ ApplyIconStyle = function(frame, cdID)
     end
     
     -- ═══════════════════════════════════════════════════════════════════
-    -- ICON TEXTURE HOOK - Install unconditionally so ignoreAuraOverride
-    -- and customIconID work regardless of whether Masque or ArcUI controls cooldowns
-    -- ═══════════════════════════════════════════════════════════════════
-    if (ignoreAuraOverride or customIconID) and frame.Icon then
-      -- Hook Icon:SetTexture to enforce our override texture
-      if not frame.Icon._arcTextureHooked then
-        frame.Icon._arcTextureHooked = true
-        frame.Icon._arcParentFrame = frame
-        
-        hooksecurefunc(frame.Icon, "SetTexture", function(self, newTexture)
-          local pf = self._arcParentFrame
-          if not pf then return end
-          if pf._arcBypassTextureHook then return end
-
-          -- CUSTOM ICON OVERRIDE: Always enforce if set (highest priority).
-          -- LIVE lookup by the frame's CURRENT occupant — _arcCustomIconID is
-          -- a style-time bake, and CDM reassigns frames across cooldownIDs on
-          -- rebuilds (constantly in dungeons): the stale bake put the custom
-          -- icon on the WRONG spell while the custom spell's new frame showed
-          -- its default, alternating as CDM refreshed ("icons switching
-          -- between them in combat"). CDM fires RefreshSpellTexture right
-          -- after every cooldownID assignment, so this hook self-heals each
-          -- rebind. cooldownID is a plain non-secret read; GetIconSettings is
-          -- the cached merge.
-          local cdID2 = pf.cooldownID
-          local cfg2 = cdID2 and ns.CDMEnhance and ns.CDMEnhance.GetIconSettings
-            and ns.CDMEnhance.GetIconSettings(cdID2)
-          local customID = cfg2 and cfg2.customIconID
-          if customID then
-            -- Try as spell ID first, fall back to direct texture file ID
-            local texture = C_Spell.GetSpellTexture(customID) or customID
-            if texture then
-              pf._arcBypassTextureHook = true
-              self:SetTexture(texture)
-              pf._arcBypassTextureHook = false
-            end
-            return
-          end
-          
-          -- Only enforce when ignoreAuraOverride is active AND aura is up.
-          -- Same live-lookup rule as above: the baked _arcIgnoreAuraOverride
-          -- goes stale when CDM moves this frame to another cooldownID.
-          local iao2 = cfg2 and ((cfg2.cooldownSwipe and cfg2.cooldownSwipe.ignoreAuraOverride)
-            or (cfg2.auraActiveState and cfg2.auraActiveState.ignoreAuraOverride))
-          if iao2 then
-            local auraActive = pf._arcAuraActive == true
-            if auraActive then
-              -- Get current override spell from cooldownInfo (updates dynamically based on talents)
-              local cooldownInfo = pf.cooldownInfo
-              local spellID = cooldownInfo and (cooldownInfo.overrideSpellID or cooldownInfo.spellID)
-              if spellID then
-                local texture = C_Spell.GetSpellTexture(spellID)
-                if texture then
-                  pf._arcBypassTextureHook = true
-                  self:SetTexture(texture)
-                  pf._arcBypassTextureHook = false
-                end
-              end
-            end
-          end
-        end)
-      end
-      
-      -- Apply initial texture override
-      if customIconID then
-        -- Custom icon takes priority
-        local texture = C_Spell.GetSpellTexture(customIconID) or customIconID
-        if texture then
-          frame._arcBypassTextureHook = true
-          frame.Icon:SetTexture(texture)
-          frame._arcBypassTextureHook = false
-        end
-      elseif ignoreAuraOverride then
-        -- Set initial spell texture — ensures we show spell icon immediately, not aura icon
-        local cooldownInfo = frame.cooldownInfo
-        local spellID = cooldownInfo and (cooldownInfo.overrideSpellID or cooldownInfo.spellID)
-        if spellID then
-          local texture = C_Spell.GetSpellTexture(spellID)
-          if texture then
-            frame._arcBypassTextureHook = true
-            frame.Icon:SetTexture(texture)
-            frame._arcBypassTextureHook = false
-          end
-        end
-      end
-    end
-    
-    -- CUSTOM ICON CLEANUP: If the hook was previously installed but customIconID
-    -- is now cleared, restore CDM's original spell icon
-    if not customIconID and not ignoreAuraOverride and frame.Icon and frame.Icon._arcTextureHooked then
-      local cooldownInfo = frame.cooldownInfo
-      local spellID = cooldownInfo and (cooldownInfo.overrideSpellID or cooldownInfo.spellID)
-      if spellID then
-        local texture = C_Spell.GetSpellTexture(spellID)
-        if texture then
-          frame._arcBypassTextureHook = true
-          frame.Icon:SetTexture(texture)
-          frame._arcBypassTextureHook = false
-        end
-      end
-    end
-    
-    -- ═══════════════════════════════════════════════════════════════════
     -- DESATURATION HOOKS - Install unconditionally so they work when 
     -- ignoreAuraOverride is enabled/disabled dynamically
     -- ═══════════════════════════════════════════════════════════════════
@@ -4347,6 +4327,49 @@ ApplyIconStyle = function(frame, cdID)
       -- Update references in case cdID changed
       frame.Cooldown._arcCdID = cdID
     end
+  end
+
+  -- ═══════════════════════════════════════════════════════════════════
+  -- ICON TEXTURE — one authority, installed on EVERY enhanced frame.
+  --
+  -- OUTSIDE the masqueControlsCooldowns branch on purpose: custom icons and
+  -- Ignore Aura Override must work whether Masque or ArcUI controls cooldowns.
+  --
+  -- The hook used to be installed ONLY when this frame's cooldownID had an
+  -- override at style time, while its BODY read settings live. CDM rebinds
+  -- frames across cooldownIDs constantly, so a frame that started without an
+  -- override never got a hook and silently stopped honouring one after a
+  -- rebind ("some don't get applied on log in"). Installing unconditionally
+  -- makes the self-heal real: CDM fires a texture refresh right after every
+  -- cooldownID assignment, so the hook re-resolves on its own.
+  --
+  -- Cost when nothing is overridden: one cached settings lookup per texture
+  -- set, then an immediate nil return.
+  -- ═══════════════════════════════════════════════════════════════════
+  if frame.Icon then
+    if not frame.Icon._arcTextureHooked then
+      frame.Icon._arcTextureHooked = true
+      frame.Icon._arcParentFrame = frame
+
+      hooksecurefunc(frame.Icon, "SetTexture", function(self)
+        local pf = self._arcParentFrame
+        if not pf then return end
+        if pf._arcBypassTextureHook then return end
+        -- fromStylePass = false: the hook may ENFORCE an override but must
+        -- never hand art back to CDM — that would stomp the aura icon CDM
+        -- legitimately paints when Ignore Aura Override is off.
+        ApplyIconTexture(pf, false)
+      end)
+    end
+
+    -- Re-assert ownership every pass: the hook resolves the frame through
+    -- _arcParentFrame, so a pooled Icon that moved between frames would
+    -- otherwise keep resolving against whichever frame hooked it first.
+    frame.Icon._arcParentFrame = frame
+
+    -- Style-pass apply: enforce the override, or hand the art back to CDM
+    -- exactly once if the user just cleared one.
+    ApplyIconTexture(frame, true)
   end
   
   -- Border (pass zoom to properly inset border to match visible icon area)
@@ -7103,7 +7126,6 @@ function ns.CDMEnhance.ApplyIconVisuals(frame)
   local ignoreAuraOverride = (cfg.cooldownSwipe and cfg.cooldownSwipe.ignoreAuraOverride)
     or (cfg.auraActiveState and cfg.auraActiveState.ignoreAuraOverride)
   frame._arcIgnoreAuraOverride = ignoreAuraOverride or false
-  frame._arcCustomIconID = cfg.customIconID
   
   -- Check if glow preview is active for this icon
   local isGlowPreview = ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.IsGlowPreviewActive and
@@ -7454,12 +7476,24 @@ EnhanceFrame = function(frame, cdID, viewerType, viewerName)
   
   -- ═══════════════════════════════════════════════════════════════════
   -- COOLDOWN SPELL ID CACHE - Cache spellID out of combat for event-driven updates
-  -- We read cooldownInfo here (non-secret out of combat) and store for later use
+  -- We read cooldownInfo here and store for later use. NOTE: being out of
+  -- combat does NOT make a spellID non-secret on 12.1 (see the write below) --
+  -- the combat check only keeps this off the hot path.
   -- ═══════════════════════════════════════════════════════════════════
   if (viewerType == "cooldown" or viewerType == "utility") and not InCombatLockdown() then
     local cooldownInfo = frame.cooldownInfo
     if cooldownInfo then
-      local spellID = cooldownInfo.overrideSpellID or cooldownInfo.spellID
+      -- SECRECY: "out of combat" is NOT enough on 12.1. Item/trinket entries
+      -- expose a SECRET spellID regardless of combat (aura secrecy is
+      -- instance-based, not combat-based), so this used to cache a secret and
+      -- every later reader inherited it -- the per-frame SPELL_UPDATE_COOLDOWN
+      -- listener then threw "attempt to compare local 'cachedSpell' (a secret
+      -- number value)" on each event, and the durObj calls below would have
+      -- passed a secret into an API. Neutralize at the WRITE so no reader can
+      -- be poisoned: nil means "unidentifiable", which every reader already
+      -- handles by falling back or skipping.
+      local spellID = NonSecretSpellID(cooldownInfo.overrideSpellID)
+                   or NonSecretSpellID(cooldownInfo.spellID)
       if spellID then
         frame._arcCachedSpellID = spellID
         -- Also cache initial duration objects (ignoreGCD=true for GCD-free readings)
@@ -10712,7 +10746,12 @@ local function RefreshCombatOnlyGlows()
   end
 end
 
-eventFrame:SetScript("OnEvent", function(self, event, arg1)
+-- arg2 MUST be in the signature: COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED
+-- carries (baseSpellID, overrideSpellID). It was missing, so the handler
+-- read a nil GLOBAL named arg2 and treated every override APPLY as a
+-- removal — caches/shadows/glows tracked the BASE spell through the whole
+-- override window (Ascendance's Windstrike reports).
+eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
   if event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownViewer" then
     C_Timer.After(1.0, function()
       if not InCombatLockdown() then
@@ -10764,6 +10803,34 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             ns.CDMGroups.ApplyFreeIconStrata(freeCdID, freeData.frame)
           end
         end
+      end
+      -- ICON TEXTURE: the SAME not-yet-ready-store race as the strata above.
+      -- A style pass that ran before the spec profile loaded saw no
+      -- customIconID, installed no override, and nothing re-styled once the
+      -- profile landed — so the user had to re-enter the ID in the panel to
+      -- force it ("some don't get applied on log in"). Settings are
+      -- guaranteed fresh here: re-resolve every enhanced frame once.
+      for _, data in pairs(enhancedFrames) do
+        if data.frame then ApplyIconTexture(data.frame, true) end
+      end
+      -- REBIND: CDM reassigns frames across cooldownIDs on every rebuild.
+      -- Every other module subscribes to this; CDMEnhance never did, so an
+      -- icon rebound onto an override-bearing cooldownID kept the previous
+      -- occupant's art until something else happened to force a restyle.
+      -- Registered HERE, not at file scope: ns.FrameController does not exist
+      -- yet when this file loads (toc line 97 vs 116).
+      if not eventFrame._arcTextureRebindHooked
+        and ns.FrameController and ns.FrameController.OnFrameRebind then
+        eventFrame._arcTextureRebindHooked = true
+        ns.FrameController.OnFrameRebind(function(f)
+          if not f then return end
+          -- the PREVIOUS occupant's ownership does not carry over
+          f._arcTextureOwned = nil
+          -- enforce only (never restore) on a rebind: CDM repaints the frame
+          -- itself right after an assignment, and a restore here could stomp
+          -- the aura art it legitimately just set on an aura-category icon.
+          ApplyIconTexture(f, false)
+        end)
       end
       if not InCombatLockdown() then
         -- Force CDM to create all frames before we scan

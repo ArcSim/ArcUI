@@ -1410,71 +1410,62 @@ function ArcAuras.GetFrame(arcID)
     return ArcAuras.frames[arcID]
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ICON OVERRIDE — THE single lookup for every Arc icon kind.
+--
+-- Each kind keeps its override in its own store (items and trinkets in
+-- trackedItems, spells in trackedSpells, timers in customTimers, auras in
+-- auraIcons, totems have none). The STORES may differ; the PRECEDENCE must
+-- not. Every reader and every writer goes through here so they cannot drift
+-- apart the way the four hand-rolled copies of this lookup did.
+--
+-- Returns a texture (FileDataID) or nil = "no override, use the source art".
+-- ═══════════════════════════════════════════════════════════════════════════
+function ArcAuras.GetIconOverride(arcID)
+    if type(arcID) ~= "string" then return nil end
+    local db = GetDB()
+    if not db then return nil end
+
+    if arcID:match("^arc_spell_") then
+        local c = db.trackedSpells and db.trackedSpells[arcID]
+        return c and c.iconOverride or nil
+    elseif arcID:match("^arc_timer_") then
+        -- timers resolve their source to a FileDataID at set time and keep it
+        -- in .icon; .iconOverride is the newer unified key. Accept both.
+        local c = db.customTimers and db.customTimers[arcID]
+        return c and (c.iconOverride or c.icon) or nil
+    elseif arcID:match("^arc_aura_") then
+        local d = db.auraIcons and db.auraIcons[arcID]
+        return d and d.iconOverride or nil
+    elseif arcID:match("^arc_totem_") then
+        return nil  -- totem slots draw the totem's own art; no override store
+    end
+
+    local c = db.trackedItems and db.trackedItems[arcID]
+    return c and c.iconOverride or nil
+end
+
 function ArcAuras.UpdateFrameIcon(frame, config)
     if not frame or not config then return end
-    
-    local icon = nil
-    
+
+    -- ONE override lookup for every kind, then per-kind DEFAULT art only if
+    -- the user has not overridden it. The item/name stamps below are set
+    -- either way — they describe the tracked source, not the displayed art.
+    local icon = ArcAuras.GetIconOverride(frame._arcAuraID)
+
     if config.type == "trinket" and config.slotID then
-        -- Check for icon override on trinket/item frames
-        local db2 = GetDB()
-        local trackedItemConfig = db2 and db2.trackedItems and db2.trackedItems[frame._arcAuraID]
-        if trackedItemConfig and trackedItemConfig.iconOverride then
-            icon = trackedItemConfig.iconOverride
-        else
-            local itemID, itemName, itemIcon = GetSlotItemInfo(config.slotID)
-            icon = itemIcon
-        end
-        local itemID, itemName = GetSlotItemInfo(config.slotID)
+        local itemID, itemName, itemIcon = GetSlotItemInfo(config.slotID)
+        if not icon then icon = itemIcon end
         frame._currentItemID = itemID
         frame._currentItemName = itemName
     elseif config.type == "item" and config.itemID then
-        local db2 = GetDB()
-        local trackedItemConfig = db2 and db2.trackedItems and db2.trackedItems[frame._arcAuraID]
-        if trackedItemConfig and trackedItemConfig.iconOverride then
-            icon = trackedItemConfig.iconOverride
-        else
-            local itemName, itemIcon = GetItemNameAndIcon(config.itemID)
-            icon = itemIcon
-        end
+        local itemName, itemIcon = GetItemNameAndIcon(config.itemID)
+        if not icon then icon = itemIcon end
         frame._currentItemID = config.itemID
-        local itemName = GetItemNameAndIcon(config.itemID)
         frame._currentItemName = itemName
-    elseif config.type == "spell" and config.spellID then
-        -- Check for user icon override first (stored in trackedSpells config)
-        local db = GetDB()
-        local trackedConfig = db and db.trackedSpells and db.trackedSpells[frame._arcAuraID]
-        if trackedConfig and trackedConfig.iconOverride then
-            icon = trackedConfig.iconOverride
-        else
-            local spellInfo = C_Spell.GetSpellInfo(config.spellID)
-            if spellInfo then
-                icon = spellInfo.iconID or spellInfo.originalIconID
-            end
-        end
-        frame._currentItemName = config.name or (C_Spell.GetSpellInfo(config.spellID) or {}).name
-        frame._currentItemID = nil
-    elseif config.type == "timer" and config.spellID then
-        -- Custom timer icon: user override from customTimers config, else spell icon.
-        local db = GetDB()
-        local timerConfig = db and db.customTimers and db.customTimers[frame._arcAuraID]
-        if timerConfig and timerConfig.icon then
-            icon = timerConfig.icon
-        else
-            local spellInfo = C_Spell.GetSpellInfo(config.spellID)
-            if spellInfo then
-                icon = spellInfo.iconID or spellInfo.originalIconID
-            end
-        end
-        frame._currentItemName = config.name or (C_Spell.GetSpellInfo(config.spellID) or {}).name
-        frame._currentItemID = nil
-    elseif config.type == "aura" and config.spellID then
-        -- Aura icon (12.1): user override from auraIcons def, else spell icon.
-        local db = GetDB()
-        local auraDef = db and db.auraIcons and db.auraIcons[frame._arcAuraID]
-        if auraDef and auraDef.iconOverride then
-            icon = auraDef.iconOverride
-        else
+    elseif (config.type == "spell" or config.type == "timer" or config.type == "aura")
+        and config.spellID then
+        if not icon then
             local spellInfo = C_Spell.GetSpellInfo(config.spellID)
             if spellInfo then
                 icon = spellInfo.iconID or spellInfo.originalIconID
@@ -1483,7 +1474,7 @@ function ArcAuras.UpdateFrameIcon(frame, config)
         frame._currentItemName = config.name or (C_Spell.GetSpellInfo(config.spellID) or {}).name
         frame._currentItemID = nil
     end
-    
+
     if icon then
         frame.Icon:SetTexture(icon)
         -- NOTE: Don't set desaturation here - the update loop / spell engine handles cooldown state
@@ -1492,6 +1483,185 @@ function ArcAuras.UpdateFrameIcon(frame, config)
         frame._currentItemID = nil
         frame._currentItemName = nil
     end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ICON OVERRIDE — THE ONE PATH. Do not add a second one.
+--
+--   read  : ArcAuras.GetIconOverride(arcID)     -> texture, or nil
+--   read  : ArcAuras.GetIconOverrideID(arcID)   -> the source ID the user typed
+--   write : ArcAuras.SetIconOverride(arcID, id) -> true when the store changed
+--   paint : ArcAuras.RepaintIcon(arcID)         -> re-render from the stores
+--   pick  : ArcAuras.ShowIconOverridePicker(arcID)
+--
+-- Every kind (trinket / item / spell / timer / aura / totem) goes through
+-- these. The STORES differ per kind and only these functions know which; the
+-- PRECEDENCE must never be re-implemented at a call site. Four hand-rolled
+-- copies of this logic had already drifted apart and produced icons that
+-- never applied on login or fought each other in combat.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- The source ID the user entered (for prefilling the picker / tooltips), as
+-- opposed to GetIconOverride which returns the resolved texture.
+function ArcAuras.GetIconOverrideID(arcID)
+    if type(arcID) ~= "string" then return nil end
+    local db = GetDB()
+    if not db then return nil end
+    if arcID:match("^arc_spell_") then
+        local c = db.trackedSpells and db.trackedSpells[arcID]
+        return c and c.iconOverrideID or nil
+    elseif arcID:match("^arc_timer_") then
+        local c = db.customTimers and db.customTimers[arcID]
+        return c and (c.iconOverrideID or c.iconID) or nil
+    elseif arcID:match("^arc_aura_") then
+        local d = db.auraIcons and db.auraIcons[arcID]
+        return d and d.iconOverrideID or nil
+    elseif arcID:match("^arc_totem_") then
+        return nil
+    end
+    local c = db.trackedItems and db.trackedItems[arcID]
+    return c and c.iconOverrideID or nil
+end
+
+-- Repaint one Arc icon from the CURRENT stores. THE one repaint entry point,
+-- so "set the value" and "show the value" can never diverge.
+function ArcAuras.RepaintIcon(arcID)
+    if type(arcID) ~= "string" then return end
+
+    -- AURA icons live on the 12.1 engine container: the holder ghost is ours
+    -- to paint directly, while the ACTIVE button art is engine-driven and its
+    -- override layer is re-evaluated inside the one styling path.
+    if arcID:match("^arc_aura_") then
+        if not ns.AuraIcons then return end
+        local e = ns.AuraIcons.GetEntry and ns.AuraIcons.GetEntry(arcID)
+        if e and e.holder and e.holder.Icon then
+            local db = GetDB()
+            local def = db and db.auraIcons and db.auraIcons[arcID]
+            e.holder.Icon:SetTexture(ArcAuras.GetIconOverride(arcID)
+                or (def and def.icon) or 134400)
+        end
+        if ns.AuraIcons.ApplySettings then ns.AuraIcons.ApplySettings(arcID) end
+        return
+    end
+
+    -- TIMER frames live in their own registry, not ArcAuras.frames
+    if arcID:match("^arc_timer_") then
+        local td = ns.ArcAurasTimer and ns.ArcAurasTimer.timers
+            and ns.ArcAurasTimer.timers[arcID]
+        local f = td and td.frame
+        if f and f.Icon then
+            local tex = ArcAuras.GetIconOverride(arcID)
+            if not tex then
+                local db = GetDB()
+                local cfg = db and db.customTimers and db.customTimers[arcID]
+                local info = cfg and cfg.spellID and C_Spell.GetSpellInfo(cfg.spellID)
+                tex = info and (info.iconID or info.originalIconID) or 134400
+            end
+            f.Icon:SetTexture(tex)
+        end
+        return
+    end
+
+    local frame = ArcAuras.frames and ArcAuras.frames[arcID]
+    if not frame or not frame.Icon then return end
+    local config = frame._arcConfig
+    if config then
+        ArcAuras.UpdateFrameIcon(frame, config)
+    else
+        local tex = ArcAuras.GetIconOverride(arcID)
+        if tex then frame.Icon:SetTexture(tex) end
+    end
+end
+
+-- Resolve a user-entered source ID to a texture: spell first, then item.
+function ArcAuras.ResolveOverrideSource(overrideID)
+    local spellInfo = C_Spell.GetSpellInfo(overrideID)
+    if spellInfo and (spellInfo.iconID or spellInfo.originalIconID) then
+        return spellInfo.iconID or spellInfo.originalIconID, spellInfo.name
+    end
+    if C_Item and C_Item.GetItemIconByID then
+        local itemIcon = C_Item.GetItemIconByID(overrideID)
+        if itemIcon then
+            return itemIcon,
+                (C_Item.GetItemNameByID and C_Item.GetItemNameByID(overrideID))
+                or ("Item " .. tostring(overrideID))
+        end
+    end
+    return nil
+end
+
+-- THE one override WRITER, for every Arc icon kind.
+-- overrideID nil or <= 0 clears. Returns true when the store changed.
+--
+-- TIMERS take an already-resolved texture FileDataID (the options dispatcher
+-- resolves a declared Spell/Item source before calling); every other kind
+-- takes a SOURCE id and resolves it here.
+function ArcAuras.SetIconOverride(arcID, overrideID)
+    if type(arcID) ~= "string" then return false end
+    local db = GetDB()
+    if not db then return false end
+
+    if arcID:match("^arc_totem_") then
+        -- totem slots render the totem's own art; there is no override store.
+        -- Say so instead of failing silently.
+        print("|cff00CCFF[Arc Auras]|r Totem slots always show the totem's own icon and cannot be overridden.")
+        return false
+    end
+
+    local isTimer = arcID:match("^arc_timer_") ~= nil
+    local isAura  = arcID:match("^arc_aura_") ~= nil
+
+    local config
+    if arcID:match("^arc_spell_") then
+        config = db.trackedSpells and db.trackedSpells[arcID]
+    elseif isTimer then
+        config = db.customTimers and db.customTimers[arcID]
+    elseif isAura then
+        config = db.auraIcons and db.auraIcons[arcID]
+    else
+        config = db.trackedItems and db.trackedItems[arcID]
+    end
+    if not config then return false end
+
+    local n = tonumber(overrideID)
+
+    -- CLEAR ---------------------------------------------------------------
+    if not n or n <= 0 then
+        config.iconOverride, config.iconOverrideID = nil, nil
+        if isTimer then config.icon, config.iconID = nil, nil end
+        -- keep the stored source art current: catalog rows read
+        -- (iconOverride or icon), so a stale .icon would show the old art
+        if not isTimer and config.spellID then
+            local info = C_Spell.GetSpellInfo(config.spellID)
+            if info then config.icon = info.iconID or info.originalIconID or config.icon end
+        end
+        ArcAuras.RepaintIcon(arcID)
+        print("|cff00CCFF[Arc Auras]|r Icon reset to default for " .. (config.name or arcID))
+        return true
+    end
+
+    -- SET -----------------------------------------------------------------
+    if isTimer then
+        -- already a texture FileDataID. An invalid one renders as the missing
+        -- texture, which is the clearest possible feedback.
+        config.icon, config.iconID = n, n
+        config.iconOverride, config.iconOverrideID = n, n
+        ArcAuras.RepaintIcon(arcID)
+        print(string.format("|cff00CCFF[Arc Auras]|r Timer icon -> FileID %d", n))
+        return true
+    end
+
+    local newIcon, sourceName = ArcAuras.ResolveOverrideSource(n)
+    if not newIcon then
+        print("|cff00CCFF[Arc Auras]|r Could not find icon for ID " .. tostring(n))
+        return false
+    end
+
+    config.iconOverride, config.iconOverrideID = newIcon, n
+    ArcAuras.RepaintIcon(arcID)
+    print(string.format("|cff00CCFF[Arc Auras]|r Icon changed to %s (%d) for %s",
+        sourceName or "?", n, config.name or arcID))
+    return true
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -3032,14 +3202,13 @@ StaticPopupDialogs["ARCAURAS_ICON_OVERRIDE"] = {
     timeout = 0, whileDead = true, hideOnEscape = true,
 }
 
+-- THE one picker, for every Arc icon kind. There used to be a second,
+-- byte-identical copy in ArcAurasCooldown with its own popup; the only
+-- difference was which store it prefilled from, which GetIconOverrideID now
+-- knows for all of them.
 function ArcAuras.ShowIconOverridePicker(arcID, frame)
-    local db = GetDB()
-    if not db then return end
-    
-    -- Find config in either trackedItems or trackedTrinkets
-    local config = db.trackedItems and db.trackedItems[arcID]
-    local currentOverrideID = config and config.iconOverrideID or nil
-    
+    local currentOverrideID = ArcAuras.GetIconOverrideID(arcID)
+
     local dialog = StaticPopup_Show("ARCAURAS_ICON_OVERRIDE")
     if dialog then
         dialog.data = { arcID = arcID, currentOverrideID = currentOverrideID }
@@ -3050,58 +3219,10 @@ function ArcAuras.ShowIconOverridePicker(arcID, frame)
     end
 end
 
+-- Public entry point kept for existing callers; the implementation is the
+-- shared writer above (was a near-duplicate of the spell and timer versions).
 function ArcAuras.ApplyIconOverride(arcID, overrideID)
-    local db = GetDB()
-    if not db then return end
-    
-    local config = db.trackedItems and db.trackedItems[arcID]
-    if not config then return end
-    
-    -- Reset if 0 or nil
-    if not overrideID or overrideID <= 0 then
-        config.iconOverride = nil
-        config.iconOverrideID = nil
-        -- Restore original icon
-        local frame = ArcAuras.frames and ArcAuras.frames[arcID]
-        if frame then
-            ArcAuras.SetFrameIcon(frame, config)
-        end
-        print("|cff00CCFF[Arc Auras]|r Icon reset to default for " .. (config.name or arcID))
-        return
-    end
-    
-    -- Try as spell ID first, then item ID
-    local newIcon, sourceName = nil, nil
-    
-    local spellInfo = C_Spell.GetSpellInfo(overrideID)
-    if spellInfo and (spellInfo.iconID or spellInfo.originalIconID) then
-        newIcon = spellInfo.iconID or spellInfo.originalIconID
-        sourceName = spellInfo.name
-    end
-    
-    if not newIcon then
-        local itemIcon = C_Item.GetItemIconByID(overrideID)
-        if itemIcon then
-            newIcon = itemIcon
-            sourceName = C_Item.GetItemNameByID(overrideID) or ("Item " .. overrideID)
-        end
-    end
-    
-    if not newIcon then
-        print("|cff00CCFF[Arc Auras]|r Could not find icon for ID " .. overrideID)
-        return
-    end
-    
-    config.iconOverride = newIcon
-    config.iconOverrideID = overrideID
-    
-    local frame = ArcAuras.frames and ArcAuras.frames[arcID]
-    if frame and frame.Icon then
-        frame.Icon:SetTexture(newIcon)
-    end
-    
-    print(string.format("|cff00CCFF[Arc Auras]|r Icon changed to %s (%d) for %s",
-        sourceName or "?", overrideID, config.name or arcID))
+    return ArcAuras.SetIconOverride(arcID, overrideID)
 end
 
 function ArcAuras.ResetFramePosition(arcID)
@@ -5629,12 +5750,7 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
             name = info.name
             icon = info.iconID or info.originalIconID
         end
-        -- Icon override from trackedSpells
-        local db = GetDB()
-        local trackedCfg = db and db.trackedSpells and db.trackedSpells[cdID]
-        if trackedCfg and trackedCfg.iconOverride then
-            icon = trackedCfg.iconOverride
-        end
+        icon = ArcAuras.GetIconOverride(cdID) or icon
         name = name or ("Spell " .. spellID)
     elseif arcType == "timer" and id then
         -- Custom timer frame — icon and name come from the watched spell,
@@ -5645,11 +5761,7 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
             name = info.name
             icon = info.iconID or info.originalIconID
         end
-        local db = GetDB()
-        local timerCfg = db and db.customTimers and db.customTimers[cdID]
-        if timerCfg and timerCfg.icon then
-            icon = timerCfg.icon
-        end
+        icon = ArcAuras.GetIconOverride(cdID) or icon
         name = (name or ("Spell " .. spellID)) .. " |cff888888(Timer)|r"
     elseif arcType == "totem" and id then
         -- Totem-slot frame. The live totem icon is a SECRET fileID (we SetTexture
@@ -5664,7 +5776,7 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
         local auraDef = db and db.auraIcons and db.auraIcons[cdID]
         if auraDef then
             name = auraDef.name
-            icon = auraDef.iconOverride or auraDef.icon
+            icon = ArcAuras.GetIconOverride(cdID) or auraDef.icon
         else
             local info = C_Spell.GetSpellInfo(spellID)
             if info then

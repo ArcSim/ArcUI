@@ -10187,7 +10187,11 @@ function ns.GetCDMCooldownIconsOptionsTable()
       type = "execute",
       name = "Reset Section",
       desc = "Reset Proc Glow settings to defaults for selected icon(s)",
-      order = 109.9,
+      -- 109.59, NOT 109.9: SpellUsabilityOptions INJECTS its whole section at
+      -- 109.65-109.699 into this panel, so 109.9 rendered this button under
+      -- the Spell Usability header instead of inside Proc Glow (bug report).
+      -- Mirrors the aura panel's 109.59.
+      order = 109.59,
       width = 0.7,
       hidden = HideCooldownProcGlow,
       func = function() ResetCooldownSectionSettings("procGlow") end,

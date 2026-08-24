@@ -2055,7 +2055,47 @@ local function BuildOwnChromeTicks(d, barFrame, maxValue, durationMode)
   }
 end
 
-local function BuildOwnChrome(barConfig, barFrame, tickMaxValue, durationMode)
+-- NAME TEXT for engine-owned chrome ("Hide When Inactive" custom aura bars).
+-- The native nameFrame is UIParent-parented, so it cannot follow the engine
+-- button's secret visibility and gets suppressed with the rest of the native
+-- chrome -- which left the bar NAMELESS while shown (Rend report). The recipe
+-- carries a copy: same text, font, shadow and the exact on-screen spot,
+-- expressed as an offset from the FILL center (the engine button is
+-- SetAllPoints over barFrame.bar, so button coordinates ARE fill coordinates).
+-- The name on these bars is STATIC -- presence is unreadable so there is no
+-- dynamic name source -- so a build-time snapshot is exact, not approximate.
+local function BuildOwnChromeName(barConfig, barFrame, nameFrame)
+  local d = barConfig.display
+  if not (d.showName and nameFrame and nameFrame.text) then return nil end
+  local t = barConfig.tracking or {}
+  local text = t.buffName or t.spellName
+  if (not text or text == "") and t.spellID and C_Spell.GetSpellName then
+    text = C_Spell.GetSpellName(t.spellID)
+  end
+  if not text or text == "" then return nil end
+  -- exact rendered position of the native text, relative to the fill center
+  -- (covers every nameAnchor mode incl. FREE; nil rects -> centered fallback)
+  local bar = barFrame.bar or barFrame
+  local bx, by = bar:GetCenter()
+  local nx, ny = nameFrame.text:GetCenter()
+  local dx, dy = 0, 0
+  if bx and by and nx and ny then dx, dy = nx - bx, ny - by end
+  local fontPath, fontSize, fontFlags = nameFrame.text:GetFont()
+  local shX, shY = nameFrame.text:GetShadowOffset()
+  local sr, sg, sb, sa = nameFrame.text:GetShadowColor()
+  return {
+    text = text,
+    fontPath = fontPath or "Fonts\\FRIZQT__.TTF",
+    fontSize = fontSize or 14,
+    fontFlags = fontFlags or "OUTLINE",
+    color = d.nameColor or { r = 1, g = 1, b = 1, a = 1 },
+    dx = dx, dy = dy,
+    shadowX = shX or 1, shadowY = shY or -1,
+    shadowColor = { r = sr or 0, g = sg or 0, b = sb or 0, a = sa or 1 },
+  }
+end
+
+local function BuildOwnChrome(barConfig, barFrame, tickMaxValue, durationMode, nameFrame)
   local d = barConfig.display
   local _s = barFrame:GetEffectiveScale()
   local _, _h = GetPhysicalScreenSize()
@@ -2072,6 +2112,7 @@ local function BuildOwnChrome(barConfig, barFrame, tickMaxValue, durationMode)
     borderColor = d.borderColor or { r = 0, g = 0, b = 0, a = 1 },
     borderPx = onePx * (d.drawnBorderThickness or 2),
     ticks = BuildOwnChromeTicks(d, barFrame, tickMaxValue, durationMode),
+    name = BuildOwnChromeName(barConfig, barFrame, nameFrame),
   }
 end
 
@@ -2129,7 +2170,7 @@ end
 --
 -- Which END it grows from is the drain bar's reverse-fill, inverted: the gap the
 -- drain leaves is always on the opposite side from its anchor.
-local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, drainReverse, enabled)
+local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, drainReverse, enabled, staticTex)
   local tex = barFrame._mirrorFillTex
   local sb = barFrame.bar
   local drainTex = sb and sb:GetStatusBarTexture()
@@ -2140,8 +2181,20 @@ local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, 
     -- existence -- the mirror hook did the latter and went on forcing the drain
     -- to alpha 0 after a switch back to drain, leaving a permanently blank bar.
     barFrame._mirrorFillActive = nil
-    if tex then tex:Hide() end
-    if drainTex then drainTex:SetAlpha(1) end
+    if tex then
+      tex:Hide()
+      -- detach any Keep-Texture-Still mask so a later non-static pass (or the
+      -- drain look itself) never renders through a stale cut
+      if barFrame._mirrorFillMaskAttached then
+        tex:RemoveMaskTexture(barFrame._mirrorFillMask)
+        barFrame._mirrorFillMaskAttached = nil
+        barFrame._mirrorFillMask:Hide()
+      end
+    end
+    if drainTex then
+      drainTex:SetAlpha(1)
+      drainTex:SetVertexColor(1, 1, 1, 1)
+    end
     if sb then
       sb:SetAlpha(1)
       sb:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
@@ -2181,6 +2234,87 @@ local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, 
       tex:SetPoint("TOPLEFT", drainTex, "TOPRIGHT", 0, 0)
       tex:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
     end
+  end
+
+  -- ── STATIC-TEXTURE FILL ("Keep Texture Still") ────────────────────────────
+  -- The default fill layer above anchors a plain Texture across the GROWING gap,
+  -- so the art is STRETCHED to whatever width that gap is. Uniform textures hide
+  -- it; patterned ones (Diagonal, Rocks, Outline) visibly distort. Reported by
+  -- cheerful_chipmunk_07698 against 3.8.1; the ask is the pre-12.1 WeakAuras
+  -- look: texture stays still at FULL SIZE, the colour flows through it, and
+  -- the unfilled part stays CLEAR (his Outline sits over a Blizzard HP tracker,
+  -- so painting the unfilled part covers his UI -- a first cut did exactly
+  -- that with a background-coloured drain and was rejected).
+  --
+  -- Mechanism: draw the whole texture ONCE at full size, then reveal only the
+  -- elapsed region with a MASK anchored across the gap -- the SAME drainTex
+  -- edge anchors the stretched path uses, so no value is ever computed
+  -- (elapsed = max - remaining would be secret arithmetic in instances; an
+  -- anchor to the drain edge needs no numbers at all). The mask is a SOLID
+  -- WHITE rect: stretching solid white distorts nothing, which is the whole
+  -- trick -- the stretching moved from the ART to the mask.
+  -- NEAREST + CLAMPTOBLACKADDITIVE per the proven mask recipe: the default
+  -- bilinear filter fades the outer half-texel of an 8x8 stretched over a
+  -- bar into a visible soft edge.
+  if staticTex then
+    tex:ClearAllPoints()
+    tex:SetAllPoints(sb)                      -- full size, never resized => never stretched
+    tex:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
+
+    local mask = barFrame._mirrorFillMask
+    if not mask then
+      mask = barFrame:CreateMaskTexture()
+      mask:SetTexture("Interface\\Buttons\\WHITE8X8",
+        "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+      barFrame._mirrorFillMask = mask
+    end
+    mask:ClearAllPoints()
+    if isVertical then
+      if drainReverse then
+        mask:SetPoint("TOPLEFT", drainTex, "BOTTOMLEFT", 0, 0)
+        mask:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
+      else
+        mask:SetPoint("BOTTOMLEFT", drainTex, "TOPLEFT", 0, 0)
+        mask:SetPoint("TOPRIGHT", sb, "TOPRIGHT", 0, 0)
+      end
+    else
+      if drainReverse then
+        mask:SetPoint("TOPLEFT", sb, "TOPLEFT", 0, 0)
+        mask:SetPoint("BOTTOMRIGHT", drainTex, "BOTTOMLEFT", 0, 0)
+      else
+        mask:SetPoint("TOPLEFT", drainTex, "TOPRIGHT", 0, 0)
+        mask:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
+      end
+    end
+    mask:Show()
+    if not barFrame._mirrorFillMaskAttached then
+      tex:AddMaskTexture(mask)
+      barFrame._mirrorFillMaskAttached = true
+    end
+    -- HIDDEN at apply time, exactly like the stretched path (same comment at
+    -- the end of this function): the mirror's min/max hook shows the fill on
+    -- a real timer push and hides it on the inactive (0,0) push. A style-time
+    -- Show() here revealed the FULL static texture whenever no timer was
+    -- running -- an empty bar read as a full one (Arc's screenshot). Empty
+    -- now shows nothing but the bar's own background/border, like every
+    -- other fill bar at zero.
+    tex:Hide()
+
+    -- drain killed at the frame, exactly like the stretched path: it only
+    -- supplies the boundary through its texture's anchors, which still track
+    -- on an alpha-0 StatusBar
+    sb:SetAlpha(0)
+    sb:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 0)
+    drainTex:SetAlpha(0)
+    return
+  end
+
+  -- leaving static mode: detach the mask or the stretched fill (and any later
+  -- static pass against a REPLACED drain texture) renders through a stale cut
+  if barFrame._mirrorFillMaskAttached then
+    tex:RemoveMaskTexture(barFrame._mirrorFillMask)
+    barFrame._mirrorFillMaskAttached = nil
+    barFrame._mirrorFillMask:Hide()
   end
 
   -- KILL THE REMAINING SIDE AT THE FRAME. Per-texture alpha kept losing: the
@@ -2544,7 +2678,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     end
     if barFrame.tickOverlay then barFrame.tickOverlay:SetShown(not engineOwnsChrome) end
     if ns.BarDuration and ns.BarDuration.SetOwnChrome then
-      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxStacks) or nil)
+      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxStacks, nil, nameFrame) or nil)
     end
   end
 
@@ -3795,8 +3929,27 @@ function ns.Display.HideBar(barNumber)
   local nameHidden = not frames.nameFrame or not frames.nameFrame:IsShown()
   local barIconHidden = not frames.barIconFrame or not frames.barIconFrame:IsShown()
   
+  -- THE FLOATING-NUMBERS BUG (reported by Dendar 2026-07-18 and Paeddy 2026-08-21:
+  -- "random numbers floating on my screen"). Two frames outlive this early-out:
+  --   * iconFrame.stacksFrame -- an ArcUIIconStacksFrame parented to UIPARENT, not
+  --     to iconFrame, so hiding the icon does NOT hide it (every other hide site
+  --     in this file calls stacksFrame:Hide() explicitly for exactly that reason).
+  --   * the multi-icon frames, hidden by HideMultiIconFrames at the very end.
+  -- Neither was part of the "already hidden" test, so once the six frames below
+  -- were hidden this returned BEFORE reaching their cleanup -- and a stray stack
+  -- number could then never be cleared, on any later call, until a reload.
+  local stacksHidden = not (iconFrame and iconFrame.stacksFrame)
+                       or not iconFrame.stacksFrame:IsShown()
+  local multiHidden = true
+  if multiIconFrames[barNumber] then
+    for _, f in pairs(multiIconFrames[barNumber]) do
+      if f and f.IsShown and f:IsShown() then multiHidden = false break end
+    end
+  end
+
   -- Only skip if ALL frames are hidden
-  if iconHidden and barHidden and textHidden and durationHidden and nameHidden and barIconHidden then
+  if iconHidden and barHidden and textHidden and durationHidden and nameHidden
+     and barIconHidden and stacksHidden and multiHidden then
     return  -- Already hidden, no work needed
   end
   
@@ -3837,8 +3990,17 @@ function ns.Display.HideBar(barNumber)
       if barFrames[barNumber].iconFrame.duration then
         barFrames[barNumber].iconFrame.duration:SetText("")
       end
-      if barFrames[barNumber].iconFrame.stacksFrame and barFrames[barNumber].iconFrame.stacksFrame.text then
-        barFrames[barNumber].iconFrame.stacksFrame.text:SetText("")
+      if barFrames[barNumber].iconFrame.stacksFrame then
+        -- HIDE the frame, not just its text. It is parented to UIParent, so the
+        -- iconFrame:Hide() above does nothing to it, and blanking the fontstring
+        -- only lasts until something writes a count back into it -- at which
+        -- point the number reappears with no bar under it. Every other hide site
+        -- in this file already calls Hide() here; this one only cleared text.
+        barFrames[barNumber].iconFrame.stacksFrame:Hide()
+        if barFrames[barNumber].iconFrame.stacksFrame.text then
+          barFrames[barNumber].iconFrame.stacksFrame.text:SetText("")
+        end
+        barFrames[barNumber].iconFrame.stacksFrame.lastText = ""
       end
     end
     if barFrames[barNumber].nameFrame then
@@ -4410,7 +4572,7 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     end
     if barFrame.tickOverlay then barFrame.tickOverlay:SetShown(not engineOwnsChrome) end
     if ns.BarDuration and ns.BarDuration.SetOwnChrome then
-      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxValue, true) or nil)
+      ns.BarDuration.SetOwnChrome(barFrame, engineOwnsChrome and BuildOwnChrome(barConfig, barFrame, maxValue, true, nameFrame) or nil)
     end
   end
   
@@ -4857,11 +5019,20 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       -- StatusBarTimerDirection for SetTimerDuration, which this lane never
       -- calls). Fill is now the painted-gap layer; drain is unchanged.
       local mirrorFill = (barConfig.display.durationBarFillMode == "fill")
+      -- "Keep Texture Still": the drain masks the NOT-YET-ELAPSED part, which
+      -- sits at the same end as the stretched path's gap -- so static mode
+      -- needs the SAME reverse-fill flip. Worked through explicitly because a
+      -- first version skipped the flip and filled the wrong way: with
+      -- ReverseFill unflipped the bg-painted drain covers [left, v] and the
+      -- visible art grows from the RIGHT, i.e. an inverted fill. Flipped, the
+      -- drain covers [v, right] and the art grows left-to-right exactly like
+      -- the normal fill (mirror-image for user-reversed bars).
+      local mirrorStatic = mirrorFill and (barConfig.display.mirrorStaticTexture == true)
       local mirrorDrainReverse = isDurationReverseFill
       if mirrorFill then mirrorDrainReverse = not isDurationReverseFill end
       barFrame.bar:SetReverseFill(mirrorDrainReverse)
       ApplyMirrorFillLayer(barFrame, barConfig, baseColor,
-        isDurationVertical, mirrorDrainReverse, mirrorFill)
+        isDurationVertical, mirrorDrainReverse, mirrorFill, mirrorStatic)
       if durationFrame then
         if barConfig.display.showDuration then
           -- reclaim the fontstring from other lanes: the engine lane HIDES it

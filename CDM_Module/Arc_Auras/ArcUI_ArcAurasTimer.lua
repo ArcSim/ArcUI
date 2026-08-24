@@ -1079,37 +1079,15 @@ end
 -- Apply a custom icon override. iconID is a raw FileDataID (texture ID) —
 -- the number shown in the tooltip's "IconID" line. SetTexture accepts this
 -- directly; no spell/item lookup needed. Pass nil/0 to clear.
+-- Public entry point kept for existing callers; the implementation is the
+-- shared writer in ArcUI_ArcAuras.lua (see the ONE PATH block there).
+-- iconID is an already-resolved texture FileDataID for timers, which is the
+-- contract the shared writer honours for arc_timer_ IDs.
 function ArcAurasTimer.ApplyIconOverride(arcID, iconID)
-    local db = GetDB()
-    if not db or not db.customTimers or not db.customTimers[arcID] then return end
-    local cfg = db.customTimers[arcID]
-
-    local n = tonumber(iconID)
-    if not n or n <= 0 then
-        cfg.icon = nil
-        cfg.iconID = nil
-        -- Restore original (watched spell's icon)
-        local _, originalIcon = GetSpellNameAndIcon(cfg.spellID)
-        local td = ArcAurasTimer.timers[arcID]
-        if td and td.frame and td.frame.Icon then
-            td.frame.Icon:SetTexture(originalIcon or 134400)
-        end
-        print("|cff00CCFF[Arc Auras]|r Timer icon reset to default")
-        return
+    if ns.ArcAuras and ns.ArcAuras.SetIconOverride then
+        return ns.ArcAuras.SetIconOverride(arcID, iconID)
     end
-
-    -- SetTexture accepts a FileDataID (number) directly. WoW resolves it
-    -- to the texture file at render time. If the ID is invalid, the icon
-    -- will just show as a question mark / missing texture — which is the
-    -- expected behaviour and gives clear feedback to the user.
-    cfg.icon   = n
-    cfg.iconID = n
-
-    local td = ArcAurasTimer.timers[arcID]
-    if td and td.frame and td.frame.Icon then
-        td.frame.Icon:SetTexture(n)
-    end
-    print(string.format("|cff00CCFF[Arc Auras]|r Timer icon -> FileID %d", n))
+    return false
 end
 
 -- Refresh engine state after Options UI edits the timer config (duration,

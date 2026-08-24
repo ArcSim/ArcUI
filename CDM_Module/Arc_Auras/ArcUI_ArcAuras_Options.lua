@@ -224,37 +224,27 @@ end
 -- what the number IS, killing the spell-ID-vs-FileDataID ambiguity (the
 -- numbers can overlap; guessing is wrong). nil = legacy per-kind semantics
 -- (source ID for spells/auras/items, FileDataID for timers).
+-- Panel entry point. Its ONLY job beyond calling the shared writer is the
+-- ID-TYPE translation the panel offers: timers store a texture FileDataID, so
+-- a declared Spell/Item source is resolved to one here, and a raw FileDataID
+-- picked for a non-timer kind is stored without a source lookup. Everything
+-- else goes straight through. See the ONE PATH block in ArcUI_ArcAuras.lua.
 function Options.ApplyArcIconOverride(arcID, overrideID, idType)
     if type(arcID) ~= "string" then return end
     if overrideID == 0 then overrideID = nil end
 
-    -- "icon" = a raw texture FileDataID: store + repaint directly, no
-    -- source lookup (works for ANY texture, not just spell/item icons)
-    if overrideID and idType == "icon" then
-        if arcID:match("^arc_timer_") then
-            if ns.ArcAurasTimer and ns.ArcAurasTimer.ApplyIconOverride then
-                ns.ArcAurasTimer.ApplyIconOverride(arcID, overrideID)
-            end
-        else
-            local cfg = Options.GetArcConfigByID(arcID)
-            if not cfg then return end
-            cfg.iconOverride = overrideID
-            cfg.iconOverrideID = overrideID
-            local frame = ArcAuras and ArcAuras.frames and ArcAuras.frames[arcID]
-            if frame and frame.Icon then frame.Icon:SetTexture(overrideID) end
-            if arcID:match("^arc_aura_") and ns.AuraIcons and ns.AuraIcons.GetEntry then
-                local e = ns.AuraIcons.GetEntry(arcID)
-                if e and e.holder and e.holder.Icon then
-                    e.holder.Icon:SetTexture(overrideID)
-                end
-            end
-        end
-        NotifyCatalogChanged()
+    -- Totems answer HERE, before any branch: the raw-FileDataID branch below
+    -- dead-ends on them silently (GetArcConfigByID returns nil), and only the
+    -- source-ID path would reach the shared writer's message.
+    if arcID:match("^arc_totem_") then
+        print("|cff00CCFF[Arc Auras]|r Totem slots always show the totem's own icon and cannot be overridden.")
         return
     end
 
-    -- timers store a FileDataID — resolve a declared spell/item source first
-    if overrideID and arcID:match("^arc_timer_") and idType then
+    local isTimer = arcID:match("^arc_timer_") ~= nil
+
+    if overrideID and isTimer and idType and idType ~= "icon" then
+        -- resolve the declared source to the FileDataID timers store
         local fileID
         if idType == "item" then
             fileID = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(overrideID)
@@ -268,22 +258,22 @@ function Options.ApplyArcIconOverride(arcID, overrideID, idType)
             return
         end
         overrideID = fileID
+
+    elseif overrideID and idType == "icon" and not isTimer then
+        -- Raw texture FileDataID for a non-timer kind. The shared writer
+        -- resolves a SOURCE id (spell, then item), which would fail or find
+        -- the wrong art for a bare texture id, so store it directly and
+        -- repaint through the one repaint path.
+        local cfg = Options.GetArcConfigByID(arcID)
+        if not cfg then return end
+        cfg.iconOverride, cfg.iconOverrideID = overrideID, overrideID
+        if ArcAuras and ArcAuras.RepaintIcon then ArcAuras.RepaintIcon(arcID) end
+        NotifyCatalogChanged()
+        return
     end
 
-    if arcID:match("^arc_spell_") then
-        if ns.ArcAurasCooldown and ns.ArcAurasCooldown.ApplyIconOverride then
-            ns.ArcAurasCooldown.ApplyIconOverride(arcID, overrideID)
-        end
-    elseif arcID:match("^arc_aura_") then
-        if ns.AuraIcons and ns.AuraIcons.ApplyIconOverride then
-            ns.AuraIcons.ApplyIconOverride(arcID, overrideID)
-        end
-    elseif arcID:match("^arc_timer_") then
-        if ns.ArcAurasTimer and ns.ArcAurasTimer.ApplyIconOverride then
-            ns.ArcAurasTimer.ApplyIconOverride(arcID, overrideID)
-        end
-    elseif ArcAuras and ArcAuras.ApplyIconOverride then
-        ArcAuras.ApplyIconOverride(arcID, overrideID)
+    if ArcAuras and ArcAuras.SetIconOverride then
+        ArcAuras.SetIconOverride(arcID, overrideID)
     end
     NotifyCatalogChanged()
 end

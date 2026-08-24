@@ -10,6 +10,44 @@
 local ADDON, ns = ...
 ns.TrackingOptions = ns.TrackingOptions or {}
 
+-- WHY IS A BAR "ALREADY IN ARCUI" BUT NOWHERE ON SCREEN?
+-- FindAllArcUIBarsByCooldownID reports CONFIG (tracking.enabled), not frames, so
+-- a perfectly valid bar is listed while nothing renders. Users then hunt for a
+-- bar that is behaving exactly as configured ("already 3 bars aber ich find sie
+-- halt echt nirgends"). Say WHY instead of leaving them to guess.
+--
+-- Reads only: config plus one IsShown on the bar's NAMED GLOBAL frame
+-- (ArcUIBarFrame<n>, created in Display). Display's own GetBarFrames is a local
+-- and is not exported, so the global name is the supported way in from here.
+-- Must be declared ABOVE the catalog builders that call it -- it is a local.
+local function BarHiddenReason(barNum)
+    local cfg = ns.API and ns.API.GetBarConfig and ns.API.GetBarConfig(barNum)
+    if not cfg then return nil end
+
+    local beh = cfg.behavior
+    if beh and beh.showOnSpecs and #beh.showOnSpecs > 0 then
+        local cur = GetSpecialization and GetSpecialization()
+        local ok = false
+        for _, s in ipairs(beh.showOnSpecs) do
+            if s == cur then ok = true break end
+        end
+        if not ok then return "not shown on this spec" end
+    end
+
+    local disp = cfg.display
+    local op = disp and tonumber(disp.opacity)
+    if op and op <= 0 then return "opacity is 0" end
+
+    if beh and beh.hideWhenInactive then
+        local bf = _G["ArcUIBarFrame" .. tostring(barNum)]
+        if bf and bf.IsShown and not bf:IsShown() then
+            return "hidden while the aura is inactive"
+        end
+    end
+
+    return nil
+end
+
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
@@ -448,7 +486,14 @@ local function CreateCatalogIconEntry(index)
       if #existingBars > 0 then
         local barsList = {}
         for _, barInfo in ipairs(existingBars) do
-          table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          -- append WHY it is not on screen, when it is not (see BarHiddenReason)
+          local why = BarHiddenReason(barInfo.barNum)
+          if why then
+            table.insert(barsList, string.format("Bar %d (%s) |cffff9900- %s|r",
+              barInfo.barNum, barInfo.mode, why))
+          else
+            table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          end
         end
         desc = desc .. "\n\n|cff00ccffAlready in ArcUI:|r\n" .. table.concat(barsList, "\n")
       elseif entry.isDisplayed then
@@ -525,7 +570,14 @@ local function CreateCustomCatalogTileEntry(index)
       if #existingBars > 0 then
         local barsList = {}
         for _, barInfo in ipairs(existingBars) do
-          table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          -- append WHY it is not on screen, when it is not (see BarHiddenReason)
+          local why = BarHiddenReason(barInfo.barNum)
+          if why then
+            table.insert(barsList, string.format("Bar %d (%s) |cffff9900- %s|r",
+              barInfo.barNum, barInfo.mode, why))
+          else
+            table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          end
         end
         desc = desc .. "\n\n|cff00ccffAlready in ArcUI:|r\n" .. table.concat(barsList, "\n")
       else
@@ -2382,7 +2434,14 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
             if #existingBars > 0 then
               local barsList = {}
               for _, barInfo in ipairs(existingBars) do
-                table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          -- append WHY it is not on screen, when it is not (see BarHiddenReason)
+          local why = BarHiddenReason(barInfo.barNum)
+          if why then
+            table.insert(barsList, string.format("Bar %d (%s) |cffff9900- %s|r",
+              barInfo.barNum, barInfo.mode, why))
+          else
+            table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          end
               end
               barsText = "\n|cff00ff00ArcUI Bars:|r " .. table.concat(barsList, ", ")
             end
@@ -2400,7 +2459,14 @@ function ns.TrackingOptions.GetBuffDebuffSetupTable()
           if #existingBars > 0 then
             local barsList = {}
             for _, barInfo in ipairs(existingBars) do
-              table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          -- append WHY it is not on screen, when it is not (see BarHiddenReason)
+          local why = BarHiddenReason(barInfo.barNum)
+          if why then
+            table.insert(barsList, string.format("Bar %d (%s) |cffff9900- %s|r",
+              barInfo.barNum, barInfo.mode, why))
+          else
+            table.insert(barsList, string.format("Bar %d (%s)", barInfo.barNum, barInfo.mode))
+          end
             end
             barsText = "\n|cff00ff00ArcUI Bars:|r " .. table.concat(barsList, ", ")
           end

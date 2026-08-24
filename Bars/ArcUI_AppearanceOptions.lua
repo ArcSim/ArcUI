@@ -3387,6 +3387,39 @@ function ns.AppearanceOptions.GetOptionsTable()
           return false
         end
       },
+      barMirrorStaticTexture = {
+        type = "toggle",
+        name = "Keep Texture Still",
+        -- OPT-IN (default off): changes how an existing bar looks, so nobody
+        -- gets a surprise restyle. Only meaningful for a MIRROR bar in FILL
+        -- mode, which is the one combination that stretches art.
+        desc = "Fill mode on a CDM Timer Mirror bar normally stretches the bar texture across the"
+            .. " growing area, which distorts patterned textures like Diagonal, Rocks or Outline.\n\n"
+            .. "With this on, the texture stays still at full size and the colour flows through it"
+            .. " instead, the way bars behaved before 12.1. The unfilled part stays clear.",
+        get = function()
+          local cfg = GetSelectedConfig()
+          return (cfg and cfg.display.mirrorStaticTexture) and true or false
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if cfg then
+            cfg.display.mirrorStaticTexture = value or nil
+            RefreshBar()
+          end
+        end,
+        order = 21.6,
+        width = 1.2,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.fill then return true end
+          if not IsDurationBar() then return true end
+          if not IsMirrorBar() then return true end
+          local cfg = GetSelectedConfig()
+          -- only relevant in FILL mode: drain never stretches (the drain half is
+          -- a real StatusBar, which crops its texture instead of scaling it)
+          return (cfg and cfg.display.durationBarFillMode) ~= "fill"
+        end
+      },
       barReverseFill = {
         type = "toggle",
         name = "Reverse Fill",

@@ -336,6 +336,26 @@ local function WireAuraButton(btn, arcID)
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn._arcIcon = icon
 
+    -- ══ CUSTOM ICON on the ACTIVE button ══════════════════════════════
+    -- The engine OWNS the art above: we hand it over with SetIcon() below and
+    -- it repaints from live (secret) aura data, so SetTexture-ing it is not an
+    -- option. Instead paint a SECOND texture ONE ARTWORK sublevel ABOVE it in
+    -- the same button: identical rect, zoom, desat and alpha, drawn over the
+    -- engine art. It stays BELOW the swipe and TextOverlay because those are
+    -- child FRAMES and frame level beats draw layer.
+    --
+    -- Created UNCONDITIONALLY, for every button, even when no override is
+    -- configured: initializeFrame runs at frame CREATION only and pool reuse
+    -- never re-runs it, so a texture created "only when needed" would never
+    -- reach an already-pooled button. Creation here is also the only styling
+    -- context guaranteed legal when reloading straight into an instance.
+    local iconOv = btn:CreateTexture(nil, "ARTWORK", nil, 1)
+    iconOv:SetAllPoints()
+    iconOv:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    iconOv:Hide()
+    btn._arcIconOverride = iconOv
+    btn._arcArcID = arcID
+
     -- Aura swipe: REVERSED (fresh buff bright, dark grows as it runs out).
     -- Duration display = the swipe's OWN countdown numbers (CDM parity:
     -- bare "8", not the engine default-formatter's "8 s" — EQOL does the
@@ -932,12 +952,29 @@ function AuraIcons.StyleActiveButton(btn, settings, sizeRef)
 
     btn:SetAlpha(forceHide and 1 or activeAlpha)
     if btn._arcPlate then btn._arcPlate:SetShown(not forceHide) end
+    local zoom = (settings and settings.zoom) or 0.08
     if btn._arcIcon then
         btn._arcIcon:SetShown(not forceHide)
         btn._arcIcon:SetDesaturated(activeDesat and true or false)
         -- icon zoom parity with the Arc pipeline
-        local z = (settings and settings.zoom) or 0.08
-        btn._arcIcon:SetTexCoord(z, 1 - z, z, 1 - z)
+        btn._arcIcon:SetTexCoord(zoom, 1 - zoom, zoom, 1 - zoom)
+    end
+
+    -- CUSTOM ICON: the user's art, one sublevel above the engine-fed icon.
+    -- Mirrors the base icon's zoom/desat/visibility so the override reads as
+    -- the SAME icon, not a sticker on top of it. Hidden when no override is
+    -- configured, which is also how a cleared override restores engine art.
+    if btn._arcIconOverride then
+        local ovTex = ArcAuras and ArcAuras.GetIconOverride
+            and ArcAuras.GetIconOverride(btn._arcArcID) or nil
+        if ovTex and not forceHide then
+            btn._arcIconOverride:SetTexture(ovTex)
+            btn._arcIconOverride:SetTexCoord(zoom, 1 - zoom, zoom, 1 - zoom)
+            btn._arcIconOverride:SetDesaturated(activeDesat and true or false)
+            btn._arcIconOverride:Show()
+        else
+            btn._arcIconOverride:Hide()
+        end
     end
 
     -- ── the "cooldown frame solution" (Arc's call): the button's
@@ -1710,51 +1747,17 @@ function AuraIcons.Delete(arcID)
     print("|cff00CCFF[Arc Auras]|r Removed aura icon: " .. name)
 end
 
--- Icon override: same contract as the cooldown-icon version (spell OR item
--- source ID; 0/nil resets).
+-- Icon override: public entry point kept for existing callers; the
+-- implementation is the shared writer in ArcUI_ArcAuras.lua (see the ONE PATH
+-- block there). It writes db.auraIcons and then repaints BOTH surfaces: the
+-- holder ghost directly, and the engine-driven active button through
+-- AuraIcons.ApplySettings. This copy only ever repainted the ghost, so the
+-- live aura kept showing its real icon.
 function AuraIcons.ApplyIconOverride(arcID, overrideID)
-    local db = GetDB()
-    local def = db and db.auraIcons[arcID]
-    if not def then return end
-
-    if not overrideID or overrideID <= 0 then
-        def.iconOverride, def.iconOverrideID = nil, nil
-        local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(def.spellID)
-        def.icon = (info and (info.iconID or info.originalIconID)) or def.icon
-        local entry = entries[arcID]
-        if entry and entry.holder and entry.holder.Icon then
-            entry.holder.Icon:SetTexture(def.icon or 134400)
-        end
-        print("|cff00CCFF[Arc Auras]|r Icon reset to default for " .. (def.name or arcID))
-        return
+    if ArcAuras and ArcAuras.SetIconOverride then
+        return ArcAuras.SetIconOverride(arcID, overrideID)
     end
-
-    local newIcon, sourceName
-    local spellInfo = C_Spell.GetSpellInfo(overrideID)
-    if spellInfo and (spellInfo.iconID or spellInfo.originalIconID) then
-        newIcon = spellInfo.iconID or spellInfo.originalIconID
-        sourceName = spellInfo.name
-    end
-    if not newIcon and C_Item and C_Item.GetItemIconByID then
-        local itemIcon = C_Item.GetItemIconByID(overrideID)
-        if itemIcon then
-            newIcon = itemIcon
-            sourceName = (C_Item.GetItemNameByID and C_Item.GetItemNameByID(overrideID)) or ("Item " .. overrideID)
-        end
-    end
-    if not newIcon then
-        print("|cff00CCFF[Arc Auras]|r Could not find icon for ID " .. overrideID)
-        return
-    end
-
-    def.iconOverride = newIcon
-    def.iconOverrideID = overrideID
-    local entry = entries[arcID]
-    if entry and entry.holder and entry.holder.Icon then
-        entry.holder.Icon:SetTexture(newIcon)
-    end
-    print(string.format("|cff00CCFF[Arc Auras]|r Icon changed to %s (%d) for %s",
-        sourceName or "?", overrideID, def.name or arcID))
+    return false
 end
 
 -- Re-evaluate spec/talent visibility for every tracked aura icon. The direct

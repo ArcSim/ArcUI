@@ -541,6 +541,20 @@ local function EnsureShadowCooldown(frame)
       local baseSpell     = ci and ci.spellID
       local overrideSpell = ci and ci.overrideSpellID
       local cachedSpell   = frame._arcCachedSpellID
+      -- SECRECY GATE: on 12.1 an item/trinket entry exposes a SECRET spellID,
+      -- and comparing one against the event payload throws outright
+      -- ("attempt to compare local 'cachedSpell' (a secret number value)") --
+      -- once per SPELL_UPDATE_COOLDOWN, so it spams. The write site in
+      -- CDMEnhance no longer caches a secret, but a frame enhanced earlier in
+      -- the session can still be holding one, and cooldownInfo can hand us a
+      -- secret directly. A secret can never match a readable payload id, so
+      -- nil is the correct substitute rather than a reason to bail: the frame
+      -- still responds to bulk updates (a1 == nil) and to its other ids.
+      if issecretvalue then
+        if baseSpell     ~= nil and issecretvalue(baseSpell)     then baseSpell     = nil end
+        if overrideSpell ~= nil and issecretvalue(overrideSpell) then overrideSpell = nil end
+        if cachedSpell   ~= nil and issecretvalue(cachedSpell)   then cachedSpell   = nil end
+      end
       -- Primary spellID for FeedShadow (prefer live override, then cached, then base)
       local spellID = overrideSpell or cachedSpell or baseSpell
       if not spellID then return end

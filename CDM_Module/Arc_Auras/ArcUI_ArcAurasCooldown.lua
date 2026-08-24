@@ -198,6 +198,13 @@ local function UpdateOverrideIcon(fd, effectiveSID)
     if cfg and cfg.customIconID and cfg.customIconID ~= 0 and cfg.customIconID ~= "" then
         return  -- user picked a custom icon: leave it alone
     end
+    -- ...and the ARC-side override, which lives in a different store. This
+    -- only checked the CDM one, so an Arc icon override was stomped by the
+    -- spell's own art the next time the override form flipped.
+    if ArcAuras and ArcAuras.GetIconOverride
+        and ArcAuras.GetIconOverride(frame._arcAuraID) then
+        return
+    end
     fd._arcDisplayedSID = effectiveSID
     local iconTex = frame.Icon or frame.icon
     if iconTex and not iconTex.SetTexture and iconTex.Icon then iconTex = iconTex.Icon end
@@ -1579,124 +1586,26 @@ StaticPopupDialogs["ARCAURAS_CD_REMOVE_SPELL"] = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- ICON OVERRIDE
--- Lets users change the displayed icon for any Arc Aura spell frame.
--- Accepts a spell ID or item ID; stores iconOverride in trackedSpells config.
+-- ICON OVERRIDE — see the ONE PATH block in ArcUI_ArcAuras.lua.
+-- The popup and picker that used to live here were a byte-identical copy of
+-- the ones there (only the prefill store differed), and the writer was a
+-- third copy of the same logic. All three now route to the shared versions.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-StaticPopupDialogs["ARCAURAS_CD_ICON_OVERRIDE"] = {
-    text = "Enter a Spell ID or Item ID for the new icon:\n(Enter 0 or leave blank to reset to default)",
-    button1 = "Apply", button2 = "Cancel",
-    hasEditBox = true,
-    OnShow = function(self)
-        self.editBox:SetNumeric(true)
-        self.editBox:SetFocus()
-        -- Pre-fill with current override if any
-        local data = self.data
-        if data and data.currentOverrideID then
-            self.editBox:SetText(tostring(data.currentOverrideID))
-            self.editBox:HighlightText()
-        end
-    end,
-    OnAccept = function(self, data)
-        local inputID = tonumber(self.editBox:GetText())
-        if data and data.arcID then
-            ArcAurasCooldown.ApplyIconOverride(data.arcID, inputID)
-        end
-    end,
-    EditBoxOnEnterPressed = function(self)
-        local dialog = self:GetParent()
-        local inputID = tonumber(self:GetText())
-        local data = dialog.data
-        if data and data.arcID then
-            ArcAurasCooldown.ApplyIconOverride(data.arcID, inputID)
-        end
-        dialog:Hide()
-    end,
-    timeout = 0, whileDead = true, hideOnEscape = true,
-}
-
 function ArcAurasCooldown.ShowIconOverridePicker(arcID, frame)
-    local db = GetDB()
-    local config = db and db.trackedSpells and db.trackedSpells[arcID]
-    
-    local currentOverrideID = nil
-    if config and config.iconOverrideID then
-        currentOverrideID = config.iconOverrideID
-    end
-    
-    local dialog = StaticPopup_Show("ARCAURAS_CD_ICON_OVERRIDE")
-    if dialog then
-        dialog.data = {
-            arcID = arcID,
-            currentOverrideID = currentOverrideID,
-        }
-        if currentOverrideID and dialog.editBox then
-            dialog.editBox:SetText(tostring(currentOverrideID))
-            dialog.editBox:HighlightText()
-        end
+    if ArcAuras and ArcAuras.ShowIconOverridePicker then
+        return ArcAuras.ShowIconOverridePicker(arcID, frame)
     end
 end
 
+-- Public entry point kept for existing callers; the implementation is the
+-- shared writer in ArcUI_ArcAuras.lua (this was a near-duplicate of the item
+-- and timer versions and had already drifted from them).
 function ArcAurasCooldown.ApplyIconOverride(arcID, overrideID)
-    local db = GetDB()
-    if not db or not db.trackedSpells or not db.trackedSpells[arcID] then return end
-    
-    local config = db.trackedSpells[arcID]
-    
-    -- Reset if 0 or nil
-    if not overrideID or overrideID <= 0 then
-        config.iconOverride = nil
-        config.iconOverrideID = nil
-        -- Restore original icon
-        local name, originalIcon = GetSpellNameAndIcon(config.spellID)
-        config.icon = originalIcon or config.icon
-        
-        local frame = ArcAuras.frames and ArcAuras.frames[arcID]
-        if frame and frame.Icon then
-            frame.Icon:SetTexture(config.icon or 134400)
-        end
-        print("|cff00CCFF[Arc Auras]|r Icon reset to default for " .. (config.name or arcID))
-        return
+    if ArcAuras and ArcAuras.SetIconOverride then
+        return ArcAuras.SetIconOverride(arcID, overrideID)
     end
-    
-    -- Try as spell ID first, then item ID
-    local newIcon = nil
-    local sourceName = nil
-    
-    local spellInfo = C_Spell.GetSpellInfo(overrideID)
-    if spellInfo and (spellInfo.iconID or spellInfo.originalIconID) then
-        newIcon = spellInfo.iconID or spellInfo.originalIconID
-        sourceName = spellInfo.name
-    end
-    
-    if not newIcon then
-        -- Try as item ID
-        local itemIcon = C_Item.GetItemIconByID(overrideID)
-        if itemIcon then
-            newIcon = itemIcon
-            local itemName = C_Item.GetItemNameByID(overrideID)
-            sourceName = itemName or ("Item " .. overrideID)
-        end
-    end
-    
-    if not newIcon then
-        print("|cff00CCFF[Arc Auras]|r Could not find icon for ID " .. overrideID)
-        return
-    end
-    
-    -- Save override
-    config.iconOverride = newIcon
-    config.iconOverrideID = overrideID
-    
-    -- Apply immediately
-    local frame = ArcAuras.frames and ArcAuras.frames[arcID]
-    if frame and frame.Icon then
-        frame.Icon:SetTexture(newIcon)
-    end
-    
-    print(string.format("|cff00CCFF[Arc Auras]|r Icon changed to %s (%d) for %s",
-        sourceName or "?", overrideID, config.name or arcID))
+    return false
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

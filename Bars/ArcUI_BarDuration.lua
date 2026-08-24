@@ -422,7 +422,10 @@ end
 local function ApplyOwnChromeToButton(button, oc)
   local ch = button._arcChrome
   if not oc then
-    if ch then ch.bgHost:Hide(); ch.borderHost:Hide() end
+    if ch then
+      ch.bgHost:Hide(); ch.borderHost:Hide()
+      if ch.nameHost then ch.nameHost:Hide() end
+    end
     return
   end
   if not ch then
@@ -516,6 +519,43 @@ local function ApplyOwnChromeToButton(button, oc)
   for i = n + 1, #pool do pool[i]:Hide() end
 
   ch.borderHost:SetShown(oc.borderShown or n > 0)
+
+  -- NAME TEXT (chrome copy of the native nameFrame -- recipe built by
+  -- Display's BuildOwnChromeName). Hosted on a button child so it shows and
+  -- hides with the aura natively; anchored by the recipe's offset from the
+  -- button center (button coordinates ARE fill coordinates). Without this the
+  -- engine-owned bar rendered NAMELESS: the native nameFrame is suppressed
+  -- while the engine owns the chrome, and nothing carried the name over.
+  local nm = oc.name
+  if nm then
+    local host = ch.nameHost
+    if not host then
+      host = CreateFrame("Frame", nil, button)
+      host:SetAllPoints(button)
+      ch.nameHost = host
+      ch.name = host:CreateFontString(nil, "OVERLAY")
+      ch.name:SetDrawLayer("OVERLAY", 6)
+    end
+    -- +11: one decisive level above the border strips' host (+10) so the
+    -- name clears the border and every overlay fill
+    host:SetFrameLevel(button:GetFrameLevel() + 11)
+    local fs = ch.name
+    -- SetFont returns false on a bad path (it does not raise) -- fall back
+    if not fs:SetFont(nm.fontPath, nm.fontSize or 14, nm.fontFlags or "OUTLINE") then
+      fs:SetFont("Fonts\\FRIZQT__.TTF", nm.fontSize or 14, "OUTLINE")
+    end
+    fs:SetShadowOffset(nm.shadowX or 1, nm.shadowY or -1)
+    local sc = nm.shadowColor or { r = 0, g = 0, b = 0, a = 1 }
+    fs:SetShadowColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 1)
+    local c = nm.color or { r = 1, g = 1, b = 1, a = 1 }
+    fs:SetTextColor(c.r or 1, c.g or 1, c.b or 1, c.a or 1)
+    fs:SetText(nm.text)
+    fs:ClearAllPoints()
+    fs:SetPoint("CENTER", button, "CENTER", nm.dx or 0, nm.dy or 0)
+    host:Show()
+  elseif ch.nameHost then
+    ch.nameHost:Hide()
+  end
 end
 
 -- Live chrome sync for an already-attached bar (Hide When Inactive toggled,
@@ -1368,7 +1408,9 @@ local function MirrorHookBar(srcBar)
           fillTex:SetShown(not inactive)
           -- re-assert the drain's alpha-0 at the timer edge: ApplyAppearance can
           -- run between bar updates and restore it, which would put the mirrored
-          -- drain back on top of the fill layer
+          -- drain back on top of the fill layer. (Keep Texture Still also
+          -- keeps the drain INVISIBLE -- its texture only supplies the mask's
+          -- boundary anchors, which track on an alpha-0 StatusBar.)
           if not inactive then ourFrame.bar:SetAlpha(0) end
         end
       end

@@ -443,6 +443,43 @@ function AF.UpdateAuraFrame(frame)
       if ns.CustomLabel and ns.CustomLabel.UpdateVisibility then
         ns.CustomLabel.UpdateVisibility(frame)
       end
+      -- ASSERT SATURATION BEFORE BAILING (PURE AURA frames only).
+      -- ArcUI is the ONLY thing that desaturates an aura icon; CDM never
+      -- does. So "Aura Missing -> Desaturate off" has to be actively
+      -- asserted, not merely not-added: skipping here left any stale desat
+      -- in place (a frame rebound from a cooldown icon, a leftover from a
+      -- previous state), and it survived until the options panel forced a
+      -- refresh -- which is exactly why opening the panel "fixed" it.
+      --
+      -- stateVisuals == nil PROVES the Aura Missing desaturate is off:
+      -- GetEffectiveStateVisuals returns a table whenever cs.desaturate ==
+      -- true, so reaching here means it is false. Target is therefore 0.
+      --
+      -- _isAura gate: COOLDOWN frames with wasSetFromAura route through this
+      -- function too (RefreshAllStyles / panel sweeps), and their desat can
+      -- legitimately be held at 1 by CooldownState's "Desaturate When Aura
+      -- Inactive" (auraActiveState.desaturateWhenInactive -- NOT part of the
+      -- stateVisuals detector). Asserting 0 on those would fight that writer.
+      -- Their stale desat self-heals through CooldownState.Apply anyway; only
+      -- pure aura frames had no other desat writer, which is why only they
+      -- ever stuck grey.
+      --
+      -- No default-look change: on an icon that was never wrongly
+      -- desaturated this is a no-op write.
+      local tex = (cfg and cfg._isAura) and (frame.Icon or frame.icon) or nil
+      if tex and not tex.SetDesaturation and tex.Icon then tex = tex.Icon end
+      if tex and frame._arcTargetDesat ~= 0 then
+        frame._arcForceDesatValue = nil
+        frame._arcTargetDesat     = 0
+        frame._arcBypassDesatHook = true
+        if tex.SetDesaturation then
+          tex:SetDesaturation(0)
+        elseif tex.SetDesaturated then
+          tex:SetDesaturated(false)
+        end
+        frame._arcBypassDesatHook = false
+        ApplyBorderDesaturation(frame, 0)
+      end
       return
     end
   end
@@ -1053,7 +1090,12 @@ end
 -- cdID stays the same key and entry. CDM never destroys frames in the
 -- pool, just releases them.
 -- ═══════════════════════════════════════════════════════════════════════════
-if ns.FrameController and ns.FrameController.OnFrameRebind then
+-- DEFERRED to ADDON_LOADED: ns.FrameController does not exist yet when this
+-- file loads (FrameController is toc line 116, this file is 99), so the old
+-- file-scope `if ns.FrameController` guard silently skipped registration and
+-- this subscriber NEVER ran. Same boot pattern as ArcUI_FrameActive.lua.
+local function InstallAFRebindHandler()
+  if not (ns.FrameController and ns.FrameController.OnFrameRebind) then return end
   ns.FrameController.OnFrameRebind(function(frame, oldCdID, newCdID)
     if not frame then return end
     -- Both bind (newCdID set) and release (newCdID nil) need cache nilling
@@ -1064,8 +1106,27 @@ if ns.FrameController and ns.FrameController.OnFrameRebind then
     frame._arcLastOptimizedCall      = nil
     frame._arcLastAuraActive         = nil
     frame._arcPandemicGlowActive     = nil
+    -- DESAT AUTHORITY must not be inherited across a rebind. CDM rebinds
+    -- pooled frames across cooldownIDs on every RefreshLayout (portal / zone
+    -- change / spec swap), so a frame that was a COOLDOWN icon arrives at an
+    -- aura cooldownID still carrying _arcForceDesatValue = 1 and a grey
+    -- texture. Nothing else cleared it (the enforcement hook's staleness
+    -- sweep only releases forceValue == 0, so a stale 1 is pinned), and the
+    -- aura path below used to skip the desat write entirely, so the icon
+    -- stayed grey until the options panel forced a refresh. Which pooled
+    -- frame landed on which cooldownID is why it only happened sometimes.
+    frame._arcForceDesatValue        = nil
   end)
 end
+
+local afRebindBoot = CreateFrame("Frame")
+afRebindBoot:RegisterEvent("ADDON_LOADED")
+afRebindBoot:SetScript("OnEvent", function(self, event, addon)
+  if addon == ADDON then
+    InstallAFRebindHandler()
+    self:UnregisterEvent("ADDON_LOADED")
+  end
+end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- FULL-UPDATE VISUAL SWEEP (RefreshLayout hook)
