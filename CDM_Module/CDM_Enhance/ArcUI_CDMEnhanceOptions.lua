@@ -2140,6 +2140,7 @@ local function GetUnifiedFilterValues()
     ["arc"] = "|cffffcc00Arc Icons|r",
     ["arcspell"] = "|cff88ccffArc Spells|r",
     ["arctimer"] = "|cffffcc00Custom Timers|r",
+    ["arcaura"] = "|cffff88ccArc Auras|r",
     -- "autotrack" filter RETIRED: the auto-track controls now live in their
     -- own collapsible section under Global Options (Arc's call — reachable
     -- without hunting through the filter)
@@ -2154,6 +2155,53 @@ local function GetUnifiedFilterValues()
   end
   
   return values
+end
+
+-- NOT-LOADED arc icons (spec filter / talent condition destroyed the frame).
+-- The live icon maps only know FRAMES, so a condition-hidden icon vanished
+-- from the catalog entirely -- with no way to select it and edit the
+-- condition back off (Arc's report). Sweep the CONFIG stores for arcIDs the
+-- live pass did not add and synthesize entries for them, flagged notLoaded
+-- (tile renders an "off" label + a tooltip line). Selection and every editor
+-- are keyed by arcID and read the CONFIG stores, so a not-loaded selection
+-- edits exactly like a loaded one.
+local function AddUnloadedArcEntries(seen, mode)
+  local adb = ns.db and ns.db.char and ns.db.char.arcAuras
+  if not adb then return end
+  local function add(arcID, cfg, arcType, isAura)
+    if seen[arcID] or not cfg then return end
+    seen[arcID] = true
+    local icon = (ns.ArcAuras and ns.ArcAuras.GetIconOverride
+      and ns.ArcAuras.GetIconOverride(arcID)) or cfg.icon
+    if not icon and cfg.spellID and C_Spell.GetSpellTexture then
+      icon = C_Spell.GetSpellTexture(cfg.spellID)
+    end
+    table.insert(cachedUnifiedIcons, {
+      cooldownID = arcID,
+      spellID = cfg.spellID,
+      name = cfg.name,
+      icon = icon or 134400,
+      isAura = isAura or false,
+      isArcAura = true,
+      arcType = arcType,
+      itemID = cfg.itemID,
+      notLoaded = true,
+    })
+  end
+  if (mode == "arc") and adb.trackedItems then
+    for arcID, cfg in pairs(adb.trackedItems) do
+      add(arcID, cfg, cfg.type or "item", false)
+    end
+  end
+  if (mode == "arc" or mode == "arcspell") and adb.trackedSpells then
+    for arcID, cfg in pairs(adb.trackedSpells) do add(arcID, cfg, "spell", false) end
+  end
+  if (mode == "arc" or mode == "arctimer") and adb.customTimers then
+    for arcID, cfg in pairs(adb.customTimers) do add(arcID, cfg, "timer", false) end
+  end
+  if (mode == "arc" or mode == "arcaura") and adb.auraIcons then
+    for arcID, cfg in pairs(adb.auraIcons) do add(arcID, cfg, "aura", true) end
+  end
 end
 
 -- Note: Forward declared at top of file for use in GetAuraIconsToUpdate/GetCooldownIconsToUpdate
@@ -2196,29 +2244,49 @@ RebuildUnifiedIconCache = function()
     end
   elseif unifiedFilterMode == "arc" then
     -- every Arc-created icon regardless of kind (items/trinkets/spells/
-    -- timers/totems/aura icons) — arc_ prefixed IDs from both maps
+    -- timers/totems/aura icons) — arc_ prefixed IDs from both maps,
+    -- PLUS config-store icons whose frame is not loaded right now
+    local seen = {}
     for cdID, data in pairs(auras) do
       if type(cdID) == "string" and cdID:match("^arc_") then
+        seen[cdID] = true
         table.insert(cachedUnifiedIcons, createCacheEntry(data, true))
       end
     end
     for cdID, data in pairs(cooldowns) do
       if type(cdID) == "string" and cdID:match("^arc_") then
+        seen[cdID] = true
         table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
       end
     end
+    AddUnloadedArcEntries(seen, "arc")
   elseif unifiedFilterMode == "arcspell" then
+    local seen = {}
     for cdID, data in pairs(cooldowns) do
       if type(cdID) == "string" and cdID:match("^arc_spell_") then
+        seen[cdID] = true
         table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
       end
     end
+    AddUnloadedArcEntries(seen, "arcspell")
   elseif unifiedFilterMode == "arctimer" then
+    local seen = {}
     for cdID, data in pairs(cooldowns) do
       if type(cdID) == "string" and cdID:match("^arc_timer_") then
+        seen[cdID] = true
         table.insert(cachedUnifiedIcons, createCacheEntry(data, false))
       end
     end
+    AddUnloadedArcEntries(seen, "arctimer")
+  elseif unifiedFilterMode == "arcaura" then
+    local seen = {}
+    for cdID, data in pairs(auras) do
+      if type(cdID) == "string" and cdID:match("^arc_aura_") then
+        seen[cdID] = true
+        table.insert(cachedUnifiedIcons, createCacheEntry(data, true))
+      end
+    end
+    AddUnloadedArcEntries(seen, "arcaura")
   elseif unifiedFilterMode == "autotrack" then
     -- the auto-tracked equipped-slot icons (arc trinkets); the filter also
     -- surfaces the auto-track configuration controls below the grid
@@ -2347,7 +2415,12 @@ local function CreateUnifiedCatalogIconEntry(index)
       elseif isSelected then
         return hasCustom and "|cff00ff00Edit|r |cffaa55ff*|r" or "|cff00ff00Edit|r"
       end
-      
+
+      -- condition-hidden arc icon: no live frame, still editable
+      if entry.notLoaded then
+        return hasCustom and "|cffff5555off|r |cffaa55ff*|r" or "|cffff5555off|r"
+      end
+
       return hasCustom and "|cffaa55ff*|r" or ""
     end,
     desc = function()
@@ -2376,7 +2449,11 @@ local function CreateUnifiedCatalogIconEntry(index)
       
       local hasCustom = ns.CDMEnhance and ns.CDMEnhance.HasPerIconSettings and ns.CDMEnhance.HasPerIconSettings(entry.cooldownID)
       if hasCustom then desc = desc .. "\n\n|cffaa55ffCustomized|r" end
-      
+
+      if entry.notLoaded then
+        desc = desc .. "\n\n|cffff5555Not loaded right now|r: hidden by its spec filter or talent condition. Select it to edit those under Spec & Talents."
+      end
+
       desc = desc .. "\n\n|cff888888Click to select  •  Shift+Click multi-select|r"
       return desc
     end,
@@ -15306,10 +15383,12 @@ function ns.GetCDMIconsOptionsTable()
         end
         LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
       end,
-      order = 4,
+      -- 9.05, NOT 4: sits directly under the Icon Catalog header, left of
+      -- Edit All Visible (Arc's layout call) instead of floating at the top
+      order = 9.05,
       width = 1.0,
     },
-    
+
     -- ═══════════════════════════════════════════════════════════════════
     -- GLOBAL OPTIONS (collapsible)
     -- ═══════════════════════════════════════════════════════════════════
@@ -15410,6 +15489,10 @@ function ns.GetCDMIconsOptionsTable()
         if unifiedFilterMode == "cooldowns" then filterName = " |cff00ff00Cooldowns|r"
         elseif unifiedFilterMode == "auras" then filterName = " |cff00ccffAuras|r"
         elseif unifiedFilterMode == "freeposition" then filterName = " |cffff00ffFree Position|r"
+        elseif unifiedFilterMode == "arc" then filterName = " |cffffcc00Arc Icons|r"
+        elseif unifiedFilterMode == "arcspell" then filterName = " |cff88ccffArc Spells|r"
+        elseif unifiedFilterMode == "arctimer" then filterName = " |cffffcc00Custom Timers|r"
+        elseif unifiedFilterMode == "arcaura" then filterName = " |cffff88ccArc Auras|r"
         elseif unifiedFilterMode and unifiedFilterMode:match("^group:") then
           filterName = " |cff88ccff" .. unifiedFilterMode:sub(7) .. "|r"
         end

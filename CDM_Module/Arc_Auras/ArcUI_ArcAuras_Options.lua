@@ -181,6 +181,13 @@ function Options.RefreshArcVisibility()
     if ns.AuraIcons and ns.AuraIcons.RefreshVisibility then
         ns.AuraIcons.RefreshVisibility()
     end
+    -- TIMERS were missing here: setting a spec/talent condition on a custom
+    -- timer through the shared Spec & Talents section did nothing until a
+    -- reload or a talent-change event (the timer tab's own editor calls this
+    -- refresh directly and never had the gap).
+    if ns.ArcAurasTimer and ns.ArcAurasTimer.RefreshSpecVisibility then
+        ns.ArcAurasTimer.RefreshSpecVisibility()
+    end
     NotifyCatalogChanged()
 end
 

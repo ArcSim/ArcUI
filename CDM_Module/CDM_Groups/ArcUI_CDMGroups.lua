@@ -8174,6 +8174,40 @@ function ns.CDMGroups.CreateGroup(name, groupType)
     -- Finds the next free slot starting from a specific position, following growth direction.
     -- Used when displacing a frame due to collision - keeps displaced icon close to original.
     -- ═══════════════════════════════════════════════════════════════════════════
+    -- GROW THE GRID TO REACH A SAVED CELL (Arc's call for the shrink-while-
+    -- hidden case). A member's saved home can lie beyond the CURRENT grid:
+    -- the user shrank the group while a spec/talent-gated icon was unloaded,
+    -- and when the icon returns its cell no longer exists -- panel-open
+    -- passes then clamped it onto an occupied cell (two icons stacked).
+    -- Restoring the row/column the saved cell needs puts the icon back at
+    -- its exact home and returns the group to its pre-shrink shape.
+    --
+    -- This is DELIBERATELY different from collision expansion (which the
+    -- login-ratchet fix forbids for assignment): it only fires for a cell
+    -- coordinate PERSISTED in savedPositions, i.e. a slot the user placed an
+    -- icon at -- restoring user intent, not drifting from a race. In-bounds
+    -- collisions never reach this.
+    function group:EnsureCellCapacity(row, col)
+        if row == nil or col == nil then return false end
+        local grew = false
+        local db = getDB()
+        if row >= self.layout.gridRows then
+            self.layout.gridRows = row + 1
+            if db then db.gridRows = self.layout.gridRows end
+            grew = true
+        end
+        if col >= self.layout.gridCols then
+            self.layout.gridCols = col + 1
+            if db then db.gridCols = self.layout.gridCols end
+            grew = true
+        end
+        if grew then
+            print(string.format("|cff00CCFF[ArcUI]|r %s grew to %dx%d to fit a returning icon at its saved slot.",
+                tostring(self.name), self.layout.gridRows, self.layout.gridCols))
+        end
+        return grew
+    end
+
     function group:FindAdjacentFreeSlot(fromRow, fromCol, allowExpand)
         if allowExpand == nil then 
             allowExpand = not ns.CDMGroups.blockGridExpansion and not self.lockGridSize

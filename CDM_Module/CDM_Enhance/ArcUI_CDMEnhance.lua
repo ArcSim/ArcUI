@@ -7009,6 +7009,17 @@ function ns.CDMEnhance.GetEnhancedFrameData(cdID)
   return enhancedFrames[cdID]
 end
 
+-- Drop a frame from the enhanced registry. For DELIBERATE removals only
+-- (ArcAuras.DestroyFrame when a load condition or removal destroys an arc
+-- icon) -- never call this on a transient signal such as a failed lookup.
+-- Without it a destroyed arc frame stayed in enhancedFrames and every
+-- RefreshAllStyles / panel force-show sweep re-applied border, tooltip and
+-- mouse to the ghost.
+function ns.CDMEnhance.ForgetFrame(cdID)
+  if cdID == nil then return end
+  enhancedFrames[cdID] = nil
+end
+
 -- Iterate every enhanced CDM frame: fn(cdID, frame, data). Used by feature
 -- modules (e.g. DurationOverride) that need to (re)scan per-icon settings.
 function ns.CDMEnhance.ForEachEnhancedFrame(fn)

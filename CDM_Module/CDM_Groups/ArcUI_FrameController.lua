@@ -747,6 +747,19 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
     -- the mess, so the original icon "moved and never came back".)
     local function ResolveTargetCell(r, c)
         if not group.grid or r == nil or c == nil then return r, c end
+        -- SAVED CELL BEYOND THE GRID (shrink-while-hidden): the user resized
+        -- the group while this member was unloaded; its persisted home no
+        -- longer exists. Grow the grid back to reach it -- the icon returns
+        -- to its exact saved slot and the group to its pre-shrink shape --
+        -- instead of clamping onto an occupied cell (stacked icons) or
+        -- silently relocating. Distinct from collision expansion, which
+        -- assignment is still forbidden from doing.
+        if group.EnsureCellCapacity
+           and group.layout
+           and (r >= (group.layout.gridRows or 1) or c >= (group.layout.gridCols or 1)) then
+            group:EnsureCellCapacity(r, c)
+            return r, c   -- the freshly created cell is necessarily free
+        end
         local occupant = group.grid[r] and group.grid[r][c]
         if not occupant or occupant == cdID then return r, c end
         local occMember = group.members[occupant]
@@ -761,7 +774,18 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
             occupant = occupant,
         })
         if group.FindAdjacentFreeSlot then
-            local fr, fc = group:FindAdjacentFreeSlot(r, c, true)
+            -- allowExpand = FALSE (coltrace-proven login ratchet): with TRUE,
+            -- a restore-race collision between two VALID members grew
+            -- layout.gridCols right here (FindAdjacentFreeSlot phase 3,
+            -- CDMGroups ~8264) and the grown value was then serialized by any
+            -- later save -- "Group1 gains a column every login". ASSIGNMENT
+            -- must never change the user's grid geometry: find a free slot in
+            -- the EXISTING grid, else fall through to a temporary overlap,
+            -- which the restore/reflow passes resolve -- exactly this
+            -- function's contract ("nothing is saved... the next restore puts
+            -- everyone back"). Expansion stays for USER actions (drag/insert
+            -- call FindAdjacentFreeSlot with their own allowExpand).
+            local fr, fc = group:FindAdjacentFreeSlot(r, c, false)
             if fr and fc then return fr, fc end
         end
         return r, c  -- grid completely full: overlap (previous behavior)

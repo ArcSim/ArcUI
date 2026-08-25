@@ -835,6 +835,11 @@ local function CreateArcAuraFrame(arcID, config)
     -- the same name creates a duplicate. Reuse + reset instead.
     local frame = _G[frameName]
     if frame then
+        -- Un-sanction hides: DestroyFrame stamped `_arcAllowHide = true` so the
+        -- maintain hooks would let it die. A reused frame is alive again and
+        -- must be protected like any other member.
+        frame._arcAllowHide = nil
+        frame._arcInstantResurrect = nil
         frame:SetParent(UIParent)
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -1266,10 +1271,30 @@ end
 function ArcAuras.DestroyFrame(arcID)
     local frame = ArcAuras.frames[arcID]
     if not frame then return end
-    
+
+    -- SANCTION THE HIDE FIRST. The CDMGroups maintain hooks (Hide/SetShown
+    -- fights, InstantResurrect + DeferredHideFight) check `_arcAllowHide`
+    -- before anything else -- it is the designed "ArcUI cleanup" escape hatch
+    -- -- but NOTHING ever set it, so the Hide() in STEP 6 fired while the
+    -- frame was still parented to its group container and the hook RESURRECTED
+    -- the frame we were destroying. Result: a ghost -- icon art hidden (STEP 5)
+    -- but the frame alive, restyled with border + tooltip by later sweeps.
+    -- The load-condition report (timer hidden by a talent condition showing a
+    -- border with a working tooltip after reload) was exactly this.
+    -- Set BEFORE UnregisterExternalFrame: member teardown can trigger the
+    -- same hooks. Cleared again on frame REUSE in CreateArcAuraFrame.
+    frame._arcAllowHide = true
+
     -- Clear caches
     InvalidateSettingsCache(arcID)
     InvalidateStackCache(arcID)
+
+    -- Forget the frame in CDMEnhance: enhancedFrames kept the dead arcID, so
+    -- every RefreshAllStyles / panel force-show sweep kept re-applying border,
+    -- tooltip and mouse to the ghost.
+    if ns.CDMEnhance and ns.CDMEnhance.ForgetFrame then
+        ns.CDMEnhance.ForgetFrame(arcID)
+    end
     
     -- Unregister from Masque via unified system
     if ns.Masque and ns.Masque.RemoveFrame then
@@ -1314,6 +1339,17 @@ function ArcAuras.DestroyFrame(arcID)
     if ns.CDMGroups and ns.CDMGroups.UnregisterExternalFrame then
         ns.CDMGroups.UnregisterExternalFrame(arcID)
     end
+
+    -- FrameRegistry: forget the frame COMPLETELY. Its byCooldownID index was
+    -- the resurrection vector the _arcAllowHide sanction could not close: the
+    -- index survived the destroy, FrameSources[3] validated the corpse purely
+    -- by frame.cooldownID == cdID, and a savedPositions-driven pass re-adopted
+    -- it into its old group -- phantom member (the "group grew a column"
+    -- report), re-styled ghost border, live tooltip. Caught by /afi ghost:
+    -- allowHide=true + member:Group1 on the same row.
+    if ns.FrameRegistry and ns.FrameRegistry.UnregisterFrame then
+        ns.FrameRegistry:UnregisterFrame(frame)
+    end
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- STEP 2: Stop any visual effects (glows, animations)
@@ -1330,7 +1366,10 @@ function ArcAuras.DestroyFrame(arcID)
     -- This prevents "ghost frames" from fighting to restore position
     -- ═══════════════════════════════════════════════════════════════════════════
     
-    -- Clear hook flags (hooks can't be removed, but clearing flags disables them)
+    -- Clear hook-INSTALL flags. NOTE: these do NOT disable the hooks -- the
+    -- hook bodies never read them; they only prevent double-install on reuse.
+    -- What actually stops the hooks from fighting this destroy is
+    -- `_arcAllowHide` (set at the top) plus the property clears below.
     frame._cdmgClearPointsHooked = nil
     frame._cdmgClearPointsFreeHooked = nil
     frame._cdmgScaleHooked = nil
@@ -1398,10 +1437,18 @@ function ArcAuras.DestroyFrame(arcID)
     -- ═══════════════════════════════════════════════════════════════════════════
     -- STEP 6: Final cleanup - hide and orphan the frame
     -- ═══════════════════════════════════════════════════════════════════════════
+    -- STRIP IDENTITY before the final hide: any lookup keyed on cooldownID
+    -- (registry index rebuilds, viewer sweeps, member restores) must see a
+    -- frame that answers to NOTHING. Both fields are re-stamped by
+    -- CreateArcAuraFrame (lines ~861-862) on fresh create AND on named-frame
+    -- reuse, so a later re-creation is unaffected.
+    frame.cooldownID = nil
+    frame._arcAuraID = nil
+
     frame:Hide()
     frame:ClearAllPoints()
     frame:SetParent(nil)  -- Orphan the frame (allows GC if no other refs)
-    
+
     -- Remove from our frames table
     ArcAuras.frames[arcID] = nil
 end

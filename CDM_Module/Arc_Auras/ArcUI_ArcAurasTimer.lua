@@ -1202,6 +1202,8 @@ function ArcAurasTimer.GetTimers()
 end
 
 -- Build all timer frames from saved config. Called on login / enable.
+local ShouldTimerBeVisible  -- forward decl: defined below, RebuildAll gates on it
+
 function ArcAurasTimer.RebuildAll()
     local db = GetDB()
     if not db or not db.customTimers then return end
@@ -1213,10 +1215,24 @@ function ArcAurasTimer.RebuildAll()
         end
     end
 
-    -- Create new / refresh existing
+    -- Create new / refresh existing.
+    -- LOGIN COLUMN-RATCHET FIX (coltrace-proven): this used to create EVERY
+    -- timer unconditionally and let the +1.5s RefreshSpecVisibility destroy
+    -- the spec/talent-gated ones. That transient member joined its group for
+    -- ~1.5s at login, the grid RATCHETED a column to fit it, and the ratchet
+    -- outlived the destroy ("Group1 gains a column every login"; the trace
+    -- showed cols 1->2 with arc_timer_2645 present, then -member with cols
+    -- stuck at 2). Gate creation on the SAME visibility check instead.
+    -- Early-login trait data can be unloaded, making the check falsely
+    -- false -- that is now SAFE: the +1.5s pass CREATES anything whose
+    -- conditions actually pass ("shouldShow and not td"), so the worst case
+    -- flipped from created-then-destroyed (ratchet, ghost hazards) to
+    -- absent-for-1.5s-then-created.
     for arcID, config in pairs(db.customTimers) do
         if not ArcAurasTimer.timers[arcID] then
-            ArcAurasTimer.CreateTimer(arcID, config)
+            if ShouldTimerBeVisible(config, config.spellID) then
+                ArcAurasTimer.CreateTimer(arcID, config)
+            end
         end
     end
 end
@@ -1247,7 +1263,7 @@ end
 --   4. (no PlayerKnowsSpell fallback — trust the user)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-local function ShouldTimerBeVisible(config, spellID)
+ShouldTimerBeVisible = function(config, spellID)  -- assigns the forward decl above RebuildAll
     if not config or not spellID then return false end
 
     -- forceShow = unconditional yes. Bypasses every gate below.

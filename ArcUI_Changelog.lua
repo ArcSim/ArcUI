@@ -29,6 +29,24 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.4",
+    sections = {
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Hidden icons stay in the Icon Catalog", desc = "An Arc icon unloaded by its spec or talent condition now stays listed with a red \"off\" tag, so you can still select it and change its conditions. The filter also gained an Arc Auras option and moved under the Icon Catalog header." },
+          { title = "Groups grow back for returning icons", desc = "If you shrink a group while one of its icons is hidden by a talent condition, the icon's return now restores the group to its saved shape and puts the icon back in its old slot, with a chat message. Before, it could end up stacked on top of another icon." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Groups no longer gain a column at login", desc = "A group could permanently grow one column wider when logging in, getting a little wider over time. Found at the root and fixed." },
+          { title = "Ghost borders from condition-hidden icons", desc = "An Arc icon hidden by its spec or talent condition could leave behind a border that even showed a tooltip, while the icon itself was gone." },
+          { title = "Talent conditions on custom timers apply immediately", desc = "Setting a spec or talent condition on a custom timer from the icon settings panel now hides or shows it right away, instead of only after a reload." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.3",
     sections = {
       {
