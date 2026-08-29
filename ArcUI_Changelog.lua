@@ -29,6 +29,35 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.5",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Aura Bar Targets", desc = "When you add your own aura bar, you can now choose what it tracks (buffs, debuffs, or both) and who it watches (you, your target, focus, pet, or party members - any combination). There is also a toggle to only show auras you applied yourself. The add window now looks and works like the one in the icon catalog, and everything can be changed later per bar." },
+          { title = "Alert Sound Channel", desc = "Aura icon alert sounds can now play through whichever volume slider you pick (Master, Sound Effects, Music, Ambience, or Dialog)." },
+          { title = "New Sounds", desc = "Added \"Ultra Instinct\" and \"Ultra Instinct Theme\" to the sound list, usable anywhere you can pick a sound." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Glow Settings Pass", desc = "All the glow options (position, size, layering) now actually work on every glow type, for both CDM icons and Arc icons - several of them previously did nothing. Glows also no longer sit slightly off-center when padding is set, and the marching-ants glow no longer restarts from the beginning every time you cast while using Masque." },
+          { title = "Cooldown Reminder Big Cooldowns", desc = "Reminders now work reliably for spells with long cooldowns (like 3 to 5 minute cooldowns) - previously the reminder could give up before the spell came back." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Icons Showing the Wrong Cooldown After Talent Changes", desc = "After changing talents or Cooldown Manager settings, icons could look ready while the spell was actually on cooldown (or look on cooldown while ready) until you cast something. Icons now always show the right state immediately." },
+          { title = "Groups Growing Extra Columns", desc = "Fixed groups growing extra columns or moving icons around on their own after talent changes, especially with shared or imported layouts." },
+          { title = "Icons Swapping Places", desc = "Icons in dynamic groups no longer trade spots back and forth for no reason." },
+          { title = "Giant Icon on Screen", desc = "Fixed a rare bug where an icon could suddenly appear huge in the middle of the screen." },
+          { title = "Masque Background Stuck On", desc = "With Masque on, an icon's skin background no longer stays visible when the icon itself is hidden." },
+          { title = "Castbar Stuck After Loading Screens", desc = "Finishing a cast right as a loading screen hits (Hearthstone, dungeon teleports) no longer leaves the castbar frozen on your screen." },
+          { title = "Custom Aura Bars Lost on Import", desc = "Sharing your bar setup with someone (or another character) no longer breaks manually added aura bars." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.4",
     sections = {
       {

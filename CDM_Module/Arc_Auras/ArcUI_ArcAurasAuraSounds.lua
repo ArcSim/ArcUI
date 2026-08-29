@@ -120,11 +120,15 @@ local function BuildDesired()
                             list[#list + 1] = {
                                 trig = entry.trig, unit = unit, spellID = spellID,
                                 fileName = fileName, fileID = fileID,
+                                channel = alerts.channel,
                             }
                         end
                     end
+                    -- the channel is part of the signature: changing it has to
+                    -- re-register, or the engine keeps playing on the old one
                     sigParts[#sigParts + 1] = arcID .. ":" .. entry.key .. ":"
                         .. tostring(fileName or fileID) .. ":" .. #ids
+                        .. ":" .. tostring(alerts.channel or "Master")
                 end
             end
             -- TTS lookup: keyed by the spell IDs, matched against the
@@ -188,7 +192,7 @@ function AIS.Sync()
             local info = {
                 unitToken = r.unit,
                 spellID = r.spellID,
-                outputChannel = "Master",
+                outputChannel = r.channel or "Master",
             }
             if r.fileName then info.soundFileName = r.fileName
             else info.soundFileID = r.fileID end

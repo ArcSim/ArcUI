@@ -1346,14 +1346,26 @@ function DL.CalculateDynamicSlots(group, rows, cols, excludeInactiveAuras)
     local function getSavedOrder(cdID)
         local saved = savedPositions[cdID]
         if saved and saved.type == "group" and saved.target == groupName then
-            if saved.sortIndex then
-                return saved.sortIndex
-            end
+            -- GEOMETRY FIRST -- ONE order source with ReflowGroup (placement-
+            -- trace-proven ping-pong, 2026-08-26): CollectMembersForReflow
+            -- deliberately orders by saved row/col ("authoritative user
+            -- order") while this function PREFERRED the stored sortIndex
+            -- field. Multiple writers stamp sortIndex with different formulas
+            -- (row*cols+col with a LIVE cols, row*100+col, explicit drag
+            -- indices), so records exist whose sortIndex disagrees with their
+            -- geometry -- and then the two engines permanently disagree,
+            -- re-swapping the same pair on every reflow/Layout pass (the
+            -- Strikes 11880 <-> arc_spell_187874 capture). Saved geometry is
+            -- the one truth; the stored sortIndex only serves records with no
+            -- geometry at all.
             if saved.row ~= nil and saved.col ~= nil then
                 if gridShape == "vertical" then
                     return saved.col * rows + saved.row
                 end
                 return saved.row * cols + saved.col
+            end
+            if saved.sortIndex then
+                return saved.sortIndex
             end
         end
         return 9999
@@ -2766,8 +2778,16 @@ function DL.ReflowGroup(group)
         local cdID = data.cdID
         local member = data.member
         
-        -- Ensure position is saved before removing
-        if not GetSavedPosition(cdID, group.name) then
+        -- Ensure position is saved before removing -- but ONLY for an icon
+        -- with NO saved record at all. The old guard checked "no record FOR
+        -- THIS GROUP", so a member churning through several groups during a
+        -- CDM rebuild (talent swap: the same cooldownID transits Essential,
+        -- Utility and Buffs member lists in one tick) had its TRUE home
+        -- overwritten by every group it merely passed through -- the armed
+        -- placement trace caught 14865's record ending up "Buffs row 2" for
+        -- a utility spell. An existing record, whatever group it names, is
+        -- better information than the transient membership being torn down.
+        if not (ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[cdID]) then
             local sortIdx = (member.row or 0) * maxCols + (member.col or 0)
             SavePosition(cdID, group.name, member.row or 0, member.col or 0, sortIdx)
         end

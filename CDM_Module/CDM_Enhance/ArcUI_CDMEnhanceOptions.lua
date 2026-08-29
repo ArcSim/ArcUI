@@ -5721,6 +5721,31 @@ function ns.GetCDMAuraIconsOptionsTable()
         if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
       end,
     },
+    alertChannel = {
+      type = "select",
+      name = "Output Channel",
+      desc = "Which of the game's volume sliders these alert sounds come out of."
+          .. "|n|n|cff888888Master ignores the other sliders, so an alert stays audible even with Sound Effects turned right down. Pick one of the others if you would rather the alert follow a slider you already set.|r",
+      order = 109.6557,
+      width = 1.6,
+      values = { Master = "Master", SFX = "Sound Effects", Music = "Music",
+                 Ambience = "Ambience", Dialog = "Dialog" },
+      sorting = { "Master", "SFX", "Music", "Ambience", "Dialog" },
+      hidden = HideAuraAlertEvents,
+      get = function()
+        local c = GetAuraCfg()
+        return (c and c.auraAlerts and c.auraAlerts.channel) or "Master"
+      end,
+      set = function(_, v)
+        ApplyAuraSetting(function(c)
+          c.auraAlerts = c.auraAlerts or {}
+          -- Master is the default, so store nothing for it (keeps saved
+          -- variables sparse, same as the sound slots)
+          c.auraAlerts.channel = (v ~= "Master") and v or nil
+        end)
+        if ns.AuraIconSounds then ns.AuraIconSounds.QueueSync() end
+      end,
+    },
     -- VOICE: shared by every speaking feature in ArcUI (see ns.Sounds), so it
     -- is deliberately NOT per-icon. Same setting the Cooldown Reminder panel
     -- edits; changing it in either place changes both.

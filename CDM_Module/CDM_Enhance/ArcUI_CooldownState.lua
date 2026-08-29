@@ -2425,6 +2425,9 @@ function ns.CooldownState.InstallCooldownAuraHooks(frame)
     end)
   end
 
+  -- (rebind re-feed subscriber installed at file scope below — see the
+  -- REBIND RE-FEED block at the end of this file)
+
   -- ── SPELL OVERRIDE HOOK ──────────────────────────────────────────
   -- COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED fires when a proc swaps the
   -- spell tied to a CDM frame (Hot Streak's Pyroblast slot, Tempest on
@@ -2452,3 +2455,67 @@ function ns.CooldownState.InstallCooldownAuraHooks(frame)
     end)
   end
 end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- REBIND RE-FEED (Arc's Stormstrike report, 2026-08-29): a talent change
+-- makes CDM shuffle pooled frames across cooldownIDs, but the SHADOW
+-- Cooldowns are only re-fed by EVENTS matching the frame's spell ids -- so
+-- after a rebind the shadow kept the PREVIOUS occupant's running cooldown
+-- and the icon wore an on-cooldown face (desat, no ready state) until some
+-- cooldown event for the NEW spell finally fired (the user had to cast).
+-- FeedShadow already contains the spell-change invalidation (stale flags +
+-- ready-glow kill on prevSpellID ~= spellID); the missing piece was only a
+-- TRIGGER at rebind time. Subscribe to FrameController's rebind dispatch:
+-- clear the fed-spell memory immediately, then run ONE settled feed +
+-- dispatch shortly after (CDM's own RefreshData populates the new
+-- cooldownInfo in the same wave; feeding at +0.1s reads the final ids).
+-- Storm-safe: one queued re-feed per frame, feeding whatever the frame
+-- holds when the timer lands. Zero idle cost, event-driven only.
+-- Same ADDON_LOADED boot pattern as ArcUI_AuraFrames' subscriber:
+-- ns.FrameController does not exist yet at this file's load time.
+-- ═══════════════════════════════════════════════════════════════════
+local function InstallCSRebindHandler()
+  if not (ns.FrameController and ns.FrameController.OnFrameRebind) then return end
+  ns.FrameController.OnFrameRebind(function(frame, oldCdID, newCdID)
+    if not frame then return end
+    if frame._arcConfig or frame._arcAuraID then return end
+    if frame._arcViewerType == "aura" then return end
+    -- the shadow's contents belong to the previous occupant now: force the
+    -- next feed through the spell-change invalidation regardless of timing
+    frame._arcShadowFedSpellID = nil
+    if not newCdID then return end   -- released to the pool: nothing to feed
+    if frame._arcRebindRefeedQueued then return end
+    frame._arcRebindRefeedQueued = true
+    C_Timer.After(0.1, function()
+      frame._arcRebindRefeedQueued = nil
+      if not frame._arcEnhanced then
+        if ns.TraceTap then ns.TraceTap("CS", "REBIND-REFEED skipped (not enhanced) cd=" .. tostring(frame.cooldownID)) end
+        return
+      end
+      local cfg = frame._arcCfg
+      if not cfg and ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettingsForFrame then
+        cfg = ns.CDMEnhance.GetEffectiveIconSettingsForFrame(frame)
+      end
+      if not cfg then
+        if ns.TraceTap then ns.TraceTap("CS", "REBIND-REFEED skipped (no cfg) cd=" .. tostring(frame.cooldownID)) end
+        return
+      end
+      if ns.TraceTap then
+        local ci = frame.cooldownInfo
+        ns.TraceTap("CS", string.format("REBIND-REFEED cd=%s spell=%s",
+          tostring(frame.cooldownID), tostring(ci and (ci.overrideSpellID or ci.spellID))))
+      end
+      ns.CooldownState.FeedShadow(frame, cfg)
+      DispatchAfterShadowUpdate(frame)
+    end)
+  end)
+end
+
+local csRebindBoot = CreateFrame("Frame")
+csRebindBoot:RegisterEvent("ADDON_LOADED")
+csRebindBoot:SetScript("OnEvent", function(self, event, addon)
+  if addon == ADDON then
+    InstallCSRebindHandler()
+    self:UnregisterEvent("ADDON_LOADED")
+  end
+end)

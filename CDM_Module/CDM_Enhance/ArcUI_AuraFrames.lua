@@ -1116,6 +1116,20 @@ local function InstallAFRebindHandler()
     -- stayed grey until the options panel forced a refresh. Which pooled
     -- frame landed on which cooldownID is why it only happened sometimes.
     frame._arcForceDesatValue        = nil
+    -- REBIND RE-EVAL (talent-swap desat-loss report, 2026-08-29): clearing
+    -- the caches above makes the NEXT eval read fresh state, but nothing
+    -- GUARANTEED a next eval -- without an aura event after the shuffle the
+    -- icon kept whatever CDM painted (aura-missing desaturate lost until the
+    -- next UNIT_AURA). Schedule ONE settled re-eval; the cleared throttle
+    -- caches let it run fresh. Aura frames only -- CooldownState's own
+    -- rebind subscriber re-feeds cooldown frames the same way.
+    if newCdID and frame._arcViewerType == "aura" and not frame._arcAFRebindQueued then
+      frame._arcAFRebindQueued = true
+      C_Timer.After(0.1, function()
+        frame._arcAFRebindQueued = nil
+        AF.UpdateAuraFrame(frame)
+      end)
+    end
   end)
 end
 

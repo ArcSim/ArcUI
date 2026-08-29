@@ -498,7 +498,15 @@ function ns.Masque.AddFrame(frame, viewerName, cdID)
     InitMasque()
     if not Masque then return end
     if not frame then return end
-    
+
+    -- GHOST-SUPPRESSED (aura icons): the holder's Masque skin is ghost chrome
+    -- (it sits below the engine button) and must vanish with a hidden Aura
+    -- Missing state — AuraIcons.ApplySettings sets this flag while the ghost
+    -- is fully hidden and clears it before re-registering. Guarded HERE, the
+    -- one chokepoint, so no refresh path (RefreshMasqueState, resize reskins,
+    -- frame creation sweeps) can resurrect the skin on a hidden ghost.
+    if frame._arcMasqueGhostSuppressed then return end
+
     -- Get cdID if not provided
     cdID = cdID or frame.cooldownID or frame._arcCDID
     if not cdID then return end

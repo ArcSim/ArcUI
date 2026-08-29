@@ -1291,6 +1291,32 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
         end
     end
 
+    -- MASQUE GHOST RULE (Arc's report): the Masque skin regions live on the
+    -- HOLDER (registered by ArcAuras.CreateFrame) and never followed the
+    -- ghost's alpha — with Aura Missing hidden (opacity 0 / Show Icon off)
+    -- the skin's backdrop kept rendering as an empty Masque square. The skin
+    -- IS ghost chrome (it sits below the engine button; the live aura
+    -- occludes it), so a fully hidden ghost takes the skin with it. Masque
+    -- internals are off-limits — the lever is our own registration wrapper:
+    -- unregister while the ghost is hidden, re-register when it becomes
+    -- visible again. The final missAlpha already carries the panel-open
+    -- preview bump, so the skin stays visible while editing. State flips
+    -- only on settings changes / panel edges — never per aura state change
+    -- (occlusion handles those), so no Masque churn.
+    if ns.Masque and ns.Masque.RemoveFrame and ns.Masque.AddFrame then
+        if missAlpha <= 0 then
+            if holder._arcMasqueAdded then
+                ns.Masque.RemoveFrame(holder)
+            end
+            holder._arcMasqueGhostSuppressed = true
+        elseif holder._arcMasqueGhostSuppressed then
+            holder._arcMasqueGhostSuppressed = nil
+            ns.Masque.AddFrame(holder, "ArcAuras", arcID)
+            holder._arcMasqueSkinW = holder:GetWidth()
+            holder._arcMasqueSkinH = holder:GetHeight()
+        end
+    end
+
     -- Re-assert the holder's overlay level ladder from its CURRENT level:
     -- those children got their levels at factory time (base level 10) and
     -- do NOT follow when CDMGroups later raises the holder. GHOST BORDER
@@ -1543,6 +1569,14 @@ local function SweepForceHideCombat(inCombat)
             if s and s.forceHideIcon == true then
                 if inCombat then
                     holder.Icon:SetAlpha(0)
+                    -- the panel preview re-added the Masque skin — take it
+                    -- down with the ghost (holder-side Masque ops are our own
+                    -- frames/textures, legal in combat). Combat end re-runs
+                    -- ApplySettings, which restores it with the preview.
+                    if holder._arcMasqueAdded and ns.Masque and ns.Masque.RemoveFrame then
+                        ns.Masque.RemoveFrame(holder)
+                    end
+                    holder._arcMasqueGhostSuppressed = true
                 else
                     AuraIcons.ApplySettings(arcID)
                 end

@@ -16,13 +16,16 @@
 -- the CAST spell, not the buff. We resolve the WHOLE candidate set from the CDM
 -- cooldownID via C_CooldownViewer.GetCooldownViewerCooldownInfo (C API, taint-safe).
 --
--- DUAL-UNIT (critical for debuffs): the CDM frame's auraDataUnit / the user's buff-vs-
--- debuff label CANNOT be trusted to route the aura to player vs target (CDM's selfAura
--- is not a routing flag; e.g. Flame Shock is selfAura=true yet lives on the target). So
--- for EVERY attach we create TWO slots -- player/HELPFUL + target/HARMFUL -- both driving
--- the same bar; whichever unit actually holds the aura populates and drives it, the other
--- stays empty (hidden by the engine). This is the proven AuraLab model. Ref:
--- E:\WoWDev\reference\CDM_cooldownID_to_spellID_resolution.md + ArcUI_AuraLab_Slots.lua.
+-- LANES (multi-unit): every attach carries a list of (unit, filter) lanes --
+-- resolved by ns.Display.ResolveAuraLanes from the bar's Type + On settings,
+-- or synthesized as the single legacy lane (buff -> player/HELPFUL, debuff ->
+-- target/HARMFUL|PLAYER) when the caller passes none. Each lane gets its own
+-- slot composition in that unit's container, all driving the same bar;
+-- whichever unit actually holds the aura populates and drives it, the others
+-- stay empty (hidden by the engine) -- the set reads as an OR, the aura
+-- icons' proven model. The CDM frame's auraDataUnit is never trusted for
+-- routing (selfAura is not a routing flag; Flame Shock reports "player" yet
+-- lives on the target).
 --
 -- Inert on live: the AuraContainer/AuraButton intrinsics don't exist on 12.0.x.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -565,9 +568,12 @@ function BD.SetOwnChrome(barFrame, oc)
   local a = attached[barFrame]
   if not a then return end
   if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then return end
-  local sub = a.subs and a.subs[1]
-  if sub and sub.initFired and sub.button then
-    ApplyOwnChromeToButton(sub.button, oc)
+  -- every LANE's base sub carries the chrome (multi-unit bars: whichever
+  -- lane's aura is active shows the bar's background/border)
+  for _, sub in ipairs(a.subs or {}) do
+    if sub.isBase and sub.initFired and sub.button then
+      ApplyOwnChromeToButton(sub.button, oc)
+    end
   end
 end
 
@@ -1037,7 +1043,9 @@ local function BuildLayerColors(opts)
   return t
 end
 
--- BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)  -- `unit` is a hint only; both are tried.
+-- BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
+-- opts.lanes / opts.lanesKey (from ns.Display.ResolveAuraLanes) select the
+-- unit lanes; without them `unit` synthesizes the single legacy lane.
 function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
   diag.attachCall = diag.attachCall + 1
   -- exclusive with the CDM mirror mode (Display routes a bar to ONE lane)
@@ -1049,6 +1057,24 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
   if not idKey then diag.badArgs = diag.badArgs + 1; Log("Attach: no cooldownID or trackedSpellID"); return end
 
   if BD.loadWindow then diag.prebuild = diag.prebuild + 1 end
+
+  -- LANES (multi-unit aura bars, the aura icons' model): each lane is a
+  -- (unit token, aura filter) pair and gets its OWN slot composition in that
+  -- unit's container, all driving the same bar -- the set reads as an OR.
+  -- Callers that pass no opts.lanes (textures, older sites) get the single
+  -- legacy lane synthesized from `unit`, which is byte-identical to the old
+  -- behavior (target = own debuffs only, everything else HELPFUL).
+  local lanes = opts.lanes
+  if not lanes or #lanes == 0 then
+    local u = unit or "player"
+    lanes = { { unit = u, filter = (u == "target") and "HARMFUL|PLAYER" or "HELPFUL" } }
+  end
+  local lanesKey = opts.lanesKey
+  if not lanesKey then
+    local kparts = {}
+    for i, l in ipairs(lanes) do kparts[i] = l.unit .. ":" .. l.filter end
+    lanesKey = table.concat(kparts, ",")
+  end
 
   local spellIDs = BD.ResolveCandidateSpellIDs(cooldownID, trackedSpellID)
   if not next(spellIDs) then
@@ -1067,17 +1093,17 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
   -- Under secrecy the old wiring keeps driving and the flush re-runs this.
   local wantStacks = opts.stacksText ~= nil
   if prev and prev.idKey == idKey
-     and (prev.unit ~= (unit or "player") or (prev.stacksWired == true) ~= wantStacks
+     and ((prev.lanesKey or "") ~= lanesKey or (prev.stacksWired == true) ~= wantStacks
           or (prev.applicationMax or 0) ~= (opts.applicationMax or 0)
           or (prev.bandsKey or "") ~= (opts.bandsKey or "")) then
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
       diag.combatDefer = diag.combatDefer + 1
       pending[barFrame] = { fs = fs, cooldownID = cooldownID, trackedSpellID = trackedSpellID, unit = unit, opts = opts }
-      Log("Attach: rewire needed (unit %s->%s, stacks %s->%s) under secrecy -> deferred",
-        tostring(prev.unit), tostring(unit), tostring(prev.stacksWired), tostring(wantStacks))
+      Log("Attach: rewire needed (lanes %s->%s, stacks %s->%s) under secrecy -> deferred",
+        tostring(prev.lanesKey), tostring(lanesKey), tostring(prev.stacksWired), tostring(wantStacks))
     else
-      Log("Attach: rewire (unit %s->%s, stacks %s->%s) -> recreating slot",
-        tostring(prev.unit), tostring(unit), tostring(prev.stacksWired), tostring(wantStacks))
+      Log("Attach: rewire (lanes %s->%s, stacks %s->%s) -> recreating slot",
+        tostring(prev.lanesKey), tostring(lanesKey), tostring(prev.stacksWired), tostring(wantStacks))
       BD.Detach(barFrame)
       prev = nil
     end
@@ -1099,8 +1125,10 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
     -- re-attach path replays req.opts, and a stale req reinstated the previous
     -- colours/steps over the current ones (the "old colour stayed" bug).
     local newColors = BuildLayerColors(opts)
-    for i, sub in ipairs(prev.subs or {}) do
-      local c = newColors[i]
+    for _, sub in ipairs(prev.subs or {}) do
+      -- layerIdx, not the subs index: multi-lane repeats the layer sequence
+      -- per lane, so the flat index no longer maps onto the color list
+      local c = sub.layerIdx and newColors[sub.layerIdx]
       if c and not sub.shade then
         sub.bandColor = c
         if not aurasSecret and sub.arcBar then
@@ -1129,14 +1157,16 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
       ((gb and gb.GetReverseFill and gb:GetReverseFill()) and 1) or 0)
     local geomChanged = prev.geomSig ~= geomSig
     prev.geomSig = geomSig
-    for si, sub in ipairs(prev.subs or {}) do
+    for _, sub in ipairs(prev.subs or {}) do
       if filtersMoved and sub.container and sub.key and sub.container.SetAuraSlotCandidateFilters then
         sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = spellIDs })
         refreshed = refreshed or {}
         refreshed[sub.container] = true
       end
       if not aurasSecret and sub.initFired and sub.button then
-        ApplyOwnChromeToButton(sub.button, si == 1 and opts.ownChrome or nil)
+        -- chrome lives on every LANE's base sub (isBase), so whichever lane's
+        -- aura is active carries the bar's background/border with it
+        ApplyOwnChromeToButton(sub.button, sub.isBase and opts.ownChrome or nil)
         sub.button:SetFrameStrata(barFrame:GetFrameStrata())
         sub.button:SetFrameLevel((((barFrame.bar and barFrame.bar:GetFrameLevel()) or barFrame:GetFrameLevel()) or 1) + 1 + (sub.levelBoost or 0))
         if geomChanged or sub.geomPending then
@@ -1199,123 +1229,156 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
     return
   end
 
-  -- Route by the caller's buff/debuff PICKER (passed as `unit`): buff -> player/HELPFUL, debuff ->
-  -- target/HARMFUL. That is the reliable signal; the CDM frame's auraDataUnit is NOT (selfAura
-  -- entries like Flame Shock report "player" even though the aura lives on the target).
-  unit = unit or "player"
-  local c = EnsureContainer(unit, barFrame)
-  if not c or not c.AddAuraSlot then
-    diag.combatDefer = diag.combatDefer + 1
-    pending[barFrame] = { fs = fs, cooldownID = cooldownID, trackedSpellID = trackedSpellID, unit = unit, opts = opts }
-    Log("Attach: container(%s) not ready -> pending (cd=%s)", unit, tostring(cooldownID))
-    return
-  end
+  -- Route by the caller's PICKER (the lanes list; single legacy lane when no
+  -- opts.lanes). That is the reliable signal; the CDM frame's auraDataUnit is
+  -- NOT (selfAura entries like Flame Shock report "player" even though the
+  -- aura lives on the target).
+  --
   -- Filter by LANE SEMANTICS, never live unit state: UnitCanAssist("player",
   -- "pet") is FALSE while the pet does not exist — which is exactly the case
   -- during the login prebuild — so the pet slot got baked with a HARMFUL
   -- filter for the whole session and the pet's buff could never match (the
-  -- "empty pet bar after every reload" bug). The lanes are fixed by design:
-  -- target = the player's OWN debuffs (HARMFUL|PLAYER — plain HARMFUL lit
-  -- bars up for ANY ally's copy of the debuff, e.g. a second Arms warrior's
-  -- Colossus Smash; the pre-12.1 CDM path was own-only implicitly);
-  -- player/pet = buffs (HELPFUL, any source — external buffs must match).
-  local filter = (unit == "target") and "HARMFUL|PLAYER" or "HELPFUL"
+  -- "empty pet bar after every reload" bug). Each lane's filter is fixed by
+  -- design at resolve time (Display.ResolveAuraLanes / the legacy synth
+  -- above): harmful lanes default to the player's OWN debuffs (|PLAYER —
+  -- plain HARMFUL lit bars up for ANY ally's copy of the debuff, e.g. a
+  -- second Arms warrior's Colossus Smash) unless the user opted into other
+  -- players' copies; helpful lanes are HELPFUL (any source — external buffs
+  -- must match) unless own-only is on.
+  unit = unit or "player"
+
+  -- Pre-create EVERY lane's container first: if any is unavailable (combat on
+  -- a pre-PTR7 client), defer the whole attach rather than building a partial
+  -- lane set.
+  local laneContainers = {}
+  for i, lane in ipairs(lanes) do
+    local c = EnsureContainer(lane.unit, barFrame)
+    if not c or not c.AddAuraSlot then
+      diag.combatDefer = diag.combatDefer + 1
+      pending[barFrame] = { fs = fs, cooldownID = cooldownID, trackedSpellID = trackedSpellID, unit = unit, opts = opts }
+      Log("Attach: container(%s) not ready -> pending (cd=%s)", lane.unit, tostring(cooldownID))
+      return
+    end
+    laneContainers[i] = c
+  end
+
   -- threshold overlays present -> colour/texture split: the base goes FLAT
   -- too (the shade slot below carries the texture for every layer at once)
   local nSteps = opts.applicationSteps and #opts.applicationSteps or 0
   local nDur   = opts.durationSteps and #opts.durationSteps or 0
   local nBands = opts.applicationBands and #opts.applicationBands or 0
   opts.flatFill = (nSteps > 0 or nDur > 0 or nBands > 0) or nil
-  local subs = { CreateSub(c, filter, spellIDs, barFrame, fs, opts) }
 
-  -- Threshold band overlays (stack bars): one extra slot per band, fill-only
-  -- (no text opts), saturating maxApplications + fractional width + locked
-  -- color. Smaller thresholds get higher levels (drawn on top).
-  for _, band in ipairs(opts.applicationBands or {}) do
-    subs[#subs + 1] = CreateSub(c, filter, spellIDs, barFrame, nil, {
-      applicationMax = band.max,
-      interpolation  = opts.interpolation,
-      baseColor      = band.color,
-      fillWidthFrac  = band.widthFrac,
-      fillLevelBoost = band.boost,
-      lockColor      = true,
-    })
-  end
+  -- ONE full layer composition PER LANE, every lane's stack in its own
+  -- unit's container, all driving the same bar. sub.layerIdx records the
+  -- position in the per-lane layer sequence (base=1, bands, step pairs,
+  -- duration layers) so colour pushes stay correct across lanes.
+  local subs = {}
+  for li, lane in ipairs(lanes) do
+    local c, filter = laneContainers[li], lane.filter
+    local layerIdx = 0
+    local function AddLaneSub(fsArg, subOpts)
+      layerIdx = layerIdx + 1
+      local sub = CreateSub(c, filter, spellIDs, barFrame, fsArg, subOpts)
+      sub.layerIdx = layerIdx
+      subs[#subs + 1] = sub
+      return sub
+    end
 
-  -- Continuous step overlays (whole-fill color switch): TWO slots per
-  -- threshold in this bar's container, each masked to its region (see the
-  -- step block above). P paints [T..count] (max=maxStacks, bar
-  -- interpolation -- edge tracks the base fill); Q covers [0..T] once count
-  -- reaches T (max=T, Immediate). Higher thresholds draw on top.
-  for _, st in ipairs(opts.applicationSteps or {}) do
-    local frac = st.threshold / math.max(opts.applicationMax or 1, 1)
-    subs[#subs + 1] = CreateSub(c, filter, spellIDs, barFrame, nil, {
-      applicationMax = opts.applicationMax,
-      interpolation  = opts.interpolation,
-      baseColor      = st.color,
-      stepKind       = "upper",
-      stepFrac       = frac,
-      stepT          = st.threshold,
-      fillLevelBoost = st.boost,
-      lockColor      = true,
-    })
-    subs[#subs + 1] = CreateSub(c, filter, spellIDs, barFrame, nil, {
-      applicationMax = st.threshold,
-      interpolation  = Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate or nil,
-      baseColor      = st.color,
-      stepKind       = "lower",
-      stepFrac       = frac,
-      stepT          = st.threshold,
-      fillLevelBoost = st.boost,
-      lockColor      = true,
-    })
-  end
+    local base = AddLaneSub(fs, opts)
+    base.isBase = true
 
-  -- DURATION threshold layers (colour by remaining time). Each entry is one
-  -- layer with an explicit level boost, built by ns.Display in the order the
-  -- composition needs; TRACK layers follow the fill, STEP layers gate on the
-  -- threshold. All flat-filled; the shade slot below re-applies the texture.
-  for _, d in ipairs(opts.durationSteps or {}) do
-    subs[#subs + 1] = CreateSub(c, filter, spellIDs, barFrame, nil, {
-      direction      = opts.direction,
-      interpolation  = d.step and (Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate) or opts.interpolation,
-      baseColor      = d.color,
-      durSide        = d.side,
-      durFrac        = d.frac,
-      durStep        = d.step,
-      fillLevelBoost = d.boost,
-      lockColor      = true,
-    })
-  end
+    -- Threshold band overlays (stack bars): one extra slot per band, fill-only
+    -- (no text opts), saturating maxApplications + fractional width + locked
+    -- color. Smaller thresholds get higher levels (drawn on top).
+    for _, band in ipairs(opts.applicationBands or {}) do
+      AddLaneSub(nil, {
+        applicationMax = band.max,
+        interpolation  = opts.interpolation,
+        baseColor      = band.color,
+        fillWidthFrac  = band.widthFrac,
+        fillLevelBoost = band.boost,
+        lockColor      = true,
+      })
+    end
 
-  -- SHADE slot (only with threshold overlays): the user's texture in white,
-  -- MOD blended, spanning the same fill on TOP of every flat colour layer --
-  -- gives all of them the same texture shading with one correctly-mapped fill.
-  if nSteps > 0 or nDur > 0 or nBands > 0 then
-    -- above EVERY colour layer, whatever composition built them
-    local shadeBoost = 1
-    for _, b in ipairs(opts.applicationBands or {}) do shadeBoost = math.max(shadeBoost, (b.boost or 0) + 1) end
-    for _, st in ipairs(opts.applicationSteps or {}) do shadeBoost = math.max(shadeBoost, (st.boost or 0) + 1) end
-    for _, d in ipairs(opts.durationSteps or {}) do shadeBoost = math.max(shadeBoost, (d.boost or 0) + 1) end
-    subs[#subs + 1] = CreateSub(c, filter, spellIDs, barFrame, nil, {
-      applicationMax = opts.applicationMax,
-      direction      = opts.direction,
-      interpolation  = opts.interpolation,
-      shade          = true,
-      fillLevelBoost = shadeBoost,
-    })
+    -- Continuous step overlays (whole-fill color switch): TWO slots per
+    -- threshold in this lane's container, each masked to its region (see the
+    -- step block above). P paints [T..count] (max=maxStacks, bar
+    -- interpolation -- edge tracks the base fill); Q covers [0..T] once count
+    -- reaches T (max=T, Immediate). Higher thresholds draw on top.
+    for _, st in ipairs(opts.applicationSteps or {}) do
+      local frac = st.threshold / math.max(opts.applicationMax or 1, 1)
+      AddLaneSub(nil, {
+        applicationMax = opts.applicationMax,
+        interpolation  = opts.interpolation,
+        baseColor      = st.color,
+        stepKind       = "upper",
+        stepFrac       = frac,
+        stepT          = st.threshold,
+        fillLevelBoost = st.boost,
+        lockColor      = true,
+      })
+      AddLaneSub(nil, {
+        applicationMax = st.threshold,
+        interpolation  = Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate or nil,
+        baseColor      = st.color,
+        stepKind       = "lower",
+        stepFrac       = frac,
+        stepT          = st.threshold,
+        fillLevelBoost = st.boost,
+        lockColor      = true,
+      })
+    end
+
+    -- DURATION threshold layers (colour by remaining time). Each entry is one
+    -- layer with an explicit level boost, built by ns.Display in the order the
+    -- composition needs; TRACK layers follow the fill, STEP layers gate on the
+    -- threshold. All flat-filled; the shade slot below re-applies the texture.
+    for _, d in ipairs(opts.durationSteps or {}) do
+      AddLaneSub(nil, {
+        direction      = opts.direction,
+        interpolation  = d.step and (Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate) or opts.interpolation,
+        baseColor      = d.color,
+        durSide        = d.side,
+        durFrac        = d.frac,
+        durStep        = d.step,
+        fillLevelBoost = d.boost,
+        lockColor      = true,
+      })
+    end
+
+    -- SHADE slot (only with threshold overlays): the user's texture in white,
+    -- MOD blended, spanning the same fill on TOP of every flat colour layer --
+    -- gives all of them the same texture shading with one correctly-mapped fill.
+    if nSteps > 0 or nDur > 0 or nBands > 0 then
+      -- above EVERY colour layer, whatever composition built them
+      local shadeBoost = 1
+      for _, b in ipairs(opts.applicationBands or {}) do shadeBoost = math.max(shadeBoost, (b.boost or 0) + 1) end
+      for _, st in ipairs(opts.applicationSteps or {}) do shadeBoost = math.max(shadeBoost, (st.boost or 0) + 1) end
+      for _, d in ipairs(opts.durationSteps or {}) do shadeBoost = math.max(shadeBoost, (d.boost or 0) + 1) end
+      AddLaneSub(nil, {
+        applicationMax = opts.applicationMax,
+        direction      = opts.direction,
+        interpolation  = opts.interpolation,
+        shade          = true,
+        fillLevelBoost = shadeBoost,
+      })
+    end
   end
 
   -- lock each layer's colour so restyles cannot reset a composed layer to the
   -- plain bar colour (the base carries the composition's own base, which for
   -- band mode is the TOP band's colour, not cfg.barColor)
   local layerColors = BuildLayerColors(opts)
-  for i, sub in ipairs(subs) do
-    if layerColors[i] and not sub.shade then sub.bandColor = layerColors[i] end
+  for _, sub in ipairs(subs) do
+    local col = layerColors[sub.layerIdx]
+    if col and not sub.shade then sub.bandColor = col end
   end
 
   attached[barFrame] = {
     idKey = idKey, cooldownID = cooldownID, spellIDs = spellIDs, subs = subs, unit = unit,
+    lanesKey = lanesKey,
     decimals = opts.durDecimals, textColorEnabled = opts.textColorEnabled,
     colorKey = opts.colorKey, stacksWired = wantStacks,
     applicationMax = opts.applicationMax, bandsKey = opts.bandsKey,
@@ -1325,7 +1388,7 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
     -- so binding changes are served by recreating the slot from this request
     req = { fs = fs, cooldownID = cooldownID, trackedSpellID = trackedSpellID, unit = unit, opts = opts },
   }
-  Log("Attach: %s/%s {%s} (cd=%s)", unit, filter, SetKeys(spellIDs), tostring(cooldownID))
+  Log("Attach: [%s] {%s} (cd=%s)", lanesKey, SetKeys(spellIDs), tostring(cooldownID))
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1689,6 +1752,8 @@ ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- zone-out ends instance secrecy without a regen
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
+ev:RegisterEvent("PLAYER_FOCUS_CHANGED")  -- focus lanes (multi-unit bars): focus identity changed
+ev:RegisterEvent("GROUP_ROSTER_UPDATE")   -- party lanes: party1..4 identities changed
 ev:RegisterEvent("UNIT_PET")            -- pet summoned/dismissed/replaced: pet containers go stale
 ev:SetScript("OnEvent", function(_, event, evUnit)
   -- LAZY REPAIR REGISTRATION. This file loads BEFORE ArcUI_CDM_Shared.lua (toc
@@ -1698,15 +1763,23 @@ ev:SetScript("OnEvent", function(_, event, evUnit)
   if ns.CDMShared and ns.CDMShared.RegisterAuraContainerRepair then
     ns.CDMShared.RegisterAuraContainerRepair(BD.RepairContainers)
   end
-  if event == "PLAYER_TARGET_CHANGED" or (event == "UNIT_PET" and evUnit == "player") then
+  if event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_FOCUS_CHANGED"
+     or event == "GROUP_ROSTER_UPDATE" or (event == "UNIT_PET" and evUnit == "player") then
     -- Non-player containers do NOT self-refresh when their unit's IDENTITY changes (they only
     -- react to their own unit's UNIT_AURA), so a target debuff bar goes stale on target swap and
-    -- a pet bar on summon/dismiss. Force a full re-parse of the affected containers.
+    -- a pet bar on summon/dismiss — same for focus swaps and party roster changes. Force a full
+    -- re-parse of the affected containers.
     -- (The exact debuff bug the AuraLab found; pet lane added with the Dark Transformation fix.)
-    local wantUnit = (event == "UNIT_PET") and "pet" or nil   -- nil = every non-player unit
+    local wantUnit = (event == "UNIT_PET") and "pet"
+      or (event == "PLAYER_FOCUS_CHANGED") and "focus"
+      or (event == "GROUP_ROSTER_UPDATE") and "party"
+      or nil   -- nil = every non-player unit
     for _, perOwner in pairs(containers) do
       for unit, c in pairs(perOwner) do
-        if unit ~= "player" and (not wantUnit or unit == wantUnit) and c.UpdateAllAuras then
+        if unit ~= "player"
+           and (not wantUnit or unit == wantUnit
+                or (wantUnit == "party" and unit:sub(1, 5) == "party"))
+           and c.UpdateAllAuras then
           c:UpdateAllAuras()
         end
       end

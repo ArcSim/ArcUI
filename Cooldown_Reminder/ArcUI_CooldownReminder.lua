@@ -349,7 +349,7 @@ CR.Engine = Engine
 
 local KIND_COOLDOWN = "CD"
 local KIND_CHARGE   = "CHARGE"
-local BIND_TIMEOUT_SECONDS       = 60
+local BIND_TIMEOUT_SECONDS       = 300
 local INIT_GRACE_PERIOD          = 2.0
 local CHARGE_NATURAL_PULSE_WINDOW = 0.25
 --[[ DISABLED: legacy aura-gate system. Our isActive-based
@@ -1385,7 +1385,27 @@ function Engine:_ProcessPendingBinds(reason)
     for _, rec in pairs(self.records) do
         if rec.watchToken and rec.bindStartTime
            and (now - rec.bindStartTime) > BIND_TIMEOUT_SECONDS then
-            self:_StopWatching(rec, "timeout")
+            -- LONG COOLDOWNS (the Ascendance report, log-proven): this sweep
+            -- reaped EVERY watch at 60s flat, so any spell or item whose
+            -- cooldown outlives the window lost its watcher mid-cooldown and
+            -- the READY transition fired into the void -- "not a single
+            -- reminder" on a 3-minute cooldown, while sub-60s spells always
+            -- worked. The one observed success came from a lucky event-side
+            -- re-adopt, not from the watch surviving.
+            -- The timeout exists to reap LEAKED watches (spell gone from the
+            -- book reads ready/unreadable). So check the evidence first: feed
+            -- the shadows and only reap if nothing is running. A shadow still
+            -- showing a cooldown or recharge is a watch doing its job --
+            -- extend it another window instead.
+            self:_FeedRecordShadows(rec)
+            local mainShown   = rec.cdWidget and rec.cdWidget:IsShown()
+            local chargeShown = rec.chargeWidget and rec.chargeWidget:IsShown()
+            if mainShown or chargeShown then
+                rec.bindStartTime = now
+                Log:Write("DEBUG", rec.spellID, "Cleanup: still on cooldown, watch extended")
+            else
+                self:_StopWatching(rec, "timeout")
+            end
         end
     end
 end
@@ -3491,6 +3511,70 @@ SlashCmdList["ARCUICR"] = function(msg)
         print(string.format("|cff00ccffArcUI|r CR: Migration ran. "
             .. "%d spell(s) in whitelist, %d needed triggers, all done.",
             before, seeded))
+    elseif cmd == "log" then
+        -- LOG VIEWER (diagnostic; added for the "Ascendance reminder never
+        -- fires" report). The engine has always kept a ring log -- INFO
+        -- entries (Cast -> watching, READY transitions, pulses) are recorded
+        -- unconditionally -- but nothing could READ it. Dumps the entries,
+        -- optionally filtered by spellID, into a copy-pasteable window.
+        -- `/arcuicr debug` toggles DEBUG/TRACE detail for the next capture.
+        local filter = tonumber(rest)
+        local w = CR._logWindow
+        if not w then
+            w = CreateFrame("Frame", "ArcUICRLogWindow", UIParent, "BackdropTemplate")
+            w:SetSize(760, 480)
+            w:SetPoint("CENTER")
+            w:SetFrameStrata("DIALOG")
+            w:SetMovable(true); w:EnableMouse(true)
+            w:RegisterForDrag("LeftButton")
+            w:SetScript("OnDragStart", w.StartMoving)
+            w:SetScript("OnDragStop", w.StopMovingOrSizing)
+            w:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+                edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                tile = true, tileSize = 32, edgeSize = 24,
+                insets = { left = 6, right = 6, top = 6, bottom = 6 } })
+            local close = CreateFrame("Button", nil, w, "UIPanelCloseButton")
+            close:SetPoint("TOPRIGHT", -2, -2)
+            local sf = CreateFrame("ScrollFrame", nil, w, "UIPanelScrollFrameTemplate")
+            sf:SetPoint("TOPLEFT", 12, -28)
+            sf:SetPoint("BOTTOMRIGHT", -30, 12)
+            local eb = CreateFrame("EditBox", nil, sf)
+            eb:SetMultiLine(true)
+            eb:SetFontObject(ChatFontNormal)
+            eb:SetWidth(700)
+            eb:SetAutoFocus(false)
+            eb:SetScript("OnEscapePressed", function(self2) self2:ClearFocus() end)
+            sf:SetScrollChild(eb)
+            w.out = eb
+            CR._logWindow = w
+        end
+        local db2 = GetDB()
+        local L = {}
+        L[#L + 1] = string.format("=== COOLDOWN REMINDER LOG (%s)%s  debug=%s ===",
+            date("%H:%M:%S"), filter and ("  spell " .. filter) or "",
+            (db2 and db2.debug) and "ON" or "off")
+        local shown = 0
+        for _, e in ipairs(Log.entries) do
+            if not filter or e.spellID == filter then
+                shown = shown + 1
+                L[#L + 1] = string.format("%9.2f  %-5s %-8s %s",
+                    e.time, tostring(e.level), tostring(e.spellID or "-"), e.msg or "")
+            end
+        end
+        if shown == 0 then
+            L[#L + 1] = filter
+                and ("No entries for spell " .. filter .. ". Cast it once, then rerun. If still empty, the engine never sees that spell at all.")
+                or "No entries recorded yet this session."
+        end
+        w:Show()
+        w.out:SetText(table.concat(L, "\n"))
+        w.out:SetCursorPosition(0)
+    elseif cmd == "debug" then
+        local db2 = GetDB()
+        if db2 then
+            db2.debug = not db2.debug
+            print("|cff00ccffArcUI|r CR: debug logging " .. (db2.debug and "|cff00ff00ON|r (DEBUG/TRACE recorded; capture, then /arcuicr log)" or "off"))
+        end
     elseif cmd == "voices" then
         -- List all available TTS voices (for debugging male/female selection)
         if not (C_VoiceChat and C_VoiceChat.GetTtsVoices) then

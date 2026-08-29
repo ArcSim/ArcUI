@@ -2205,8 +2205,14 @@ PushFramesFromSlot = function(group, row, col, claimingCdID)
             
             -- FALLBACK: Also check member position (CDM may have changed saved pos already)
             -- This catches the case where CDM's internal layout fires POS_CHANGED before
-            -- our Reconcile processes, corrupting the saved position temporarily
-            if not cdIDAtSlot and member.row == row and member.col == col then
+            -- our Reconcile processes, corrupting the saved position temporarily.
+            -- AUTO-REFLOW EXCEPTION (Whitish's "Army of the Dead shifted" report,
+            -- patch adopted 2026-08-29): on autoReflow groups member.row/col is the
+            -- VISUAL compacted position, so this fallback picked whichever member
+            -- reflow had parked at the slot and pushed the WRONG icon -- visual
+            -- positions leaking into saved order on reload. Saved positions are
+            -- authoritative for reflow groups; the primary check above covers them.
+            if not group.autoReflow and not cdIDAtSlot and member.row == row and member.col == col then
                 cdIDAtSlot = cdID
                 memberAtSlot = member
                 -- Don't break - prefer saved position match if found later

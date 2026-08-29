@@ -88,7 +88,16 @@ local function ExtractAuraBarConfig(bar)
         customDefinitionID = t.customDefinitionID,
         trackedSpellID  = t.trackedSpellID,
         displaySpellID  = t.displaySpellID,
+        customAura      = t.customAura,
+        auraOwnOnly     = t.auraOwnOnly,
     }
+    -- auraUnits is a set table: copy element-by-element like alternateCooldownIDs
+    if t.auraUnits then
+        out.tracking.auraUnits = {}
+        for k, v in pairs(t.auraUnits) do
+            if v then out.tracking.auraUnits[k] = true end
+        end
+    end
     -- Explicitly copy alternateCooldownIDs array element-by-element
     out.tracking.alternateCooldownIDs = {}
     if t.alternateCooldownIDs then

@@ -2163,12 +2163,25 @@ local function ApplyCooldownStateVisuals(frame, arcID, isOnCooldown)
                 if not frame._arcReadyGlowActive then
                     frame._arcReadyGlowActive = true
                     if ns.Glows then
+                        -- glow-wiring pass 2026-08-29: this sweep path passed
+                        -- only 4 of the panel's knobs -- scale/intensity/
+                        -- particles/offsets/strata/level silently ignored on
+                        -- glows started HERE while the main path honored them
                         ns.Glows.Start(frame, "ArcUI_ReadyGlow",
                             sv.readyGlowType or "button", {
                                 color = sv.readyGlowColor or {1,1,1,1},
+                                intensity = sv.readyGlowIntensity or 1.0,
+                                scale = sv.readyGlowScale or 1.0,
                                 lines = sv.readyGlowLines or 8,
                                 frequency = sv.readyGlowSpeed or 0.25,
                                 thickness = sv.readyGlowThickness or 2,
+                                particles = sv.readyGlowParticles or 4,
+                                xOffset = sv.readyGlowXOffset or 0,
+                                yOffset = sv.readyGlowYOffset or 0,
+                                translateX = sv.readyGlowTranslateX or 0,
+                                translateY = sv.readyGlowTranslateY or 0,
+                                strata = sv.readyGlowFrameStrata,
+                                frameLevel = sv.readyGlowFrameLevel,
                             })
                     end
                 end
@@ -2615,6 +2628,8 @@ local function UpdateArcItemFrame(frame, arcID)
                                 particles = glowSettings.readyGlowParticles or 4,
                                 xOffset = glowSettings.readyGlowXOffset or 0,
                                 yOffset = glowSettings.readyGlowYOffset or 0,
+                                translateX = glowSettings.readyGlowTranslateX or 0,
+                                translateY = glowSettings.readyGlowTranslateY or 0,
                                 strata = glowSettings.readyGlowFrameStrata,
                                 frameLevel = glowSettings.readyGlowFrameLevel,
                             })

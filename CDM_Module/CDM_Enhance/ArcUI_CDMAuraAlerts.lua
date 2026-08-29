@@ -32,19 +32,24 @@ end
 local ALERT_TTS = "__tts__"
 
 -- Sound and speech are independent: either, both, or neither can be set.
-local function PlayAlert(choice, ttsText)
+-- `channel` is one of WoW's output channels (Master/SFX/Music/Ambience/Dialog).
+-- Master is the default because it ignores the other sliders, which is what an
+-- alert wants; the engine lane in ArcUI_ArcAurasAuraSounds reads the same
+-- per-icon setting and feeds it to AddAuraSound as outputChannel.
+local function PlayAlert(choice, ttsText, channel)
     if type(ttsText) == "string" and ttsText ~= "" and ns.Sounds and ns.Sounds.SpeakText then
         ns.Sounds.SpeakText(ttsText)
     end
     if type(choice) ~= "string" or choice == "" or choice == "None" or choice == ALERT_TTS then
         return
     end
+    local ch = (type(channel) == "string" and channel ~= "") and channel or "Master"
     local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
     local value = LSM and LSM.Fetch and LSM:Fetch("sound", choice, true) or nil
     if type(value) == "number" and value > 0 then
-        PlaySound(value, "Master")
+        PlaySound(value, ch)
     elseif type(value) == "string" and value ~= "" then
-        PlaySoundFile(value, "Master")
+        PlaySoundFile(value, ch)
     end
 end
 CAA.PlayAlert = PlayAlert
@@ -61,9 +66,9 @@ local function OnActiveChanged(frame, isActive, wasActive)
     local a = cfg and cfg.auraAlerts
     if not a then return end
     if isActive then
-        PlayAlert(a.gainedSound, a.gainedTTS)
+        PlayAlert(a.gainedSound, a.gainedTTS, a.channel)
     else
-        PlayAlert(a.removedSound, a.removedTTS)
+        PlayAlert(a.removedSound, a.removedTTS, a.channel)
     end
 end
 

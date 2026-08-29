@@ -136,6 +136,8 @@ if LSM then
     ["ArcUI: Double Whoosh"]     = "DoubleWhoosh.ogg",
     ["ArcUI: Heartbeat"]         = "HeartbeatSingle.ogg",
     ["ArcUI: Kaching"]           = "Kaching.ogg",
+    ["ArcUI: Ultra Instinct"]        = "UltraInstinct.mp3",
+    ["ArcUI: Ultra Instinct Theme"]  = "UltraInstinctTheme.mp3",
     ["ArcUI: Sharp Punch"]       = "SharpPunch.ogg",
     ["ArcUI: Shotgun"]           = "Shotgun.ogg",
     ["ArcUI: Squeaky Toy"]       = "SqueakyToyShort.ogg",

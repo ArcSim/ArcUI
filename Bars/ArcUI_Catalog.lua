@@ -813,7 +813,11 @@ end
 -- useDurationBar: true/nil = duration bar (default); false = STACK bar (engine
 -- ApplicationBar fill; the user must set Max Stacks after creation -- the
 -- binding requires it and BD only attaches once it is > 0).
-function ns.Catalog.CreateCustomAuraBar(spellID, trackType, useDurationBar)
+-- units: optional { player/target/focus/pet/party = true } set -- each becomes
+-- its own engine lane (OR semantics). nil = the legacy type-implied lane.
+-- ownOnly: only the player's own copies of the aura match (defaulted ON for
+-- debuffs at creation by the setup UI).
+function ns.Catalog.CreateCustomAuraBar(spellID, trackType, useDurationBar, units, ownOnly)
   if useDurationBar == nil then useDurationBar = true end
   if not (ns.BarDuration and ns.BarDuration.IsAvailable and ns.BarDuration.IsAvailable()) then
     return false, "Custom aura bars need patch 12.1."
@@ -855,6 +859,14 @@ function ns.Catalog.CreateCustomAuraBar(spellID, trackType, useDurationBar)
   cfg.tracking.maxDuration = 0
   cfg.tracking.dynamicMaxDuration = useDurationBar
   cfg.tracking.trackType = trackType or "buff"
+  if type(units) == "table" and next(units) then
+    local u = {}
+    for k, v in pairs(units) do if v then u[k] = true end end
+    cfg.tracking.auraUnits = u
+  else
+    cfg.tracking.auraUnits = nil
+  end
+  cfg.tracking.auraOwnOnly = ownOnly and true or nil
   cfg.display.displayType = "bar"
   cfg.display.enabled = true
   cfg.display.showDuration = useDurationBar
@@ -920,7 +932,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 local customCatalog = {}
 
-local function BuildCustomEntry(spellID, trackType)
+local function BuildCustomEntry(spellID, trackType, units, ownOnly)
   local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
   if not info then return nil end
   return {
@@ -932,11 +944,13 @@ local function BuildCustomEntry(spellID, trackType)
     name = info.name or ("Spell " .. spellID),
     icon = info.iconID or info.originalIconID or 134400,
     trackType = trackType or "buff",
+    auraUnits = units,
+    auraOwnOnly = ownOnly and true or nil,
     isDisplayed = true,
   }
 end
 
-function ns.Catalog.AddCustomEntry(spellID, trackType)
+function ns.Catalog.AddCustomEntry(spellID, trackType, units, ownOnly)
   spellID = tonumber(spellID)
   if not spellID or spellID <= 0 then
     return nil, "Invalid spell ID"
@@ -945,9 +959,11 @@ function ns.Catalog.AddCustomEntry(spellID, trackType)
   local existing = customCatalog[key]
   if existing then
     existing.trackType = trackType or existing.trackType
+    if units ~= nil then existing.auraUnits = units end
+    if ownOnly ~= nil then existing.auraOwnOnly = ownOnly and true or nil end
     return key
   end
-  local entry = BuildCustomEntry(spellID, trackType)
+  local entry = BuildCustomEntry(spellID, trackType, units, ownOnly)
   if not entry then
     return nil, "Unknown spell ID " .. spellID .. " — check the ID and try again."
   end
@@ -976,7 +992,7 @@ function ns.Catalog.GetCustomEntries()
         if t and t.enabled and t.customAura and t.trackedSpellID then
           local key = "custom_" .. t.trackedSpellID
           if not customCatalog[key] then
-            customCatalog[key] = BuildCustomEntry(t.trackedSpellID, t.trackType)
+            customCatalog[key] = BuildCustomEntry(t.trackedSpellID, t.trackType, t.auraUnits, t.auraOwnOnly)
           end
         end
       end

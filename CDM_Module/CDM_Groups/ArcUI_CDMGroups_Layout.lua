@@ -984,23 +984,43 @@ local function ResolveGridConflicts(group)
             
             if not skipConflict then
             -- Multiple NON-PLACEHOLDER members at same position - resolve
-            -- Sort by priority: has frame > first encountered (lower cdID)
+            -- Sort by priority: has frame > SAVED-HOME OWNER > lower cdID
+            local contestedRow, contestedCol
+            do
+                local r, c = key:match("^(-?%d+),(-?%d+)$")
+                contestedRow, contestedCol = tonumber(r), tonumber(c)
+            end
+            local savedAll = ns.CDMGroups.savedPositions
+            local function ownsContestedCell(cdID)
+                local saved = savedAll and savedAll[cdID]
+                return saved and saved.type == "group" and saved.target == group.name
+                    and saved.row == contestedRow and saved.col == contestedCol
+            end
             table.sort(cdIDs, function(a, b)
                 local memberA = group.members[a]
                 local memberB = group.members[b]
-                
+
                 -- Handle members that were removed during iteration (race condition)
                 if not memberA and not memberB then return false end
                 if not memberA then return false end  -- B wins if A is gone
                 if not memberB then return true end   -- A wins if B is gone
-                
+
                 -- Priority 1: Has valid frame
                 local aHasFrame = memberA.frame and memberA.frame:IsShown()
                 local bHasFrame = memberB.frame and memberB.frame:IsShown()
                 if aHasFrame and not bHasFrame then return true end
                 if bHasFrame and not aHasFrame then return false end
-                
-                -- Priority 2: Compare cdIDs (handle mixed string/number types)
+
+                -- Priority 2: SAVED-HOME OWNERSHIP (the reclaim rule's principle):
+                -- the member whose SAVED record is this exact cell keeps it; an
+                -- arbitrary cdID comparison used to let a race squatter win and
+                -- evict the rightful owner into a relocation that got saved.
+                local aOwns = ownsContestedCell(a)
+                local bOwns = ownsContestedCell(b)
+                if aOwns and not bOwns then return true end
+                if bOwns and not aOwns then return false end
+
+                -- Priority 3: Compare cdIDs (handle mixed string/number types)
                 local aType, bType = type(a), type(b)
                 if aType ~= bType then
                     -- Numbers sort before strings
@@ -1041,40 +1061,55 @@ local function ResolveGridConflicts(group)
                         
                         -- Skip if loser was removed during iteration
                         if loserMember then
-                            -- Find a free slot for the loser
+                            -- Find a free slot for the loser -- IN BOUNDS ONLY
+                            -- (placement-trace-proven, 2026-08-26): this was the
+                            -- last untraced grid grower -- FindNextFreeSlot(true)
+                            -- expanded a full grid mid-session and the SAVE below
+                            -- persisted the out-of-bounds cell, minting exactly
+                            -- the poisoned saved columns behind the Utility
+                            -- ratchet family (Whitish's col 5, Essential 6->7).
+                            -- Automatic maintenance must never change the user's
+                            -- grid geometry; a genuinely full grid falls through
+                            -- to the free-icon fallback below, which was built
+                            -- for this case and which expansion starved.
                             local newRow, newCol
                             if group.FindNextFreeSlot then
-                                newRow, newCol = group:FindNextFreeSlot(true)  -- Allow expansion
+                                newRow, newCol = group:FindNextFreeSlot(false, true)
                             end
-                            
+
                             if newRow and newCol then
                                 -- Move to free slot
                                 loserMember.row = newRow
                                 loserMember.col = newCol
-                                
+
                                 -- Update grid
                                 if not group.grid[newRow] then group.grid[newRow] = {} end
                                 group.grid[newRow][newCol] = loserCdID
-                                
-                                -- Update saved position
-                                if ns.CDMGroups.SaveGroupPosition then
+
+                                -- Save the relocation ONLY for an icon with no
+                                -- record at all (the churn-fix rule): a loser
+                                -- displaced by a race still has a TRUE home in
+                                -- its record, and overwriting it here was
+                                -- another poison mint. The restore passes walk
+                                -- it back to its real home instead.
+                                local hasRecord = ns.CDMGroups.savedPositions
+                                    and ns.CDMGroups.savedPositions[loserCdID] ~= nil
+                                if not hasRecord and ns.CDMGroups.SaveGroupPosition then
                                     ns.CDMGroups.SaveGroupPosition(loserCdID, group.name, newRow, newCol)
-                                else
-                                    -- Fallback: Use GetProfileSavedPositions to ensure correct table
-                                    local profileSavedPositions = ns.CDMGroups.GetProfileSavedPositions and ns.CDMGroups.GetProfileSavedPositions()
-                                    if profileSavedPositions then
-                                        profileSavedPositions[loserCdID] = {
-                                            type = "group",
-                                            target = group.name,
-                                            row = newRow,
-                                            col = newCol,
-                                        }
-                                    end
                                 end
-                                
+
                                 conflictsResolved = conflictsResolved + 1
                             else
-                                -- No slot available even with expansion - make it a free icon
+                                -- Grid genuinely full - eject the loser as a FREE icon
+                                -- beside the group. LIVE-INCIDENT FIX (2026-08-26, the
+                                -- giant Berserking icon): this path was starved by the
+                                -- old expansion for so long that its TrackFreeIcon call
+                                -- still used an ANCIENT signature -- (cdID, frame,
+                                -- entry, x, y) into today's (cdID, x, y, iconSize,
+                                -- frame) -- so the free icon's SIZE received the X
+                                -- OFFSET (~160px, "massive icon mid-screen") and the
+                                -- position received two tables. Every other caller in
+                                -- the addon uses the correct order; this one never ran.
                                 -- Calculate position relative to the group (offset to the right)
                                 local ux, uy = UIParent:GetCenter()
                                 local cx, cy = 0, 0
@@ -1082,26 +1117,30 @@ local function ResolveGridConflicts(group)
                                     cx, cy = group.container:GetCenter()
                                 end
                                 local containerW = group.container and group.container:GetWidth() or 100
-                                
+
                                 -- Position to the right of the group container
                                 local freeX = (cx - ux) + containerW / 2 + 50 + (i - 2) * 45
                                 local freeY = cy - uy
-                                
+                                local freeSize = (group.layout and group.layout.iconSize) or 36
+
                                 -- Remove from group
                                 group.members[loserCdID] = nil
-                                
+
                                 -- Create as free icon or update saved position
                                 if loserMember.frame and ns.CDMGroups.TrackFreeIcon then
-                                    ns.CDMGroups.TrackFreeIcon(loserCdID, loserMember.frame, loserMember.entry, freeX, freeY)
-                                else
-                                    -- Fallback: Use GetProfileSavedPositions to ensure correct table
+                                    ns.CDMGroups.TrackFreeIcon(loserCdID, freeX, freeY, freeSize, loserMember.frame)
+                                elseif not (ns.CDMGroups.savedPositions and ns.CDMGroups.savedPositions[loserCdID]) then
+                                    -- frameless loser: persist a free spot ONLY when it has
+                                    -- no record at all (the churn-fix rule -- an existing
+                                    -- record is its true home; overwriting it here would be
+                                    -- another poison mint)
                                     local profileSavedPositions = ns.CDMGroups.GetProfileSavedPositions and ns.CDMGroups.GetProfileSavedPositions()
                                     if profileSavedPositions then
                                         local posData = {
                                             type = "free",
                                             x = freeX,
                                             y = freeY,
-                                            iconSize = group.layout and group.layout.iconSize or 36,
+                                            iconSize = freeSize,
                                         }
                                         profileSavedPositions[loserCdID] = posData
                                         if ns.CDMGroups.SavePositionToSpec then
@@ -1109,7 +1148,14 @@ local function ResolveGridConflicts(group)
                                         end
                                     end
                                 end
-                                
+
+                                TracePlacement("CDMGroups.Layout.ResolveGridConflicts.freeIconEject", {
+                                    id = loserCdID,
+                                    group = group.name,
+                                    x = freeX,
+                                    y = freeY,
+                                    iconSize = freeSize,
+                                })
                                 conflictsResolved = conflictsResolved + 1
                             end
                         end

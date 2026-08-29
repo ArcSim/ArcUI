@@ -582,7 +582,7 @@ function Presets.SanitizeDisplayMode(barConfig)
     if mode == "fragmented" or mode == "icons" or mode == "perStack" then
       needsReset = true
     end
-  elseif tracking.trackType == "buff" or tracking.trackType == "debuff" then
+  elseif tracking.trackType == "buff" or tracking.trackType == "debuff" or tracking.trackType == "both" then
     if mode == "fragmented" or mode == "icons" then
       needsReset = true
     end

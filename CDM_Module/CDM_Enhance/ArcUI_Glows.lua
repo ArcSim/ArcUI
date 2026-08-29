@@ -269,6 +269,15 @@ local function ApplyMasqueShapeToAnts(frame, glow)
     if not glow or not glow.Flipbook then return end
     local shape = GetMasqueShape(frame)
     if not shape then return end
+    -- SHAPE MEMO (field report: "glow animation for masque buttons resets upon
+    -- cast"): this reshape ends in an unconditional Anim Stop+Play, and
+    -- ns.Glows.Start runs it on EVERY invocation while ShowReadyGlow re-Starts
+    -- on every state re-apply -- so a running ants glow restarted at frame 0
+    -- whenever the icon refreshed (cast start). The style data is derived
+    -- entirely from the Masque SHAPE, so an unchanged shape means nothing to
+    -- re-apply and, critically, nothing to reinitialize. Only a real skin
+    -- change reaches the restart now.
+    if glow._arcAntsShapeSig == shape then return end
     local lib = GetMasqueLib()
     if not lib or not lib.GetAssistedCombatHighlightStyle then return end
 
@@ -298,6 +307,7 @@ local function ApplyMasqueShapeToAnts(frame, glow)
             glow.Flipbook.Anim:Stop()
         end
     end
+    glow._arcAntsShapeSig = shape
 end
 
 -- Apply Masque shape to LCG ButtonGlow via Masque's UpdateSpellAlert API
@@ -569,24 +579,31 @@ local function ShowACHGlow(frame, style, key, opts)
     local containerW = w * BLIZZ_CONTAINER_RATIO * scale
     local containerH = h * BLIZZ_CONTAINER_RATIO * scale
 
+    -- OFFSET SEMANTICS (the "Blizzard Proc glow sits lower" report): the
+    -- documented meaning of xOffset/yOffset is EXPANSION from the frame edge
+    -- (the LCG types all grow/shrink the halo), but this path used them as a
+    -- TRANSLATION -- and every consumer passes -padding as the base offset to
+    -- shrink the halo, which here shifted the whole glow DOWN-LEFT by the
+    -- icon's padding instead. Expansion for size, translate for movement,
+    -- matching the support matrix at the top of this file.
     if style == "ants" then
         -- ACH pattern: container = icon size, flipbook texture = expanded beyond
-        local iconW = w * scale
-        local iconH = h * scale
+        local iconW = math.max(1, w * scale + xOff * 2)
+        local iconH = math.max(1, h * scale + yOff * 2)
         glow:SetSize(iconW, iconH)
         if glow.Flipbook then
             glow.Flipbook:SetSize(iconW * BLIZZ_CONTAINER_RATIO, iconH * BLIZZ_CONTAINER_RATIO)
         end
     elseif style == "ach_proc" then
-        glow:SetSize(containerW, containerH)
+        glow:SetSize(math.max(1, containerW + xOff * 2), math.max(1, containerH + yOff * 2))
         if glow.ProcStartFlipbook then glow.ProcStartFlipbook:Hide() end
     end
 
-    -- Position with offset + translate
-    if xOff ~= 0 or yOff ~= 0 or tx ~= 0 or ty ~= 0 then
-        glow:ClearAllPoints()
-        glow:SetPoint("CENTER", frame, "CENTER", xOff + tx, yOff + ty)
-    end
+    -- Position: translate is the only shift; unconditional re-anchor so a
+    -- cleared translate actually returns the glow to center (the old
+    -- conditional kept the stale shifted point forever)
+    glow:ClearAllPoints()
+    glow:SetPoint("CENTER", frame, "CENTER", tx, ty)
 
     glow:SetFrameLevel(frame:GetFrameLevel() + (opts.frameLevel or GLOW_LEVEL_OFFSET))
 
@@ -724,14 +741,16 @@ local function ShowCDMFlash(frame, key, opts)
     local tx = opts.translateX or 0
     local ty = opts.translateY or 0
 
-    -- Expand slightly beyond icon edge like CDM's -8,+8 / +9,-9 anchoring
-    local expandW = w * BLIZZ_CONTAINER_RATIO * scale
-    local expandH = h * BLIZZ_CONTAINER_RATIO * scale
+    -- Expand slightly beyond icon edge like CDM's -8,+8 / +9,-9 anchoring.
+    -- xOffset/yOffset are EXPANSION (documented semantics; consumers pass
+    -- -padding to hug the icon art) -- translate is the only shift.
+    local expandW = math.max(1, w * BLIZZ_CONTAINER_RATIO * scale + xOff * 2)
+    local expandH = math.max(1, h * BLIZZ_CONTAINER_RATIO * scale + yOff * 2)
     glow:SetSize(expandW, expandH)
 
     -- Position
     glow:ClearAllPoints()
-    glow:SetPoint("CENTER", frame, "CENTER", xOff + tx, yOff + ty)
+    glow:SetPoint("CENTER", frame, "CENTER", tx, ty)
 
     glow:SetFrameLevel(math.max(0, frame:GetFrameLevel() + (opts.frameLevel or CDM_FLASH_LEVEL_OFFSET)))
 

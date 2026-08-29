@@ -1294,6 +1294,7 @@ castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP",   "player")
 castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_UPDATE", "player")
 castEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 castEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+castEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 castEventFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
 castEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 
@@ -1379,6 +1380,22 @@ castEventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellI
           end
         end
       end
+    end
+    return
+  end
+
+  if event == "PLAYER_ENTERING_WORLD" then
+    -- STUCK-BAR SWEEP (bug report): a cast that ends IN a loading screen --
+    -- Hearthstone, a Hero's Path dungeon teleport -- never delivers its
+    -- STOP/SUCCEEDED to us, so castActive stayed true and the bar sat on
+    -- screen until the next cast. On zone-in, if we think a cast is running
+    -- but the client says nothing is casting or channeling, clear it with the
+    -- plain StopCast (NOT EndCast: that can play the interrupted flash, and
+    -- these casts actually SUCCEEDED). A mid-cast /reload is unaffected:
+    -- castActive is false in the fresh session here, and the PLAYER_LOGIN
+    -- deferred replay re-acquires the live cast a frame later.
+    if castActive and not UnitCastingInfo("player") and not UnitChannelInfo("player") then
+      StopCast()
     end
     return
   end

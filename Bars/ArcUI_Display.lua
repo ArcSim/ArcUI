@@ -109,6 +109,61 @@ end
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
 -- ===================================================================
+-- AURA LANES (12.1 engine bars) — one resolver for every BD attach site.
+-- A lane is (unit token, aura filter); each lane becomes its own engine
+-- slot stacked on the same bar, so the set reads as an OR: the bar fills
+-- when ANY lane's unit carries the aura (the aura icons' proven model).
+-- New-style custom bars store tracking.auraUnits { player/target/focus/
+-- pet/party = true } + tracking.auraOwnOnly, with trackType buff|debuff|
+-- both as the aura type. When auraUnits is absent (every CDM bar and
+-- every pre-existing custom), the LEGACY implied lane applies unchanged:
+-- buff -> player/HELPFUL, debuff -> target/HARMFUL|PLAYER (own-only, the
+-- Colossus Smash rule), petbuff -> pet/HELPFUL.
+-- ===================================================================
+local LANE_UNIT_TOKENS = {
+  player = { "player" }, target = { "target" }, focus = { "focus" },
+  pet = { "pet" }, party = { "party1", "party2", "party3", "party4" },
+}
+local LANE_UNIT_ORDER = { "player", "target", "focus", "pet", "party" }
+
+local function ResolveAuraLanes(tracking)
+  local lanes = {}
+  local tt = (tracking and tracking.trackType) or "buff"
+  local units = tracking and tracking.auraUnits
+  if type(units) == "table" and next(units) then
+    local own = tracking.auraOwnOnly and "|PLAYER" or ""
+    for _, choice in ipairs(LANE_UNIT_ORDER) do
+      if units[choice] then
+        -- HARMFUL lanes only on units that CAN be hostile (target/focus) —
+        -- the engine's spell-ID filter is only applied when the aura type
+        -- matches the unit's disposition, so a debuff lane on a permanently
+        -- friendly unit silently matches ANY debuff (the icon picker prunes
+        -- these combos for the same reason; this is the data-level guard).
+        local canBeHostile = (choice == "target" or choice == "focus")
+        for _, token in ipairs(LANE_UNIT_TOKENS[choice]) do
+          if tt ~= "debuff" then lanes[#lanes + 1] = { unit = token, filter = "HELPFUL" .. own } end
+          if tt ~= "buff" and canBeHostile then lanes[#lanes + 1] = { unit = token, filter = "HARMFUL" .. own } end
+        end
+      end
+    end
+  end
+  if #lanes == 0 then
+    -- legacy implied lane — must stay EXACTLY the pre-auraUnits behavior
+    if tt == "debuff" then
+      lanes[1] = { unit = "target", filter = "HARMFUL|PLAYER" }
+    elseif tt == "petbuff" then
+      lanes[1] = { unit = "pet", filter = "HELPFUL" }
+    else
+      lanes[1] = { unit = "player", filter = "HELPFUL" }
+    end
+  end
+  local parts = {}
+  for i, l in ipairs(lanes) do parts[i] = l.unit .. ":" .. l.filter end
+  return lanes, table.concat(parts, ",")
+end
+ns.Display.ResolveAuraLanes = ResolveAuraLanes
+
+-- ===================================================================
 -- INITIALIZATION FLAG: Prevent bar flash during reload
 -- Bars stay hidden until initialization completes (after PLAYER_ENTERING_WORLD + delay)
 -- ===================================================================
@@ -3649,12 +3704,8 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       barFrame._arcStackDurHost = host
     end
     host:Show()
-    local sdUnit = "player"
-    if barConfig.tracking.trackType == "debuff" then
-      sdUnit = "target"
-    elseif barConfig.tracking.trackType == "petbuff" then
-      sdUnit = "pet"
-    end
+    local sdLanes, sdLanesKey = ResolveAuraLanes(barConfig.tracking)
+    local sdUnit = sdLanes[1].unit
     local sdCd = barConfig.tracking.cooldownID
     local sdTs = barConfig.tracking.trackedSpellID or barConfig.tracking.spellID
     local sdFmt, sdColorKey
@@ -3674,6 +3725,8 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       tostring(barNumber), tostring(sdCd), tostring(sdTs), sdUnit,
       tostring(sdColorKey), tostring(barConfig.display.durationTextColorEnabled))) end
     ns.BarDuration.Attach(host, durationFrame and durationFrame.text, sdCd, sdTs, sdUnit, {
+      lanes = sdLanes,
+      lanesKey = sdLanesKey,
       showDuration = true,
       durFontPath = sdFontPath,
       durFontSize = barConfig.display.durationFontSize or 18,
@@ -3742,7 +3795,8 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     barFrame.bar:SetOrientation(barOrientation)
     barFrame.bar:SetReverseFill(isBarReverseFill)
     barFrame.bar:SetRotatesTexture(rotateBarTex)
-    local bdUnit = (barConfig.tracking.trackType == "debuff") and "target" or "player"
+    local bdLanes, bdLanesKey = ResolveAuraLanes(barConfig.tracking)
+    local bdUnit = bdLanes[1].unit
     local bdDurFmt, bdColorKey
     if barConfig.display.durationTextColorEnabled and ns.DurationText and ns.DurationText.GetLiveSecondsColorFormatter then
       -- persistent per-fs formatter (live band-edit application, see DT)
@@ -3814,6 +3868,8 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     end
     ns.BarDuration.Attach(barFrame, durationFrame and durationFrame.text,
       nil, barConfig.tracking.trackedSpellID, bdUnit, {
+      lanes = bdLanes,
+      lanesKey = bdLanesKey,
       applicationMax = maxStacks,
       applicationBands = applicationBands,
       applicationSteps = applicationSteps,
@@ -4951,14 +5007,8 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     -- the pet's visible copy uses the entry's BASE spell ID (1233448 for DT) —
     -- already in the candidate set — while the player-side copy CDM reads is a
     -- hidden nameplate-only mirror containers can never match.
-    local bdUnit = "player"
-    if barConfig.tracking then
-      if barConfig.tracking.trackType == "debuff" then
-        bdUnit = "target"
-      elseif barConfig.tracking.trackType == "petbuff" then
-        bdUnit = "pet"
-      end
-    end
+    local bdLanes, bdLanesKey = ResolveAuraLanes(barConfig.tracking)
+    local bdUnit = bdLanes[1].unit
     local aurasSecret121 = ns.API and ns.API.AurasSecret and ns.API.AurasSecret(bdUnit)
     local bdCooldownID   = barConfig.tracking and barConfig.tracking.cooldownID
     -- Fall back to the bar's own saved spell ID. A CDM bar usually has no
@@ -5142,6 +5192,8 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
         end
       end
       ns.BarDuration.Attach(barFrame, durationFrame and durationFrame.text, bdCooldownID, bdTrackedSpell, bdUnit, {
+        lanes = bdLanes,
+        lanesKey = bdLanesKey,
         direction = bdDirection,
         interpolation = barConfig.display.enableSmoothing and Enum.StatusBarInterpolation.ExponentialEaseOut or Enum.StatusBarInterpolation.Immediate,
         showDuration = barConfig.display.showDuration,

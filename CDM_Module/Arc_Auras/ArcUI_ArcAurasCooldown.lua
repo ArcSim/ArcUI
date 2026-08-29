@@ -878,6 +878,8 @@ local _ASV = function(fd, isOnCD, passedSettings, passedIsRecharging)
                 intensity = (stateVisuals and stateVisuals.readyGlowIntensity) or rs.glowIntensity or 1.0,
                 xOffset = (stateVisuals and stateVisuals.readyGlowXOffset) or rs.glowXOffset or 0,
                 yOffset = (stateVisuals and stateVisuals.readyGlowYOffset) or rs.glowYOffset or 0,
+                translateX = (stateVisuals and stateVisuals.readyGlowTranslateX) or rs.glowTranslateX or 0,
+                translateY = (stateVisuals and stateVisuals.readyGlowTranslateY) or rs.glowTranslateY or 0,
                 strata = (stateVisuals and stateVisuals.readyGlowFrameStrata) or rs.glowFrameStrata,
                 frameLevel = (stateVisuals and stateVisuals.readyGlowFrameLevel) or rs.glowFrameLevel,
             })
@@ -924,6 +926,9 @@ local _ASV = function(fd, isOnCD, passedSettings, passedIsRecharging)
                 ns.Glows.ForceHide(frame, "usable")
             end
             local gc = glowSu.usableGlowColor
+            -- glow-wiring pass 2026-08-29: offsets/strata/level were panel
+            -- knobs (shared settings with CDM icons, consumed there by
+            -- CDMSpellUsability.UpdateGlow) but DEAD on arc frames
             ns.Glows.Start(frame, "usable", glowType, {
                 color = gc,
                 lines = glowSu.usableGlowLines or 8,
@@ -931,6 +936,10 @@ local _ASV = function(fd, isOnCD, passedSettings, passedIsRecharging)
                 thickness = glowSu.usableGlowThickness or 2,
                 particles = glowSu.usableGlowParticles or 4,
                 scale = glowSu.usableGlowScale or 1,
+                xOffset = glowSu.usableGlowXOffset or 0,
+                yOffset = glowSu.usableGlowYOffset or 0,
+                strata = (glowSu.usableGlowFrameStrata ~= "inherit") and glowSu.usableGlowFrameStrata or nil,
+                frameLevel = glowSu.usableGlowFrameLevel,
             })
             fd.usableGlowActive = true
             fd.usableGlowType = glowType
@@ -1358,6 +1367,9 @@ UpdateProcGlow = function(fd, forceShow)
                 gc = procCfg.color
             end
 
+            -- glow-wiring pass 2026-08-29: offsets/strata/level were panel
+            -- knobs (procGlow.* shared with CDM icons) but DEAD on arc frames
+            local procStrata = procCfg and procCfg.strata
             ns.Glows.Start(fd.frame, "proc", glowType, {
                 color = gc,
                 lines = procCfg and procCfg.lines or 8,
@@ -1365,6 +1377,10 @@ UpdateProcGlow = function(fd, forceShow)
                 thickness = procCfg and procCfg.thickness or 2,
                 particles = procCfg and procCfg.particles or 4,
                 scale = procCfg and procCfg.scale or 1,
+                xOffset = procCfg and procCfg.xOffset or 0,
+                yOffset = procCfg and procCfg.yOffset or 0,
+                strata = (procStrata ~= "inherit") and procStrata or nil,
+                frameLevel = procCfg and procCfg.frameLevel,
             })
             fd.procGlowActive = true
             fd.procGlowType = glowType
