@@ -717,6 +717,30 @@ end
 -- Wire ONE AuraButton's own ArcBar/ArcTimer regions to overlay barFrame.bar / fs. Called from each
 -- slot's initializeFrame; stores the regions on the sub. Multiple subs (player + target) overlay the
 -- SAME bar -- only the populated one shows, so the aura is found on whichever unit actually holds it.
+-- BAR STACK FORMATTER (2026-08-30 — the rule: bars count from 1). The
+-- engine's default application-count formatter hides the number at 0 AND 1
+-- stack (CDM icon parity) — right for icons, wrong for stack BARS: a
+-- 1-stack Freezing bar showed no number until 2+ ("stack text missing at
+-- 0/1 stacks" report; pre-3.8 CDM-scanned bars never went through this
+-- binding). ONE persistent NumericRuleFormatter shared by every bar stack
+-- binding: hidden at 0, plain number from 1 up. The engine stores the
+-- object and calls FormatNumber on it C-side on every aura update, so the
+-- (secret) count never touches Lua. nil (pre-formatter clients) falls back
+-- to the engine default exactly as before.
+local barStackFormatter
+local function GetBarStackFormatter()
+  if barStackFormatter ~= nil then return barStackFormatter or nil end
+  local f = C_StringUtil and C_StringUtil.CreateNumericRuleFormatter
+    and C_StringUtil.CreateNumericRuleFormatter()
+  if f then
+    f:SetBreakpoints({ { threshold = 0, format = "" }, { threshold = 1, format = "%d" } })
+    barStackFormatter = f
+  else
+    barStackFormatter = false
+  end
+  return barStackFormatter or nil
+end
+
 local function WireSub(button, barFrame, fs, opts, sub)
   sub.initFired = true
   diag.initFired = diag.initFired + 1
@@ -964,13 +988,14 @@ local function WireSub(button, barFrame, fs, opts, sub)
 
   -- Stack count on the button's OWN fontstring, overlaid on the bar's stack text.
   -- SetApplicationCount is the engine binding the aura icons use: the (secret in
-  -- restricted content) applications count is written C-side; engine default
-  -- hides it at 0/1 stacks (CDM parity).
+  -- restricted content) applications count is written C-side. Bound with the
+  -- bar formatter (number from 1 up) — the engine DEFAULT hides 0/1, which is
+  -- CDM icon parity but wrong for bars (see GetBarStackFormatter above).
   local sh = button.ArcStackHolder
   local as = sh and sh.ArcStacks
   sub.arcStacks, sub.stackHolder = as, sh
   if opts.stacksText and as and button.SetApplicationCount then
-    button:SetApplicationCount(as, {})
+    button:SetApplicationCount(as, { formatter = GetBarStackFormatter() })
     if as.SetDrawLayer then as:SetDrawLayer("OVERLAY", 7) end
     -- plain assignment, NOT `x and f()`: the `and` expression truncates
     -- GetFont's multiple returns to one (nil height -> SetFont usage error
@@ -1209,6 +1234,19 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
     -- different wiring must Detach first (the log line below is the tell).
     Log("Attach: retarget-only (idKey=%s already attached) -- opts changes NOT applied on this path", tostring(idKey))
     return
+  end
+
+  -- ID CHANGED while attached (custom bar spell edited / bar reconfigured to
+  -- a different aura): reaching here with a prev record means prev.idKey ~=
+  -- idKey — the old slots would keep DRIVING this bar's widgets from the OLD
+  -- aura (ghost fill/text) while the new attach builds beside them. Detach
+  -- first; Detach parks filters + retires containers and is legal in any
+  -- context, so it runs even when the create below defers under secrecy.
+  if prev then
+    Log("Attach: idKey changed (%s -> %s) -> detaching old wiring first",
+      tostring(prev.idKey), tostring(idKey))
+    BD.Detach(barFrame)
+    prev = nil
   end
 
   -- RC 69189+: AddAuraSlot's frame provider reparents (CreateFrameOutbound +

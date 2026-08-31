@@ -8,7 +8,7 @@ local AGSMW = LibStub("AceGUISharedMediaWidgets-1.0")
 
 do
 	local widgetType = "LSM30_Sound"
-	local widgetVersion = 13
+	local widgetVersion = 14 -- ArcUI: None-first sort patch
 
 	local contentFrameCache = {}
 	local function ReturnSelf(self)
@@ -145,6 +145,11 @@ do
 	end
 
 	local function textSort(a,b)
+		-- ArcUI patch: pin "None" to the top of the list (it is the clear-the-
+		-- sound entry; alphabetical order buried it mid-list). Neutral for any
+		-- list without a "None" key. Version bumped so this copy wins.
+		if a == "None" then return b ~= "None" end
+		if b == "None" then return false end
 		return string.upper(a) < string.upper(b)
 	end
 

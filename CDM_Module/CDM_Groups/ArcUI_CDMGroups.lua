@@ -732,6 +732,7 @@ ns.CDMGroups.inEncounter = false   -- Track boss encounter state for visibility
 ns.CDMGroups.isPvP = false         -- Track PvP flag state for visibility
 ns.CDMGroups.isDragonriding = false -- Track skyriding state for visibility
 ns.CDMGroups.hasTarget = false     -- Track target existence for visibility
+ns.CDMGroups.hasFocus = false      -- Track focus existence for visibility (Draemon's bar condition)
 ns.CDMGroups.isCasting = false     -- Track casting/channeling state for visibility
 ns.CDMGroups.isStealthed = false   -- Track stealth state for visibility
 ns.CDMGroups.isFlying = false      -- Track flying state for visibility
@@ -11276,7 +11277,43 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         -- Get growth direction settings
         local horizontalGrowth = self.layout.horizontalGrowth or "RIGHT"
         local verticalGrowth = self.layout.verticalGrowth or "DOWN"
-        
+
+        -- CAN'T SHRINK BELOW THE ICONS (2026-08-30, follow-up to the shrink
+        -- re-home): shrinking a FULL group left the displaced icon with no
+        -- free cell to fold into -- it stranded out of bounds, vanished from
+        -- the layout, and the grow-back door re-created the removed column on
+        -- the next reload anyway (vanish now, bounce back later). Refuse it
+        -- up front instead: clamp the requested shape so every LIVE icon
+        -- keeps a cell, and say so. Unloaded (talent-hidden) icons don't
+        -- block a shrink -- their saved records + grow-back cover them.
+        do
+            local liveCount = 0
+            for mCdID, m in pairs(self.members) do
+                if HasValidFrame(m, mCdID) then liveCount = liveCount + 1 end
+            end
+            if liveCount > 0 then
+                local clamped = false
+                if cols < oldCols then
+                    local minCols = math.ceil(liveCount / math.max(rows, 1))
+                    if cols < minCols then
+                        cols = math.min(minCols, oldCols)
+                        clamped = true
+                    end
+                end
+                if rows < oldRows then
+                    local minRows = math.ceil(liveCount / math.max(cols, 1))
+                    if rows < minRows then
+                        rows = math.min(minRows, oldRows)
+                        clamped = true
+                    end
+                end
+                if clamped then
+                    print(string.format("|cff00CCFF[ArcUI]|r %s holds %d icons - keeping %dx%d so none are lost. Remove icons from the group to shrink it further.",
+                        tostring(self.name), liveCount, rows, cols))
+                end
+            end
+        end
+
         -- Calculate how many rows/cols are being added/removed
         local colDelta = cols - oldCols
         local rowDelta = rows - oldRows
@@ -11294,7 +11331,52 @@ function ns.CDMGroups.CreateGroup(name, groupType)
             db.gridRows = rows
             db.gridCols = cols
         end
-        
+
+        -- USER-SHRINK RE-HOME (2026-08-30): shrinking the grid with icons in
+        -- the removed rows/columns used to strand them out of bounds -- the
+        -- icon vanished from the layout, and on the next reload the grow-back
+        -- door (FrameController ResolveTargetCell -> EnsureCellCapacity) saw
+        -- the stale record and faithfully re-created the removed column
+        -- ("I removed a column and it came back"). The user's resize is
+        -- authoritative: move every member now outside the new shape into a
+        -- free in-bounds cell and SAVE it -- mirroring what the edge-arrow
+        -- RemoveRowAt/RemoveColumnAt paths already did. Saved records for
+        -- UNLOADED icons are untouched, so a returning talent icon still
+        -- grows the group back (the 3.8.4 feature).
+        if (rowDelta < 0 or colDelta < 0) and self.members then
+            for cdID, member in pairs(self.members) do
+                local r, c = member.row, member.col
+                -- LIVE members only: placeholder / frameless members keep their
+                -- out-of-bounds records so grow-back restores them on return.
+                if r ~= nil and c ~= nil and (r >= rows or c >= cols)
+                   and HasValidFrame(member, cdID) then
+                    if self.grid and self.grid[r] and self.grid[r][c] == cdID then
+                        self.grid[r][c] = nil
+                    end
+                    local nr, nc = self:FindNextFreeSlot(false, true)
+                    if nr ~= nil and nc ~= nil then
+                        self.grid[nr] = self.grid[nr] or {}
+                        self.grid[nr][nc] = cdID
+                        member.row, member.col = nr, nc
+                        SaveGroupPosition(cdID, self.name, nr, nc)
+                        TracePlacement("CDMGroups.SetGridSize.shrinkRehome", {
+                            id = cdID, group = self.name, row = r, col = c,
+                            newRow = nr, newCol = nc,
+                        })
+                    else
+                        -- No free cell: the group genuinely holds more icons
+                        -- than the new shape. Leave the member where it is
+                        -- (nothing saved); the grow-back door restores the
+                        -- needed room on the next restore pass.
+                        TracePlacement("CDMGroups.SetGridSize.shrinkNoRoom", {
+                            id = cdID, group = self.name, row = r, col = c,
+                        })
+                    end
+                end
+            end
+        end
+
+
         -- Compensate container position for growth direction
         -- Container is CENTER anchored, so when it grows, it expands equally in both directions
         -- We need to offset position so it appears to grow only in the specified direction
@@ -11575,8 +11657,25 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         local maxCols = self.layout.gridCols
         local maxRows = self.layout.gridRows
         local verticalGrowth = self.layout.verticalGrowth or "DOWN"
-        
+
         if maxRows <= 1 then return end  -- Can't have less than 1 row
+
+        -- CAN'T SHRINK BELOW THE ICONS (2026-08-30, same rule as SetGridSize):
+        -- with the group full, the displaced icon's fallback below was
+        -- member.row/col = nil -- an ORPHAN that every placement pass skips
+        -- (ClearAllPoints with no SetPoint: invisible until a panel cycle
+        -- rebuilds it). Refuse the removal up front instead.
+        do
+            local liveCount = 0
+            for mCdID, m in pairs(self.members) do
+                if HasValidFrame(m, mCdID) then liveCount = liveCount + 1 end
+            end
+            if liveCount > (maxRows - 1) * maxCols then
+                print(string.format("|cff00CCFF[ArcUI]|r %s holds %d icons - can't remove this row. Remove icons from the group first.",
+                    tostring(self.name), liveCount))
+                return
+            end
+        end
         
         -- Calculate slot dimensions for position offset
         local slotW, slotH = GetSlotDimensions(self.layout)
@@ -11686,8 +11785,25 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         local maxCols = self.layout.gridCols
         local maxRows = self.layout.gridRows
         local horizontalGrowth = self.layout.horizontalGrowth or "RIGHT"
-        
+
         if maxCols <= 1 then return end  -- Can't have less than 1 column
+
+        -- CAN'T SHRINK BELOW THE ICONS (2026-08-30, same rule as SetGridSize):
+        -- with the group full, the displaced icon's fallback below was
+        -- member.row/col = nil -- an ORPHAN that every placement pass skips
+        -- (ClearAllPoints with no SetPoint: invisible until a panel cycle
+        -- rebuilds it). Refuse the removal up front instead.
+        do
+            local liveCount = 0
+            for mCdID, m in pairs(self.members) do
+                if HasValidFrame(m, mCdID) then liveCount = liveCount + 1 end
+            end
+            if liveCount > maxRows * (maxCols - 1) then
+                print(string.format("|cff00CCFF[ArcUI]|r %s holds %d icons - can't remove this column. Remove icons from the group first.",
+                    tostring(self.name), liveCount))
+                return
+            end
+        end
         
         -- Calculate slot dimensions for position offset
         local slotW, slotH = GetSlotDimensions(self.layout)
@@ -14014,6 +14130,7 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
             ns.CDMGroups.isResting = IsResting()
             ns.CDMGroups.isDragonriding = IsSkyriding()
             ns.CDMGroups.hasTarget = UnitExists("target") or false
+            ns.CDMGroups.hasFocus = UnitExists("focus") or false
             ns.CDMGroups.isCasting = false
             ns.CDMGroups.isStealthed = IsStealthed() and true or false
             ns.CDMGroups.isFlying = IsFlying() and true or false
@@ -14039,6 +14156,7 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
         ns.CDMGroups.isPvP = (UnitIsPVP("player") or UnitIsPVPFreeForAll("player")) and true or false
         ns.CDMGroups.isDragonriding = IsSkyriding()
         ns.CDMGroups.hasTarget = UnitExists("target") or false
+        ns.CDMGroups.hasFocus = UnitExists("focus") or false
         ns.CDMGroups.isCasting = false
         ns.CDMGroups.isStealthed = IsStealthed() and true or false
         ns.CDMGroups.isFlying = IsFlying() and true or false
@@ -14064,6 +14182,7 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
             ns.CDMGroups.isPvP = (UnitIsPVP("player") or UnitIsPVPFreeForAll("player")) and true or false
             ns.CDMGroups.isDragonriding = IsSkyriding()
             ns.CDMGroups.hasTarget = UnitExists("target") or false
+            ns.CDMGroups.hasFocus = UnitExists("focus") or false
             ns.CDMGroups.isStealthed = IsStealthed() and true or false
             ns.CDMGroups.isFlying = IsFlying() and true or false
             ns.CDMGroups.isSwimming = IsSwimming() and true or false
@@ -14431,6 +14550,7 @@ function ns.CDMGroups.PLAYER_ENTERING_WORLD(event, isInitialLogin, isReloadingUI
                 ns.CDMGroups.isPvP = UnitIsPVP("player") or UnitIsPVPFreeForAll("player") or false
                 ns.CDMGroups.isDragonriding = IsSkyriding()
                 ns.CDMGroups.hasTarget = UnitExists("target") or false
+                ns.CDMGroups.hasFocus = UnitExists("focus") or false
                 ns.CDMGroups.isCasting = false
                 ns.CDMGroups.isStealthed = IsStealthed() or false
                 ns.CDMGroups.isFlying = IsFlying() or false
@@ -15002,6 +15122,7 @@ CDMGroupsInitFrame:RegisterEvent("UNIT_POWER_BAR_HIDE")           -- Skyriding d
 CDMGroupsInitFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")        -- Skyriding detection (12.x+)
 CDMGroupsInitFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")         -- Instance detection
 CDMGroupsInitFrame:RegisterEvent("PLAYER_TARGET_CHANGED")         -- Target gained/lost
+CDMGroupsInitFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")          -- Focus gained/lost (bar hide conditions)
 CDMGroupsInitFrame:RegisterEvent("UPDATE_STEALTH")                -- Stealth state changed
 CDMGroupsInitFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")         -- Druid form / shapeshift change
 CDMGroupsInitFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")        -- Available forms changed (talents)
@@ -15153,6 +15274,10 @@ CDMGroupsInitFrame:SetScript("OnEvent", function(self, event, ...)
         ns.CDMGroups.UpdateGroupVisibility()
     elseif event == "PLAYER_TARGET_CHANGED" then
         ns.CDMGroups.hasTarget = UnitExists("target") or false
+        ns.CDMGroups.hasFocus = UnitExists("focus") or false
+        ns.CDMGroups.UpdateGroupVisibility()
+    elseif event == "PLAYER_FOCUS_CHANGED" then
+        ns.CDMGroups.hasFocus = UnitExists("focus") or false
         ns.CDMGroups.UpdateGroupVisibility()
     elseif event == "UPDATE_STEALTH" then
         ns.CDMGroups.isStealthed = IsStealthed() or false

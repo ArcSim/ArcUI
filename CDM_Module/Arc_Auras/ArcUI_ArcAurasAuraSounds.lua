@@ -113,7 +113,11 @@ local function BuildDesired()
             local ids = SpellIDsOf(def)
             local units = UnitsFor(def)
             for _, entry in ipairs(SOUND_KEYS) do
-                local fileName, fileID = ResolveSound(alerts[entry.key])
+                -- per-trigger Sound enable flag (nil = legacy on, false = muted
+                -- without clearing the stored pick) -- see CAA.ResolveAlertPair
+                local flagOn = alerts[entry.key .. "On"] ~= false
+                local fileName, fileID
+                if flagOn then fileName, fileID = ResolveSound(alerts[entry.key]) end
                 if fileName or fileID then
                     for _, unit in ipairs(units) do
                         for _, spellID in ipairs(ids) do
@@ -137,6 +141,7 @@ local function BuildDesired()
             -- switch -- it no longer waits for the sound slot to hold the old
             -- "__tts__" sentinel.
             local text = alerts.gainedTTS
+            if alerts.gainedTTSOn == false then text = nil end
             if type(text) == "string" and text ~= "" then
                 for _, spellID in ipairs(ids) do
                     tts[spellID] = tts[spellID] or {}

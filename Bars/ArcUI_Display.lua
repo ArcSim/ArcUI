@@ -398,6 +398,7 @@ local function GetDurationColorCurve(barNumber, barConfig)
   return curve
 end
 
+
 -- Clear cached curve for a bar (called when settings change)
 function ns.Display.ClearDurationColorCurve(barNumber)
   durationColorCurves[barNumber] = nil
@@ -3453,7 +3454,15 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
       -- engine ArcStacks overlays the live count; blank ours (customs pass 0)
       textFrame.text:SetText("")
     else
-      textFrame.text:SetText(stacks)
+      -- CDM-sourced bars: at aura-absent the update passes stacks=0, so a
+      -- bar kept visible while inactive renders "0". Opt-in "Hide Stack
+      -- Text at 0" blanks it while INACTIVE -- gated on the Lua-known
+      -- `active` flag, never a compare of the (secret) count.
+      if not active and barConfig.display.stackHideAtZero then
+        textFrame.text:SetText("")
+      else
+        textFrame.text:SetText(stacks)
+      end
     end
     local tc = barConfig.display.textColor
     textFrame.text:SetTextColor(tc.r, tc.g, tc.b, tc.a)

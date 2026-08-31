@@ -7309,6 +7309,7 @@ EnhanceFrame = function(frame, cdID, viewerType, viewerName)
       frame._arcLastShadowShown  = nil
       frame._arcLastChargeShown  = nil
       frame._arcShadowFedSpellID = nil
+      frame._arcCDAlertState     = nil  -- sound-alert baseline: new spell, no transition
       local csCfg = GetEffectiveIconSettingsForFrame(frame)
       if csCfg then
         if ns.TraceTap then

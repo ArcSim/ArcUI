@@ -968,6 +968,15 @@ function Presets.DeleteSkin(name)
   -- Castbars live on the shared-aware store (account-wide in shared mode),
   -- not ns.db.char — without this a deleted castbar skin left a ghost
   -- activeProfile reference and a blank Load Skin dropdown.
+  local charDB = ns.db and ns.db.char
+  if charDB then
+    for _, key in ipairs({ "focusCastbar", "targetCastbar" }) do
+      local cb = charDB[key]
+      if cb and type(cb) == "table" and cb.presets and cb.presets.activeProfile == name then
+        cb.presets.activeProfile = nil
+      end
+    end
+  end
   local cbStore = ns.API and ns.API.GetCastbarStore and ns.API.GetCastbarStore()
   if cbStore and cbStore.castbars then
     for _, cb in pairs(cbStore.castbars) do
@@ -1201,6 +1210,11 @@ function Presets.RunAutoSwitchAll()
 
   -- Castbars (all instances). In shared mode the live castbar is the account-wide store,
   -- so auto-switch must evaluate that table (not the per-character one the rest of this loop uses).
+  -- Focus/target castbars: per-character flat configs, same "castbar" skin pool
+  if db then
+    if db.focusCastbar and Presets.RunAutoSwitch(db.focusCastbar, "castbar") then changed = true end
+    if db.targetCastbar and Presets.RunAutoSwitch(db.targetCastbar, "castbar") then changed = true end
+  end
   local cbStore = (ns.API and ns.API.GetCastbarStore and ns.API.GetCastbarStore()) or db
   if cbStore and cbStore.castbars then
     for _, cb in pairs(cbStore.castbars) do
@@ -1238,6 +1252,12 @@ function Presets.RunAutoSwitchAll()
       end
     end
     -- Refresh castbar
+    if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then
+      ns.FocusCastbar.ApplyAppearance()
+    end
+    if ns.TargetCastbar and ns.TargetCastbar.ApplyAppearance then
+      ns.TargetCastbar.ApplyAppearance()
+    end
     if ns.Castbar and ns.Castbar.ApplyAppearance then
       ns.Castbar.ApplyAppearance()
     end
@@ -1276,3 +1296,260 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
   end
 end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CASTBAR SKIN SECTION INJECTOR (2026-08-31)
+-- One implementation of the Skins UI (load / save / auto-switch rules with
+-- spec + talent conditions) shared by the player, focus and target castbar
+-- panels. All three bars draw from the SAME "castbar" skin pool, so one look
+-- can be saved once and loaded on any bar. NOTE for cross-bar loads: a skin
+-- whose Position category is enabled also carries its saved screen position.
+--   opts.keyPrefix  unique arg-key prefix per panel (e.g. "fcs")
+--   opts.orderBase  numeric order for the first control; rules start +0.4
+--   opts.hidden     function() -> true when the section is collapsed/hidden
+--   opts.getCfg     function() -> the bar config table
+--   opts.apply      function() re-applies the bar appearance + refreshes UI
+-- ═══════════════════════════════════════════════════════════════════════════
+function Presets.InjectCastbarSkinArgs(args, opts)
+  local keyPrefix = opts.keyPrefix
+  local base      = opts.orderBase
+  local hiddenFn  = opts.hidden
+  local getCfg    = opts.getCfg
+  local applyFn   = opts.apply
+  local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+
+  local function notify()
+    if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
+  end
+
+  args[keyPrefix .. "Desc"] = {
+    type     = "description",
+    name     = "Save the current look as a skin, load a saved one below, or add rules to load skins on spec or talent change. Skins are shared between the player, focus and target castbars.",
+    order    = base,
+    fontSize = "small",
+    hidden   = hiddenFn,
+  }
+
+  args[keyPrefix .. "Load"] = {
+    type   = "select",
+    name   = "Load Skin",
+    desc   = "Apply a saved castbar skin. 'Custom' means manual settings not linked to any skin.",
+    order  = base + 0.01,
+    width  = 1.2,
+    hidden = function()
+      if hiddenFn() then return true end
+      if not Presets.GetSkinCount then return true end
+      return Presets.GetSkinCount("castbar") == 0
+    end,
+    values = function()
+      local vals = { [""] = "|cff888888Custom|r" }
+      for name in pairs(Presets.GetSkinNames("castbar")) do vals[name] = name end
+      return vals
+    end,
+    sorting = function()
+      local sorted = { "" }
+      local list = {}
+      for name in pairs(Presets.GetSkinNames("castbar")) do list[#list + 1] = name end
+      table.sort(list)
+      for _, name in ipairs(list) do sorted[#sorted + 1] = name end
+      return sorted
+    end,
+    get = function()
+      local c = getCfg()
+      if not c then return "" end
+      return Presets.GetActiveSkin(c) or ""
+    end,
+    set = function(_, value)
+      local c = getCfg()
+      if not c then return end
+      if value == "" then
+        Presets.DetachSkin(c)
+      else
+        local ok, err = Presets.SetActiveSkin(c, "castbar", value)
+        if not ok then
+          print("|cff00ccffArcUI|r: " .. (err or "Failed to load skin"))
+        end
+      end
+      applyFn()
+      notify()
+    end,
+  }
+
+  args[keyPrefix .. "SaveName"] = {
+    type   = "input",
+    name   = "Skin Name",
+    order  = base + 0.02,
+    width  = 1.4,
+    hidden = hiddenFn,
+    get    = function() local c = getCfg(); return (c and c._saveSkinNameInput) or "" end,
+    set    = function(_, v) local c = getCfg(); if c then c._saveSkinNameInput = v end end,
+  }
+
+  args[keyPrefix .. "SaveBtn"] = {
+    type   = "execute",
+    name   = "Save Skin",
+    order  = base + 0.03,
+    width  = 0.6,
+    hidden = hiddenFn,
+    func   = function()
+      local c = getCfg()
+      if not c then return end
+      local name = c._saveSkinNameInput and c._saveSkinNameInput:match("^%s*(.-)%s*$")
+      if not name or name == "" then
+        print("|cff00ccffArcUI|r: Enter a skin name first.")
+        return
+      end
+      Presets.SaveSkin(name, c, "castbar")
+      c._saveSkinNameInput = ""
+      print("|cff00ccffArcUI|r: Castbar skin |cffffd100'" .. name .. "'|r saved.")
+      notify()
+    end,
+  }
+
+  args[keyPrefix .. "AddRule"] = {
+    type   = "execute",
+    name   = "+ Add Auto-Switch Rule",
+    desc   = "Add a rule to load a skin on spec or talent change. Rules are checked top-down; first match wins.",
+    order  = base + 0.04,
+    width  = "full",
+    hidden = function()
+      if hiddenFn() then return true end
+      return Presets.GetSkinCount("castbar") == 0
+    end,
+    func = function()
+      local c = getCfg()
+      if not c then return end
+      if not c.presets then c.presets = {} end
+      if not c.presets.autoSwitch then c.presets.autoSwitch = { rules = {} } end
+      local rules = c.presets.autoSwitch.rules
+      rules[#rules + 1] = { specIndices = {}, skinName = nil, talentConditions = nil, talentMatchMode = "all" }
+      notify()
+    end,
+  }
+
+  local MAX_RULES = 10
+
+  local function asHidden(ri)
+    if hiddenFn() then return true end
+    if Presets.GetSkinCount("castbar") == 0 then return true end
+    local c = getCfg()
+    if not c or not c.presets or not c.presets.autoSwitch then return true end
+    local rules = c.presets.autoSwitch.rules
+    return not rules or ri > #rules
+  end
+
+  local function asGetRule(ri)
+    local c = getCfg()
+    if not c or not c.presets or not c.presets.autoSwitch then return nil end
+    return c.presets.autoSwitch.rules and c.presets.autoSwitch.rules[ri]
+  end
+
+  local function asToggleSpec(rule, specNum, value)
+    if not rule.specIndices then rule.specIndices = {} end
+    if value then
+      for _, s in ipairs(rule.specIndices) do if s == specNum then return end end
+      table.insert(rule.specIndices, specNum)
+    else
+      if #rule.specIndices == 0 then
+        for i = 1, (GetNumSpecializations() or 4) do table.insert(rule.specIndices, i) end
+      end
+      for i = #rule.specIndices, 1, -1 do
+        if rule.specIndices[i] == specNum then table.remove(rule.specIndices, i) end
+      end
+    end
+  end
+
+  local function asHasSpec(rule, specNum)
+    if not rule.specIndices or #rule.specIndices == 0 then return true end
+    for _, s in ipairs(rule.specIndices) do if s == specNum then return true end end
+    return false
+  end
+
+  for ri = 1, MAX_RULES do
+    local ruleIdx = ri
+    local rbase   = base + 0.4 + (ri - 1) * 0.01
+
+    args[keyPrefix .. "R" .. ri .. "Skin"] = {
+      type   = "select",
+      name   = "|cffffd700Rule " .. ri .. "|r  Skin",
+      desc   = "Skin to load when this rule matches.",
+      values = function() return Presets.GetSkinNames("castbar") or {} end,
+      order  = rbase,
+      width  = 1.1,
+      hidden = function() return asHidden(ruleIdx) end,
+      get    = function() local rule = asGetRule(ruleIdx); return rule and rule.skinName end,
+      set    = function(_, v) local rule = asGetRule(ruleIdx); if rule then rule.skinName = v end end,
+    }
+
+    args[keyPrefix .. "R" .. ri .. "Talents"] = {
+      type   = "execute",
+      name   = function()
+        local rule = asGetRule(ruleIdx)
+        if rule and rule.talentConditions and #rule.talentConditions > 0 then
+          return "|cff00ff00Talents *|r"
+        end
+        return "Talents"
+      end,
+      desc   = "Open the talent picker to set conditions for this rule.",
+      order  = rbase + 0.001,
+      width  = 0.6,
+      hidden = function() return asHidden(ruleIdx) end,
+      func   = function()
+        if not (ns.TalentPicker and ns.TalentPicker.OpenPicker) then
+          print("|cff00ccffArcUI|r: Talent picker not available")
+          return
+        end
+        local rule = asGetRule(ruleIdx)
+        if not rule then return end
+        ns.TalentPicker.OpenPicker(rule.talentConditions, rule.talentMatchMode or "all", function(conditions, mode)
+          local r = asGetRule(ruleIdx)
+          if r then
+            r.talentConditions = conditions
+            r.talentMatchMode  = mode
+            notify()
+          end
+        end)
+      end,
+    }
+
+    args[keyPrefix .. "R" .. ri .. "Remove"] = {
+      type   = "execute",
+      name   = "X",
+      desc   = "Remove this rule.",
+      order  = rbase + 0.002,
+      width  = 0.3,
+      hidden = function() return asHidden(ruleIdx) end,
+      func   = function()
+        local c = getCfg()
+        if c and c.presets and c.presets.autoSwitch and c.presets.autoSwitch.rules then
+          table.remove(c.presets.autoSwitch.rules, ruleIdx)
+          notify()
+        end
+      end,
+    }
+
+    local numSpecs = GetNumSpecializations and GetNumSpecializations() or 4
+    for si = 1, numSpecs do
+      local specIdx = si
+      local _, specName, _, specIcon = GetSpecializationInfo(specIdx)
+      local iconStr = specIcon and ("|T" .. specIcon .. ":14:14|t") or ("Spec " .. specIdx)
+      args[keyPrefix .. "R" .. ri .. "Spec" .. si] = {
+        type   = "toggle",
+        name   = iconStr,
+        desc   = specName or ("Spec " .. specIdx),
+        order  = rbase + 0.003 + si * 0.0001,
+        width  = 0.3,
+        hidden = function() return asHidden(ruleIdx) end,
+        get    = function()
+          local rule = asGetRule(ruleIdx)
+          return rule and asHasSpec(rule, specIdx)
+        end,
+        set    = function(_, value)
+          local rule = asGetRule(ruleIdx)
+          if rule then asToggleSpec(rule, specIdx, value) end
+        end,
+      }
+    end
+  end
+end
+

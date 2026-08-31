@@ -9346,6 +9346,30 @@ function ns.AppearanceOptions.GetOptionsTable()
         width = 0.9,  -- Fits "Show Stack Text"
         hidden = function() return GetSelectedConfig() == nil or IsIconMode() or collapsedSections.stackText end
       },
+      stackHideAtZero = {
+        type = "toggle",
+        name = "Hide Stack Text at 0",
+        desc = "Blank the stack number while the aura is not active, instead of showing 0. Cooldown Manager tracked bars only - custom spell ID bars never show a 0 (the game renders their count and stops at the aura's end).",
+        order = 71.2,
+        width = 1.1,
+        get = function()
+          local cfg = GetSelectedConfig()
+          return cfg and cfg.display.stackHideAtZero == true
+        end,
+        set = function(info, value)
+          local cfg = GetSelectedConfig()
+          if not cfg then return end
+          cfg.display.stackHideAtZero = value or nil
+          RefreshBar()
+        end,
+        hidden = function()
+          if GetSelectedConfig() == nil or IsIconMode() or collapsedSections.stackText then return true end
+          if IsResourceBar() then return true end
+          local cfg = GetSelectedConfig()
+          if not (cfg and cfg.display.showText) then return true end
+          return cfg.tracking and cfg.tracking.customAura == true
+        end
+      },
       textFormat = {
         type = "select",
         name = "Display As",

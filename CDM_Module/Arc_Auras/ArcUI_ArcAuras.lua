@@ -350,12 +350,20 @@ function ArcAuras.MakeTrinketID(slotID)
     return ID_PREFIX.TRINKET .. tostring(slotID)
 end
 
-function ArcAuras.MakeItemID(itemID)
-    return ID_PREFIX.ITEM .. tostring(itemID)
+-- COPIES (2026-08-30): copy 1 keeps the bare id (backward compatible, no
+-- migration); copies 2+ append "#<n>" -- '#' can never appear in a numeric
+-- id, and every prefix match ("^arc_spell_") still hits. ParseArcID reads
+-- the leading digits only, so suffixed ids resolve to the same spell/item.
+function ArcAuras.MakeItemID(itemID, copy)
+    local id = ID_PREFIX.ITEM .. tostring(itemID)
+    if copy and copy > 1 then id = id .. "#" .. copy end
+    return id
 end
 
-function ArcAuras.MakeSpellID(spellID)
-    return ID_PREFIX.SPELL .. tostring(spellID)
+function ArcAuras.MakeSpellID(spellID, copy)
+    local id = ID_PREFIX.SPELL .. tostring(spellID)
+    if copy and copy > 1 then id = id .. "#" .. copy end
+    return id
 end
 
 function ArcAuras.ParseArcID(arcID)
@@ -365,11 +373,14 @@ function ArcAuras.ParseArcID(arcID)
         local slotID = tonumber(arcID:sub(#ID_PREFIX.TRINKET + 1))
         return "trinket", slotID
     elseif arcID:find("^" .. ID_PREFIX.ITEM) then
-        local itemID = tonumber(arcID:sub(#ID_PREFIX.ITEM + 1))
-        return "item", itemID
+        -- Item/spell IDs can carry a "#N" copy suffix. Leading digits = the id.
+        local tail = arcID:sub(#ID_PREFIX.ITEM + 1)
+        local itemID = tonumber(tail:match("^(%d+)"))
+        return "item", itemID, tonumber(tail:match("#(%d+)$")) or 1
     elseif arcID:find("^" .. ID_PREFIX.SPELL) then
-        local spellID = tonumber(arcID:sub(#ID_PREFIX.SPELL + 1))
-        return "spell", spellID
+        local tail = arcID:sub(#ID_PREFIX.SPELL + 1)
+        local spellID = tonumber(tail:match("^(%d+)"))
+        return "spell", spellID, tonumber(tail:match("#(%d+)$")) or 1
     elseif arcID:find("^" .. ID_PREFIX.TIMER) then
         -- Timer IDs can have a "_N" dedup suffix. Extract the leading digits only.
         local tail = arcID:sub(#ID_PREFIX.TIMER + 1)
@@ -1316,11 +1327,9 @@ function ArcAuras.DestroyFrame(arcID)
             end
         end
         
-        -- Clear reverse lookup
-        if fd and fd.spellID and ns.ArcAurasCooldown.spellsByID then
-            if ns.ArcAurasCooldown.spellsByID[fd.spellID] == arcID then
-                ns.ArcAurasCooldown.spellsByID[fd.spellID] = nil
-            end
+        -- Clear reverse lookup (multi-map: one spellID can drive several copies)
+        if fd and fd.spellID and ns.ArcAurasCooldown.UnindexSpellArcID then
+            ns.ArcAurasCooldown.UnindexSpellArcID(fd.spellID, arcID)
         end
         
         -- Clear spell state tables
@@ -2242,6 +2251,39 @@ local function ApplyUsabilityVisuals(frame, arcID, isUsable)
     end
 end
 
+-- COOLDOWN SOUND ALERTS (items/trinkets, 2026-08-30): 2-state transition on
+-- the engine's authoritative _isOnCooldown (GCD-filtered at
+-- ResolveItemCooldown). Items have no charge concept: Ready and On Cooldown
+-- only. Called from UpdateArcItemFrame AND the BAG_UPDATE_COOLDOWN fast path
+-- (cooldown START skips the full update). Baseline-dedup makes double calls
+-- harmless. Playback via ns.CDMAuraAlerts.QueueCooldownAlert (0.15s verify).
+local function EvaluateItemCooldownAlerts(frame, arcID, isOnCooldown)
+    local newS = isOnCooldown and "empty" or "full"
+    local prevS = frame._arcCDAlertState
+    frame._arcCDAlertState = newS
+    if not prevS or prevS == newS then return end
+    local settings = ArcAuras.GetCachedSettings(arcID)
+    local ca = settings and settings.cooldownAlerts
+    local CAA = ns.CDMAuraAlerts
+    if not (ca and CAA and CAA.QueueCooldownAlert) then return end
+    if ns.TraceTap then
+        ns.TraceTap("CDA", string.format("item transition %s->%s id=%s",
+            tostring(prevS), tostring(newS), tostring(arcID)))
+    end
+    local key = "arc|" .. tostring(arcID)
+    if newS == "full" then
+        local s, x = CAA.ResolveAlertPair(ca, "ready")
+        CAA.QueueCooldownAlert(key .. "#ready", s, x, ca.channel, function()
+            return frame._isOnCooldown ~= true
+        end)
+    else
+        local s, x = CAA.ResolveAlertPair(ca, "cooldown")
+        CAA.QueueCooldownAlert(key .. "#oncd", s, x, ca.channel, function()
+            return frame._isOnCooldown == true
+        end)
+    end
+end
+
 local function UpdateArcItemFrame(frame, arcID)
     if not (frame and frame:IsShown()) then return end
     if frame._arcIsSpellCooldown then return end
@@ -2273,7 +2315,9 @@ local function UpdateArcItemFrame(frame, arcID)
                 
                 -- Step 3: Get visual settings from CACHE (not fresh every tick!)
                 local settings = ArcAuras.GetCachedSettings(arcID)
-                
+
+                EvaluateItemCooldownAlerts(frame, arcID, isOnCooldown)
+
                 -- Get properly formatted state visuals from CDMEnhance if available
                 -- OPTIMIZED: Refresh stateVisuals on state change OR when settings invalidated
                 local stateVisuals = frame._cachedStateVisuals
@@ -3354,8 +3398,29 @@ function ArcAuras.AddTrackedItem(config)
     
     -- Check if already tracked
     if db.trackedItems[arcID] then
-        -- Already exists - just return true without creating duplicate
-        return true
+        -- ITEM COPIES (2026-08-30): only an EXPLICIT user add (config.allowCopy,
+        -- set by the options Add popup) creates another icon of the same item.
+        -- Every automatic caller (auto-track slots, equip sweeps, imports)
+        -- keeps the dedupe -- they re-run constantly and must never mint copies.
+        if config.type == "item" and config.allowCopy then
+            local MAX_COPIES = 5
+            local found
+            for n = 2, MAX_COPIES do
+                local candidate = ArcAuras.MakeItemID(config.itemID, n)
+                if not db.trackedItems[candidate] then
+                    found = candidate
+                    break
+                end
+            end
+            if not found then
+                print("|cff00CCFF[Arc Auras]|r Copy limit reached for this item (" .. MAX_COPIES .. " icons).")
+                return false
+            end
+            arcID = found
+        else
+            -- Already exists - just return true without creating duplicate
+            return true
+        end
     end
     
     -- Detect if item is passive (no on-use spell)
@@ -3390,7 +3455,7 @@ function ArcAuras.AddTrackedItem(config)
         if config.type == "item" and config.hideWhenUnequipped and config.itemID then
             if not ArcAuras.IsItemEquipped(config.itemID) then
                 -- Don't create frame — UpdateItemFrameVisibility will create when equipped
-                return true
+                return true, arcID
             end
         end
         
@@ -3415,7 +3480,7 @@ function ArcAuras.AddTrackedItem(config)
         end
     end
     
-    return true
+    return true, arcID
 end
 
 function ArcAuras.RemoveTrackedItem(arcID)
@@ -5476,6 +5541,7 @@ local _arcAurasOnEvent = function(self, event, arg1)
                                 frame._lastDuration = duration
                                 local prevOnCooldown = frame._isOnCooldown
                                 frame._isOnCooldown = isOnCooldown
+                                EvaluateItemCooldownAlerts(frame, arcID, isOnCooldown)
                                 if isOnCooldown and not prevOnCooldown then
                                     -- Cooldown STARTED: apply cooldown visuals immediately
                                     ApplyCooldownStateVisuals(frame, arcID, true)

@@ -441,11 +441,14 @@ local function FindAndHighlightCDMFrames(spellID, itemID)
   if IsArcAurasEnabled() and spellID then
     local AACooldown = ns.ArcAurasCooldown
     if AACooldown and AACooldown.spellsByID then
-      local arcID = AACooldown.spellsByID[spellID]
-      if arcID and AACooldown.spellData then
-        local fd = AACooldown.spellData[arcID]
-        if fd and fd.frame and fd.frame:IsShown() and not fd.frame._arcHiddenNotInSpec then
-          ShowOverlayOnFrame(fd.frame, "aa_" .. arcID)
+      -- MULTI-map (spell copies): press feedback lands on every copy.
+      local set = AACooldown.spellsByID[spellID]
+      if set and AACooldown.spellData then
+        for arcID in pairs(set) do
+          local fd = AACooldown.spellData[arcID]
+          if fd and fd.frame and fd.frame:IsShown() and not fd.frame._arcHiddenNotInSpec then
+            ShowOverlayOnFrame(fd.frame, "aa_" .. arcID)
+          end
         end
       end
     end

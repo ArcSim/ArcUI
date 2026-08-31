@@ -935,8 +935,8 @@ function ArcAurasTimer.CreateTimer(arcID, config)
         if ns.ArcAurasCooldown.spellData then
             ns.ArcAurasCooldown.spellData[arcID] = fd
         end
-        if ns.ArcAurasCooldown.spellsByID then
-            ns.ArcAurasCooldown.spellsByID[spellID] = arcID
+        if ns.ArcAurasCooldown.IndexSpellArcID then
+            ns.ArcAurasCooldown.IndexSpellArcID(spellID, arcID)
         end
     end
 
@@ -1049,9 +1049,8 @@ function ArcAurasTimer.DestroyTimer(arcID)
         if ns.ArcAurasCooldown.spellData then
             ns.ArcAurasCooldown.spellData[arcID] = nil
         end
-        if ns.ArcAurasCooldown.spellsByID and td.spellID
-           and ns.ArcAurasCooldown.spellsByID[td.spellID] == arcID then
-            ns.ArcAurasCooldown.spellsByID[td.spellID] = nil
+        if ns.ArcAurasCooldown.UnindexSpellArcID and td.spellID then
+            ns.ArcAurasCooldown.UnindexSpellArcID(td.spellID, arcID)
         end
     end
 

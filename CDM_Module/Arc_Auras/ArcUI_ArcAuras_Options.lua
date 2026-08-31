@@ -115,9 +115,9 @@ local function ShowPassiveSpellWarning(spellID, displayName)
         confirmFrame:Hide()
         local ArcAurasCooldown = ns.ArcAurasCooldown
         if ArcAurasCooldown and ArcAurasCooldown.AddTrackedSpell then
-            local success = ArcAurasCooldown.AddTrackedSpell(spellID)
+            local success, _, addedName = ArcAurasCooldown.AddTrackedSpell(spellID, true)
             if success then
-                local name = ArcAurasCooldown.GetSpellNameAndIcon(spellID) or ("Spell " .. spellID)
+                local name = addedName or ArcAurasCooldown.GetSpellNameAndIcon(spellID) or ("Spell " .. spellID)
                 print("|cff00CCFF[Arc Auras]|r Added spell: " .. name)
                 Options.InvalidateCache()
                 if ns.CDMEnhanceOptions and ns.CDMEnhanceOptions.InvalidateCache then
@@ -382,10 +382,11 @@ local function SubmitAddItem(val)
     pendingItemID = ""
     if not itemID or itemID <= 0 then return nil end
     if not (ArcAuras and ArcAuras.AddTrackedItem) then return nil end
-    local success = ArcAuras.AddTrackedItem({
+    local success, addedArcID = ArcAuras.AddTrackedItem({
         type = "item",
         itemID = itemID,
         enabled = true,
+        allowCopy = true,  -- explicit user add: a second add of the same item creates a copy
     })
     local name = select(1, GetItemInfo(itemID)) or ("Item " .. itemID)
     if success then
@@ -395,7 +396,7 @@ local function SubmitAddItem(val)
     end
     NotifyCatalogChanged()
     return success and true or false, success and name or "Already tracked or invalid",
-        success and ArcAuras.MakeItemID and ArcAuras.MakeItemID(itemID) or nil
+        success and (addedArcID or (ArcAuras.MakeItemID and ArcAuras.MakeItemID(itemID))) or nil
 end
 
 local function SubmitAddSpell(val)
@@ -411,8 +412,8 @@ local function SubmitAddSpell(val)
     end
     local ArcAurasCooldown = ns.ArcAurasCooldown
     if not (ArcAurasCooldown and ArcAurasCooldown.AddTrackedSpell) then return nil end
-    local success = ArcAurasCooldown.AddTrackedSpell(spellID)
-    local name = ArcAurasCooldown.GetSpellNameAndIcon(spellID) or ("Spell " .. spellID)
+    local success, addedArcID, addedName = ArcAurasCooldown.AddTrackedSpell(spellID, true)
+    local name = addedName or ArcAurasCooldown.GetSpellNameAndIcon(spellID) or ("Spell " .. spellID)
     if success then
         print("|cff00CCFF[Arc Auras]|r Added spell: " .. name)
     else
@@ -420,7 +421,7 @@ local function SubmitAddSpell(val)
     end
     NotifyCatalogChanged()
     return success and true or false, success and name or "Already tracked or invalid spell",
-        success and ArcAuras.MakeSpellID and ArcAuras.MakeSpellID(spellID) or nil
+        success and addedArcID or nil
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1528,9 +1529,9 @@ local function GetTrackedItemsList()
     if db.trackedItems then
         for arcID, config in pairs(db.trackedItems) do
             local name, icon = nil, nil
-            local arcType, id = ArcAuras.ParseArcID(arcID)
+            local arcType, id, copyIndex = ArcAuras.ParseArcID(arcID)
             local itemID = nil
-            
+
             if arcType == "trinket" then
                 itemID = GetInventoryItemID("player", id)
                 if itemID then
@@ -1544,6 +1545,12 @@ local function GetTrackedItemsList()
                     name, icon = select(1, GetItemInfo(itemID)), select(10, GetItemInfo(itemID))
                 end
                 name = name or ("Item " .. (itemID or "?"))
+                -- Item COPIES share one itemID — number them so the catalog
+                -- can tell them apart (spell copies bake the number into
+                -- cfg.name at creation; item names come from GetItemInfo).
+                if copyIndex and copyIndex > 1 then
+                    name = name .. " (" .. copyIndex .. ")"
+                end
             end
             
             table.insert(items, {

@@ -988,7 +988,15 @@ local function ShowDeleteConfirmation(barNum, barType, barName)
         cfg.tracking.iconTextureID = nil
         cfg.tracking.displaySpellID = nil
         cfg.tracking.dynamicMaxDuration = false
-        
+        -- CUSTOM AURA BAR fields (2026-08-30): these were NOT cleared, so the
+        -- next bar created into this reused slot inherited customAura +
+        -- auraUnits from the deleted bar, and the catalog reseed resurrected
+        -- the "deleted" custom entry ("recreating a bar brings the old one
+        -- back" report). A delete must leave the slot byte-clean.
+        cfg.tracking.customAura = nil
+        cfg.tracking.auraUnits = nil
+        cfg.tracking.auraOwnOnly = nil
+
         -- Reset behavior
         if cfg.behavior then
           cfg.behavior.showOnSpecs = nil
@@ -1259,6 +1267,53 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           if filterDisplayType == "icon" then return true end
           local cfg = ns.API.GetBarConfig(barNum)
           return false
+        end
+      },
+      customSpellID = {
+        type = "input",
+        name = "Spell ID",
+        desc = "The aura's spell ID this custom bar tracks. Edit it to point the bar (and its catalog entry) at a different spell - takes effect immediately.",
+        order = 2.04,
+        width = 0.6,
+        get = function()
+          local cfg = ns.API.GetBarConfig(barNum)
+          local id = cfg and cfg.tracking.trackedSpellID
+          return id and tostring(id) or ""
+        end,
+        set = function(_, v)
+          local newID = tonumber((v or ""):gsub("%D", ""))
+          if not newID or newID <= 0 then return end
+          local cfg = ns.API.GetBarConfig(barNum)
+          if not cfg or not cfg.tracking.customAura then return end
+          local old = cfg.tracking.trackedSpellID
+          if newID == old then return end
+          local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(newID)
+          cfg.tracking.trackedSpellID = newID
+          cfg.tracking.spellID = newID
+          cfg.tracking.displaySpellID = newID
+          cfg.tracking.buffName = (info and info.name) or ("Spell " .. newID)
+          cfg.tracking.iconTextureID = (info and (info.iconID or info.originalIconID)) or 134400
+          -- session catalog follows the edit: the new id gets an entry, the old
+          -- one is dropped when no other bar still uses it
+          if ns.Catalog then
+            if ns.Catalog.AddCustomEntry then
+              ns.Catalog.AddCustomEntry(newID, cfg.tracking.trackType,
+                cfg.tracking.auraUnits, cfg.tracking.auraOwnOnly)
+            end
+            if old and ns.Catalog.FindCustomAuraBars and ns.Catalog.RemoveCustomEntry
+               and #ns.Catalog.FindCustomAuraBars(old) == 0 then
+              ns.Catalog.RemoveCustomEntry("custom_" .. old)
+            end
+          end
+          if ns.API.InvalidateActiveBarCache then ns.API.InvalidateActiveBarCache() end
+          if ns.API.ValidateAllBarTracking then ns.API.ValidateAllBarTracking() end
+          if ns.API.RefreshDisplay then ns.API.RefreshDisplay(barNum) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        hidden = function()
+          if not expandedBars[barKey] then return true end
+          local cfg = ns.API.GetBarConfig(barNum)
+          return not (cfg and cfg.tracking.customAura)
         end
       },
       auraUnits = {

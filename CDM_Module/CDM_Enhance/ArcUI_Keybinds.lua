@@ -562,7 +562,7 @@ local function ParseArcAuraID(arcID)
     end
     
     -- arc_spell_67890 = specific spell ID (parsed from string, always safe)
-    local spellID = arcID:match("^arc_spell_(%d+)$")
+    local spellID = arcID:match("^arc_spell_(%d+)")  -- no $ anchor: copies carry a "#N" suffix
     if spellID then
         return "spell", tonumber(spellID)
     end

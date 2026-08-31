@@ -795,6 +795,16 @@ local function GetOptionsTable()
             tbl.order = 2
             return tbl
           end)(),
+          targetCastbar = (function()
+            local tbl = ns.TargetCastbarOptions and ns.TargetCastbarOptions.GetOptionsTable() or {
+              type = "group",
+              name = "Target Castbar",
+              args = { loading = { type = "description", name = "Loading...", order = 1 } }
+            }
+            tbl.name  = "Target Castbar"
+            tbl.order = 3
+            return tbl
+          end)(),
         },
       },
 
@@ -1472,6 +1482,9 @@ initFrame:SetScript("OnEvent", function(self, event)
       end
       if ns.FocusCastbar and ns.FocusCastbar.Init then
         ns.FocusCastbar.Init()
+      end
+      if ns.TargetCastbar and ns.TargetCastbar.Init then
+        ns.TargetCastbar.Init()
       end
       if ns.SetMyKick and ns.SetMyKick.Init then
         ns.SetMyKick.Init()

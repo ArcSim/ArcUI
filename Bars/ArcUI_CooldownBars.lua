@@ -282,6 +282,8 @@ local HIDE_CONDITIONS_BASE = {
   hideDragonriding = "Skyriding",
   hideNoTarget     = "No Target",
   hideHasTarget    = "Has Target",
+  hideNoFocus      = "No Focus Target",
+  hideHasFocus     = "Has Focus Target",
   hideNotCasting   = "Not Casting",
   hideCasting      = "While Casting",
   hideStealthed    = "Stealthed",
@@ -293,7 +295,7 @@ local HIDE_CONDITION_ORDER_BASE = {
   "hideDead", "hideResting", "hideSolo", "hideInGroup",
   "hideInRaid", "hideInInstance", "hideInEncounter",
   "hideInPetBattle", "hidePvP", "hideDragonriding",
-  "hideNoTarget", "hideHasTarget", "hideNotCasting", "hideCasting",
+  "hideNoTarget", "hideHasTarget", "hideNoFocus", "hideHasFocus", "hideNotCasting", "hideCasting",
   "hideStealthed", "hideFlying", "hideSwimming",
 }
 
@@ -407,6 +409,8 @@ local function EvaluateHideConditions(hideWhen, hideLogic)
       if hideWhen.hideDragonriding then hasAnyCondition = true; if not G.isDragonriding then allConditionsMet = false end end
       if hideWhen.hideNoTarget then hasAnyCondition = true; if G.hasTarget then allConditionsMet = false end end
       if hideWhen.hideHasTarget then hasAnyCondition = true; if not G.hasTarget then allConditionsMet = false end end
+      if hideWhen.hideNoFocus then hasAnyCondition = true; if G.hasFocus then allConditionsMet = false end end
+      if hideWhen.hideHasFocus then hasAnyCondition = true; if not G.hasFocus then allConditionsMet = false end end
       if hideWhen.hideNotCasting then hasAnyCondition = true; if G.isCasting then allConditionsMet = false end end
       if hideWhen.hideCasting then hasAnyCondition = true; if not G.isCasting then allConditionsMet = false end end
       if hideWhen.hideStealthed then hasAnyCondition = true; if not G.isStealthed then allConditionsMet = false end end
@@ -447,6 +451,8 @@ local function EvaluateHideConditions(hideWhen, hideLogic)
     if hideWhen.hideDragonriding and G.isDragonriding then return true end
     if hideWhen.hideNoTarget and not G.hasTarget then return true end
     if hideWhen.hideHasTarget and G.hasTarget then return true end
+    if hideWhen.hideNoFocus and not G.hasFocus then return true end
+    if hideWhen.hideHasFocus and G.hasFocus then return true end
     if hideWhen.hideNotCasting and not G.isCasting then return true end
     if hideWhen.hideCasting and G.isCasting then return true end
     if hideWhen.hideStealthed and G.isStealthed then return true end
@@ -486,6 +492,8 @@ local function EvaluateHideConditions(hideWhen, hideLogic)
     if hideWhen.hideDragonriding and UnitPowerBarID("player") == 631 then return true end
     if hideWhen.hideNoTarget and not UnitExists("target") then return true end
     if hideWhen.hideHasTarget and UnitExists("target") then return true end
+    if hideWhen.hideNoFocus and not UnitExists("focus") then return true end
+    if hideWhen.hideHasFocus and UnitExists("focus") then return true end
     -- Casting: no reliable non-secret API fallback, skip in fallback
     -- (events won't be tracked without CDMGroups, so these won't fire)
     if hideWhen.hideStealthed and IsStealthed() then return true end

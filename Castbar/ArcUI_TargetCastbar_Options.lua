@@ -1,11 +1,11 @@
 -- ===================================================================
--- ArcUI_FocusCastbar_Options.lua
--- Options panel for the Focus Castbar feature.
+-- ArcUI_TargetCastbar_Options.lua
+-- Options panel for the Target Castbar feature.
 -- Registered as a tab under the Castbar panel in ArcUI_Options.lua.
 -- ===================================================================
 
 local ADDON, ns = ...
-ns.FocusCastbarOptions = ns.FocusCastbarOptions or {}
+ns.TargetCastbarOptions = ns.TargetCastbarOptions or {}
 
 local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
 local LSM               = LibStub and LibStub("LibSharedMedia-3.0", true)
@@ -32,7 +32,7 @@ local ANCHOR_POINTS = {
 }
 
 local function GetDB()
-  return ns.db and ns.db.char and ns.db.char.focusCastbar
+  return ns.db and ns.db.char and ns.db.char.targetCastbar
 end
 
 -- True when the bar is pinned to another frame (free-position controls hide).
@@ -41,18 +41,18 @@ local function AnchoredOn()
 end
 
 local function Refresh()
-  if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then
-    ns.FocusCastbar.ApplyAppearance()
+  if ns.TargetCastbar and ns.TargetCastbar.ApplyAppearance then
+    ns.TargetCastbar.ApplyAppearance()
   end
   if AceConfigRegistry then AceConfigRegistry:NotifyChange("ArcUI") end
 end
 
--- Reset every Focus Castbar setting to its DB default. The feature's on/off
+-- Reset every Target Castbar setting to its DB default. The feature's on/off
 -- state is preserved so the preview stays visible and the user isn't surprised
 -- by the bar vanishing mid-edit.
 local function ResetAllToDefaults()
   local c = GetDB(); if not c then return end
-  local d = ns.DB_DEFAULTS and ns.DB_DEFAULTS.char and ns.DB_DEFAULTS.char.focusCastbar
+  local d = ns.DB_DEFAULTS and ns.DB_DEFAULTS.char and ns.DB_DEFAULTS.char.targetCastbar
   if not d then return end
   local wasEnabled = c.enabled
   wipe(c)
@@ -87,21 +87,21 @@ end
 -- ===================================================================
 -- OPTIONS TABLE
 -- ===================================================================
-function ns.FocusCastbarOptions.GetOptionsTable()
-  local opts = { type="group", name="Focus Castbar", order=2, args={} }
+function ns.TargetCastbarOptions.GetOptionsTable()
+  local opts = { type="group", name="Target Castbar", order=2, args={} }
   local a = opts.args
 
   a.desc = {
     type     = "description",
-    name     = "|cffffd100Focus Castbar|r — shows what your focus target is casting. Enable below, then drag the bar into position while this panel is open.",
+    name     = "|cffffd100Target Castbar|r — shows what your target is casting. Enable below, then drag the bar into position while this panel is open.",
     order    = 0.1,
     fontSize = "medium",
   }
 
   a.enabled = {
     type  = "toggle",
-    name  = "|cffffd100Enable Focus Castbar|r",
-    desc  = "Show a castbar while your focus target is casting or channeling.",
+    name  = "|cffffd100Enable Target Castbar|r",
+    desc  = "Show a castbar while your target is casting or channeling.",
     order = 0.2,
     width = 1.5,
     get   = function() local c = GetDB(); return c and c.enabled end,
@@ -109,9 +109,9 @@ function ns.FocusCastbarOptions.GetOptionsTable()
       local c = GetDB(); if not c then return end
       c.enabled = v
       if v then
-        if ns.FocusCastbar and ns.FocusCastbar.Enable then ns.FocusCastbar.Enable() end
+        if ns.TargetCastbar and ns.TargetCastbar.Enable then ns.TargetCastbar.Enable() end
       else
-        if ns.FocusCastbar and ns.FocusCastbar.Disable then ns.FocusCastbar.Disable() end
+        if ns.TargetCastbar and ns.TargetCastbar.Disable then ns.TargetCastbar.Disable() end
       end
       Refresh()
     end,
@@ -122,12 +122,12 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   a.skinsHeader = Header("Skins", "skins", 0.5)
   if ns.Presets and ns.Presets.InjectCastbarSkinArgs then
     ns.Presets.InjectCastbarSkinArgs(a, {
-      keyPrefix = "fcsSkin",
+      keyPrefix = "tcsSkin",
       orderBase = 0.51,
       hidden    = function() return collapsed.skins end,
       getCfg    = GetDB,
       apply     = function()
-        if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then ns.FocusCastbar.ApplyAppearance() end
+        if ns.TargetCastbar and ns.TargetCastbar.ApplyAppearance then ns.TargetCastbar.ApplyAppearance() end
       end,
     })
   end
@@ -377,7 +377,7 @@ function ns.FocusCastbarOptions.GetOptionsTable()
 
   a.fcShowGlow = {
     type = "toggle", name = "Glow Outline", order = 50.1,
-    desc = "Show a pixel glow around the bar while the focus target is casting.",
+    desc = "Show a pixel glow around the bar while the target is casting.",
     hidden = H("glow"),
     get = function() local c = GetDB(); return c and c.showGlow end,
     set = function(_, v) local c = GetDB(); if c then c.showGlow = v; Refresh() end end,
@@ -430,7 +430,7 @@ function ns.FocusCastbarOptions.GetOptionsTable()
 
   a.fcImportGlowDesc = {
     type = "description", order = 55.05,
-    name = "|cff888888Triggers a glow when the focus target casts a spell marked as important by Blizzard (typically major cooldowns or dangerous abilities).|r",
+    name = "|cff888888Triggers a glow when the target casts a spell marked as important by Blizzard (typically major cooldowns or dangerous abilities).|r",
     hidden = H("importGlow"),
   }
   a.fcImportGlowEnabled = {
@@ -502,14 +502,14 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   }
   a.fcShowCasterName = {
     type = "toggle", name = "Show Caster Name", order = 60.3, width = 1.2,
-    desc = "Show the focus target's name below the bar.",
+    desc = "Show the target's name below the bar.",
     hidden = H("content"),
     get = function() local c = GetDB(); return c and c.showCasterName end,
     set = function(_, v) local c = GetDB(); if c then c.showCasterName = v; Refresh() end end,
   }
   a.fcCasterNameColor = {
     type = "color", name = "Caster Name Color", order = 60.32, width = 1.2, hasAlpha = true,
-    desc = "Color of the caster (focus target) name shown below the bar.",
+    desc = "Color of the caster (target) name shown below the bar.",
     hidden = H("content", function() local c = GetDB(); return not (c and c.showCasterName) end),
     get = function()
       local c = GetDB(); local col = c and c.casterNameColor or {r=1,g=0.82,b=0,a=1}
@@ -541,46 +541,46 @@ function ns.FocusCastbarOptions.GetOptionsTable()
     get = function() local c = GetDB(); return c and c.casterNameOffsetY or 0 end,
     set = function(_, v) local c = GetDB(); if c then c.casterNameOffsetY = v; Refresh() end end,
   }
-  a.fcShowFocusTarget = {
-    type = "toggle", name = "Show Focus Target", order = 60.4, width = 1.2,
-    desc = "Show who the focus target is currently targeting, during a cast.",
+  a.fcShowTargetTarget = {
+    type = "toggle", name = "Show Target of Target", order = 60.4, width = 1.2,
+    desc = "Show who the target is currently targeting, during a cast.",
     hidden = H("content"),
-    get = function() local c = GetDB(); return c and c.showFocusTarget end,
-    set = function(_, v) local c = GetDB(); if c then c.showFocusTarget = v; Refresh() end end,
+    get = function() local c = GetDB(); return c and c.showTargetTarget end,
+    set = function(_, v) local c = GetDB(); if c then c.showTargetTarget = v; Refresh() end end,
   }
-  a.fcFocusTargetColor = {
-    type = "color", name = "Focus Target Color", order = 60.403, width = 1.2, hasAlpha = true,
-    desc = "Color of the focus-target text (who your focus is currently targeting) shown below the bar.",
-    hidden = H("content", function() local c = GetDB(); return not (c and c.showFocusTarget) end),
+  a.fcTargetTargetColor = {
+    type = "color", name = "Target of Target Color", order = 60.403, width = 1.2, hasAlpha = true,
+    desc = "Color of the target-target text (who your target is currently targeting) shown below the bar.",
+    hidden = H("content", function() local c = GetDB(); return not (c and c.showTargetTarget) end),
     get = function()
-      local c = GetDB(); local col = c and c.focusTargetColor or {r=0.6,g=0.8,b=1,a=1}
+      local c = GetDB(); local col = c and c.targetTargetColor or {r=0.6,g=0.8,b=1,a=1}
       return col.r, col.g, col.b, col.a or 1
     end,
     set = function(_, r, g, b, a)
-      local c = GetDB(); if c then c.focusTargetColor = {r=r,g=g,b=b,a=a}; Refresh() end
+      local c = GetDB(); if c then c.targetTargetColor = {r=r,g=g,b=b,a=a}; Refresh() end
     end,
   }
-  a.fcFocusTargetAnchor = {
-    type = "select", name = "Focus Target Align", order = 60.405, width = 1.1,
-    desc = "Which edge of the bar the focus target text is anchored to.",
+  a.fcTargetTargetAnchor = {
+    type = "select", name = "Target of Target Align", order = 60.405, width = 1.1,
+    desc = "Which edge of the bar the target text is anchored to.",
     values = { LEFT="Left", CENTER="Center", RIGHT="Right" },
-    hidden = H("content", function() local c = GetDB(); return not (c and c.showFocusTarget) end),
-    get = function() local c = GetDB(); return c and c.focusTargetAnchor or "RIGHT" end,
-    set = function(_, v) local c = GetDB(); if c then c.focusTargetAnchor = v; Refresh() end end,
+    hidden = H("content", function() local c = GetDB(); return not (c and c.showTargetTarget) end),
+    get = function() local c = GetDB(); return c and c.targetTargetAnchor or "RIGHT" end,
+    set = function(_, v) local c = GetDB(); if c then c.targetTargetAnchor = v; Refresh() end end,
   }
-  a.fcFocusTargetOffsetX = {
-    type = "range", name = "Focus Target Offset X", order = 60.41, width = 1.5,
+  a.fcTargetTargetOffsetX = {
+    type = "range", name = "Target of Target Offset X", order = 60.41, width = 1.5,
     min = -200, max = 200, step = 1,
-    hidden = H("content", function() local c = GetDB(); return not (c and c.showFocusTarget) end),
-    get = function() local c = GetDB(); return c and c.focusTargetOffsetX or 0 end,
-    set = function(_, v) local c = GetDB(); if c then c.focusTargetOffsetX = v; Refresh() end end,
+    hidden = H("content", function() local c = GetDB(); return not (c and c.showTargetTarget) end),
+    get = function() local c = GetDB(); return c and c.targetTargetOffsetX or 0 end,
+    set = function(_, v) local c = GetDB(); if c then c.targetTargetOffsetX = v; Refresh() end end,
   }
-  a.fcFocusTargetOffsetY = {
-    type = "range", name = "Focus Target Offset Y", order = 60.42, width = 1.5,
+  a.fcTargetTargetOffsetY = {
+    type = "range", name = "Target of Target Offset Y", order = 60.42, width = 1.5,
     min = -200, max = 200, step = 1,
-    hidden = H("content", function() local c = GetDB(); return not (c and c.showFocusTarget) end),
-    get = function() local c = GetDB(); return c and c.focusTargetOffsetY or 0 end,
-    set = function(_, v) local c = GetDB(); if c then c.focusTargetOffsetY = v; Refresh() end end,
+    hidden = H("content", function() local c = GetDB(); return not (c and c.showTargetTarget) end),
+    get = function() local c = GetDB(); return c and c.targetTargetOffsetY or 0 end,
+    set = function(_, v) local c = GetDB(); if c then c.targetTargetOffsetY = v; Refresh() end end,
   }
 
   -- ── Raid Marker ────────────────────────────────────────────────
@@ -588,14 +588,14 @@ function ns.FocusCastbarOptions.GetOptionsTable()
 
   a.fcShowRaidMarker = {
     type = "toggle", name = "Show Raid Marker", order = 70.1, width = 1.2,
-    desc = "Show the focus target's raid marker icon.",
+    desc = "Show the target's raid marker icon.",
     hidden = H("raidMarker"),
     get = function() local c = GetDB(); return c and c.showRaidMarker end,
     set = function(_, v) local c = GetDB(); if c then c.showRaidMarker = v; Refresh() end end,
   }
   a.fcRaidMarkerDefault = {
     type = "range", name = "Preview Marker Index", order = 70.15,
-    desc = "Which marker to show in preview when focus has no marker. 0 = hide in preview. (1=Star 2=Circle 3=Diamond 4=Triangle 5=Moon 6=Square 7=Cross 8=Skull)",
+    desc = "Which marker to show in preview when the target has no marker. 0 = hide in preview. (1=Star 2=Circle 3=Diamond 4=Triangle 5=Moon 6=Square 7=Cross 8=Skull)",
     width = 1.8,
     min = 0, max = 8, step = 1,
     hidden = H("raidMarker", function() local c = GetDB(); return not (c and c.showRaidMarker) end),
@@ -688,7 +688,7 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   }
   a.fcAnchorFrameName = {
     type = "input", name = "Anchor Frame Name", order = 90.062, width = 1.8,
-    desc = "Global name of the frame to anchor to (e.g. PlayerFrame, TargetFrame, FocusFrame). If the frame isn't found, the castbar falls back to its normal position.",
+    desc = "Global name of the frame to anchor to (e.g. PlayerFrame, TargetFrame, TargetFrame). If the frame isn't found, the castbar falls back to its normal position.",
     hidden = H("position", function() return not AnchoredOn() end),
     get = function() local c = GetDB(); return c and c.anchorFrameName or "" end,
     set = function(_, v)
@@ -702,7 +702,7 @@ function ns.FocusCastbarOptions.GetOptionsTable()
     desc = "Quick-pick a common frame to fill the name above.",
     values = {
       PlayerFrame="Player Frame", TargetFrame="Target Frame",
-      FocusFrame="Focus Frame", PetFrame="Pet Frame",
+      TargetFrame="Target Frame", PetFrame="Pet Frame",
       EssentialCooldownViewer="CDM: Essential", UtilityCooldownViewer="CDM: Utility",
       BuffIconCooldownViewer="CDM: Buff Icons", BuffBarCooldownViewer="CDM: Buff Bars",
     },
@@ -792,13 +792,13 @@ function ns.FocusCastbarOptions.GetOptionsTable()
 
   a.fcResetDesc = {
     type = "description", order = 100.05, hidden = H("reset"),
-    name = "|cff888888Reset every Focus Castbar setting (appearance, colors, glows, kick, hold, text, position and anchoring) back to its default. The feature stays enabled.|r",
+    name = "|cff888888Reset every Target Castbar setting (appearance, colors, glows, kick, hold, text, position and anchoring) back to its default. The feature stays enabled.|r",
   }
   a.fcResetAll = {
     type = "execute", name = "|cffff5555Reset All to Default|r", order = 100.1, width = 1.5,
-    desc = "Restore all Focus Castbar settings to their defaults.",
+    desc = "Restore all Target Castbar settings to their defaults.",
     confirm = true,
-    confirmText = "Reset ALL Focus Castbar settings to their defaults?",
+    confirmText = "Reset ALL Target Castbar settings to their defaults?",
     hidden = H("reset"),
     func = ResetAllToDefaults,
   }

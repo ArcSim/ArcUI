@@ -47,12 +47,63 @@ local function PlayAlert(choice, ttsText, channel)
     local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
     local value = LSM and LSM.Fetch and LSM:Fetch("sound", choice, true) or nil
     if type(value) == "number" and value > 0 then
-        PlaySound(value, ch)
+        -- LSM numeric sound values are FileDataIDs (e.g. the Arc Pings pack).
+        -- PlaySound wants a SOUNDKIT id and fails SILENTLY on a file id --
+        -- the "PLAY fired but no sound" bug. PlaySoundFile takes both paths
+        -- and file ids.
+        PlaySoundFile(value, ch)
     elseif type(value) == "string" and value ~= "" then
         PlaySoundFile(value, ch)
     end
 end
 CAA.PlayAlert = PlayAlert
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- COOLDOWN SOUND ALERTS (2026-08-30): shared scheduler for the per-icon
+-- "when Ready / On Cooldown / Charge Gained" sounds. CDM icons queue from
+-- CooldownState's shadow transitions, Arc spell icons from ArcAurasCooldown's.
+-- The 0.15s verify absorbs GCD-window transients (see the gcd-flicker-postgcd
+-- skill): a filtered mid-GCD read can flash a wrong state for a tick, and
+-- unlike a visual, a played sound cannot be corrected afterwards. `verify`
+-- re-reads the LIVE state at fire time; a newer queue for the same key
+-- invalidates an older pending one (token compare). Zero idle cost.
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Per-trigger Sound/Speech enable flags (2026-08-30): each trigger stores
+-- <base>Sound/<base>TTS values plus optional <base>SoundOn/<base>TTSOn
+-- toggles. BACKWARD COMPATIBLE: a nil flag means "enabled if a value is set"
+-- (exactly the old behavior), only an explicit false mutes without clearing
+-- the stored value. Shared by aura and cooldown alerts.
+function CAA.ResolveAlertPair(tbl, base)
+    if not tbl then return nil, nil end
+    local sound = tbl[base .. "Sound"]
+    local tts   = tbl[base .. "TTS"]
+    if tbl[base .. "SoundOn"] == false then sound = nil end
+    if tbl[base .. "TTSOn"]   == false then tts   = nil end
+    return sound, tts
+end
+
+local pendingCooldownAlerts = {}
+function CAA.QueueCooldownAlert(key, sound, tts, channel, verify)
+    local hasSound = type(sound) == "string" and sound ~= "" and sound ~= "None"
+    local hasTTS   = type(tts) == "string" and tts ~= ""
+    if not hasSound and not hasTTS then
+        if ns.TraceTap then ns.TraceTap("CDA", "queue SKIP (no sound/tts) " .. tostring(key)) end
+        return
+    end
+    if ns.TraceTap then ns.TraceTap("CDA", "queue " .. tostring(key) .. " sound=" .. tostring(sound)) end
+    local token = (pendingCooldownAlerts[key] or 0) + 1
+    pendingCooldownAlerts[key] = token
+    C_Timer.After(0.15, function()
+        if pendingCooldownAlerts[key] ~= token then return end
+        pendingCooldownAlerts[key] = nil
+        if verify and not verify() then
+            if ns.TraceTap then ns.TraceTap("CDA", "verify FAILED " .. tostring(key)) end
+            return
+        end
+        if ns.TraceTap then ns.TraceTap("CDA", "PLAY " .. tostring(key) .. " sound=" .. tostring(sound)) end
+        PlayAlert(sound, tts, channel)
+    end)
+end
 
 -- callback(frame, isActive, wasActive) from ns.FrameActive
 local function OnActiveChanged(frame, isActive, wasActive)
@@ -66,9 +117,11 @@ local function OnActiveChanged(frame, isActive, wasActive)
     local a = cfg and cfg.auraAlerts
     if not a then return end
     if isActive then
-        PlayAlert(a.gainedSound, a.gainedTTS, a.channel)
+        local s, x = CAA.ResolveAlertPair(a, "gained")
+        PlayAlert(s, x, a.channel)
     else
-        PlayAlert(a.removedSound, a.removedTTS, a.channel)
+        local s, x = CAA.ResolveAlertPair(a, "removed")
+        PlayAlert(s, x, a.channel)
     end
 end
 

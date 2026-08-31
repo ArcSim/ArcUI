@@ -742,13 +742,15 @@ local function UpdateHighlights(nextSpellID)
 
   if spellData then
     if arcAurasEnabled and nextSpellID then
-      local matchedArcID = AACooldown.spellsByID and AACooldown.spellsByID[nextSpellID]
+      -- spellsByID is a MULTI-map (spell copies): every copy of the next
+      -- spell gets the highlight — they are all the same button.
+      local matchedSet = AACooldown.spellsByID and AACooldown.spellsByID[nextSpellID]
 
       for arcID, fd in pairs(spellData) do
         local key = "aa_" .. arcID
         if not fd or not fd.frame then
           HideHighlight(key)
-        elseif arcID == matchedArcID and fd.frame:IsShown() and not fd.frame._arcHiddenNotInSpec then
+        elseif matchedSet and matchedSet[arcID] and fd.frame:IsShown() and not fd.frame._arcHiddenNotInSpec then
           ShowHighlight(fd.frame, key)
         else
           HideHighlight(key)

@@ -529,6 +529,18 @@ function ns.CastbarOptions.GetOptionsTable()
         end,
       },
 
+      classColor = {
+        type   = "toggle",
+        name   = "Use Class Color",
+        desc   = "Color the bar with your class color instead of the Bar Color above. Spell overrides and the uninterruptible color still win. Follows the same per-type / shared behavior as Bar Color.",
+        order  = 40.12,
+        width  = 1.2,
+        hidden = H("colorOptions"),
+        disabled = function() local c = GetCastbarDB(); return c and PGet(c, "useTextureColor") == true end,
+        get    = function() local c = GetCastbarDB(); return c and PGet(c, "classColor") == true end,
+        set    = function(_, v) local c = GetCastbarDB(); if c then PSet(c, "classColor", v or nil); Refresh() end end,
+      },
+
       -- USE TEXTURE COLORS: stop tinting the fill so a colored texture shows as authored
       useTextureColor = {
         type   = "toggle",
