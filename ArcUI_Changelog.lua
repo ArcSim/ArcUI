@@ -29,6 +29,16 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.6.a",
+    sections = {
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Custom Icons Switching in Combat", desc = "A custom icon no longer switches back to the spell's default art during combat when Ignore Aura Override is enabled on the same icon. The custom icon always wins." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.6",
     sections = {
       {

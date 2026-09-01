@@ -4257,16 +4257,15 @@ ApplyIconStyle = function(frame, cdID)
           -- This hook handles: texture override, bling, reverse, swipe color.
           -- ═══════════════════════════════════════════════════════════════════
 
-          -- Set texture to spell icon (not aura icon)
-          local cooldownInfo = parentFrame.cooldownInfo
-          local spellID = cooldownInfo and (cooldownInfo.overrideSpellID or cooldownInfo.spellID)
-          if spellID and parentFrame.Icon then
-            local texture = C_Spell.GetSpellTexture(spellID)
-            if texture then
-              parentFrame._arcBypassTextureHook = true
-              parentFrame.Icon:SetTexture(texture)
-              parentFrame._arcBypassTextureHook = false
-            end
+          -- Set texture through THE resolver (one-path law, icon-override-system
+          -- skill): a custom icon wins outright; else IAO forces the spell art
+          -- back while the aura is active. The old DIRECT spell-art push here
+          -- bypassed the texture hook and stomped custom icons on every
+          -- in-combat cooldown push -- the "custom icon switches when I enter
+          -- combat" report (2026-08-31). When neither applies, no write: CDM's
+          -- own art already stands.
+          if parentFrame.Icon then
+            ApplyIconTexture(parentFrame, false)
           end
           
           -- Apply bling/reverse/color based on who controls cooldowns

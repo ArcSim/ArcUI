@@ -1,3 +1,9 @@
+## 3.8.6.a
+
+### Bug Fixes
+
+- **Custom Icons Switching in Combat** — A custom icon no longer switches back to the spell's default art during combat when Ignore Aura Override is enabled on the same icon. The custom icon always wins.
+
 ## 3.8.6
 
 ### New Features
