@@ -483,6 +483,8 @@ ns.DB_DEFAULTS = {
         display = {
           enabled = true,
           thresholdMode = "simple",
+          enableZeroColor = false,
+          zeroColor = {r=1, g=0, b=0, a=1},
           enableMaxColor = false,
           maxColor = {r=0, g=1, b=0, a=1},
           foldedColor1 = {r=0, g=0.5, b=1, a=1},
@@ -552,6 +554,10 @@ ns.DB_DEFAULTS = {
           textColorThresholdT4Enabled = false,
           textColorThresholdT4Value = 100,
           textColorThresholdT4Color = {r=1, g=1, b=0.3, a=1},
+          textColorThresholdEnableZeroColor = false,
+          textColorThresholdZeroColor = {r=1, g=0, b=0, a=1},
+          textColorThresholdEnableMaxColor = false,
+          textColorThresholdMaxColor = {r=0, g=1, b=0, a=1},
         },
         behavior = {
           hideOutOfCombat = false,
