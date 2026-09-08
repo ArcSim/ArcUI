@@ -479,6 +479,11 @@ local function LanesFor(def)
     if #lanes == 0 then return LEGACY_LANES.buff end
     return lanes
 end
+-- Exported for the Aura Group engine rows: routing members by the legacy
+-- unitMode field alone sent current-shape (auraType + units) DEBUFF icons
+-- onto the HELPFUL player row, where a harmful aura can never match — the
+-- one-path rule applies to lane resolution too.
+AuraIcons.LanesFor = LanesFor
 
 local function FilterForLane(def, lane)
     if not lane.harmful then
@@ -951,7 +956,27 @@ function AuraIcons.StyleActiveButton(btn, settings, sizeRef)
     local floatTexts = forceHide or rs.preserveDurationText == true
 
     btn:SetAlpha(forceHide and 1 or activeAlpha)
-    if btn._arcPlate then btn._arcPlate:SetShown(not forceHide) end
+    -- The plate IGNORES button alpha by design (it is the dimming backing —
+    -- opaque black under translucent art — and the ghost occluder). Its ONLY
+    -- job is standing between a translucent active icon and a VISIBLE ghost,
+    -- so it exists exactly when both sides of that sandwich do:
+    --   * Active Alpha 0  -> no active art: plate off ("hide everything
+    --     while active" — the bare-black-square report), and
+    --   * Missing look hidden (Inactive Alpha 0 / Show Icon off) -> nothing
+    --     to occlude: plate off, so Active Alpha 0.5 is TRUE transparency
+    --     to the world instead of dimmed-over-black (Arc's second report).
+    -- With a visible ghost AND a translucent active icon the plate stays —
+    -- otherwise the two states composite into an unreadable mush. Uses the
+    -- RAW missing alpha (no panel preview bump) so the panel shows the live
+    -- look. Physics note stands: at Active Alpha 0 a visible ghost shows in
+    -- BOTH states (presence is secret; occlusion is the only state logic).
+    if btn._arcPlate then
+        local cs = csv.cooldownState or {}
+        local missAlpha = cs.alpha
+        if missAlpha == nil then missAlpha = sv and sv.cooldownAlpha end
+        if missAlpha == nil then missAlpha = 0.55 end
+        btn._arcPlate:SetShown(not forceHide and activeAlpha > 0 and missAlpha > 0)
+    end
     local zoom = (settings and settings.zoom) or 0.08
     if btn._arcIcon then
         btn._arcIcon:SetShown(not forceHide)

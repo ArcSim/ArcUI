@@ -122,22 +122,50 @@ function AG.MembersOf(groupName)
     return out
 end
 
--- one member's include map for one engine row ({} when the member does not
--- track that unit — an empty filter is the engine's "off" state)
+-- PARK CONVENTION (the Bonegrinder / Maitecky duplicate-rows lesson): a slot
+-- with nothing to show gets the NEVER-MATCHING id map, NEVER the empty table.
+-- {} is the permissive fallback when the engine drops toward creation-time
+-- filters (vehicles / cinematics / encounter end fail OPEN) — a filterless
+-- slot then displays an ARBITRARY aura, and with 10 pre-provisioned slots
+-- that renders as a whole row of identical copies.
+local function ParkMap() return { [0] = true } end
+
+-- one member's include map for one engine row (park map when the member does
+-- not track that unit — the engine's only safe "off" state).
+-- ROUTE BY LANES (AuraIcons.LanesFor — the ONE lane resolver, same as the
+-- single-icon slots): the legacy unitMode field is a stale "buff" default on
+-- current-shape defs (auraType + units), so reading it alone sent target
+-- DEBUFF members onto the HELPFUL player row — invisible in the live view
+-- while the panel view (holders, LanesFor-driven) worked. The group has
+-- exactly two rows — player HELPFUL and target HARMFUL; lanes those rows
+-- cannot represent (focus / pet / party / self-debuff) stay panel-only.
 local function MemberMapFor(arcID, unit)
     local def = ns.AuraIcons and ns.AuraIcons.Get and ns.AuraIcons.Get(arcID)
-    if not def then return {} end
-    local mode = def.unitMode or "buff"
-    local wants = (unit == "player" and (mode == "buff" or mode == "both"))
-        or (unit == "target" and (mode == "debuff" or mode == "both"))
-    if not wants then return {} end
+    if not def then return ParkMap() end
+    local wants = false
+    local lanes = ns.AuraIcons.LanesFor and ns.AuraIcons.LanesFor(def)
+    if lanes then
+        for _, lane in ipairs(lanes) do
+            if (unit == "player" and lane.unit == "player" and not lane.harmful)
+                or (unit == "target" and lane.unit == "target" and lane.harmful) then
+                wants = true
+                break
+            end
+        end
+    else
+        -- resolver unavailable (should not happen): legacy routing
+        local mode = def.unitMode or "buff"
+        wants = (unit == "player" and (mode == "buff" or mode == "both"))
+            or (unit == "target" and (mode == "debuff" or mode == "both"))
+    end
+    if not wants then return ParkMap() end
     if def.spellIDs and next(def.spellIDs) then
         local ids = {}
         for id in pairs(def.spellIDs) do ids[id] = true end
         return ids
     end
     if def.spellID then return { [def.spellID] = true } end
-    return {}
+    return ParkMap()
 end
 
 -- Consumed by AuraIcons.RefreshVisibility: a member has no standalone
@@ -184,8 +212,18 @@ end
 local function StyleGroupButton(b, rt)
     local style = rt and rt.slotStyles and rt.slotStyles[b._arcSlotIndex or 0]
     if not style then return end
+    -- per-BUTTON sizeRef: glow packs bake their geometry from W/H (button
+    -- rects are secret, so packs take size as a parameter), and slots can
+    -- carry per-icon size overrides — a shared group-size ref would build
+    -- every pack at the wrong dimensions
+    if not b._arcSizeRef then
+        b._arcSizeRef = { GetSize = function()
+            return b._arcAppliedW or (rt.cfg and rt.cfg.iconW) or 36,
+                b._arcAppliedH or (rt.cfg and rt.cfg.iconH) or 36
+        end }
+    end
     if ns.AuraIcons and ns.AuraIcons.StyleActiveButton then
-        ns.AuraIcons.StyleActiveButton(b, style, rt.sizeRef)
+        ns.AuraIcons.StyleActiveButton(b, style, b._arcSizeRef)
     end
 end
 
@@ -205,9 +243,12 @@ local function StyleRuntimeButtons(name)
             -- re-inits — audit finding), so the configured icon size and any
             -- later size edits must land here. NEVER GetSize() the button
             -- (rect reads are the secret trap) — track what WE last applied.
-            if b._arcAppliedW ~= rt.cfg.iconW or b._arcAppliedH ~= rt.cfg.iconH then
-                b:SetSize(rt.cfg.iconW, rt.cfg.iconH)
-                b._arcAppliedW, b._arcAppliedH = rt.cfg.iconW, rt.cfg.iconH
+            local dims = rt.slotDims and rt.slotDims[b._arcSlotIndex]
+            local w = dims and dims.w or rt.cfg.iconW
+            local h = dims and dims.h or rt.cfg.iconH
+            if b._arcAppliedW ~= w or b._arcAppliedH ~= h then
+                b:SetSize(w, h)
+                b._arcAppliedW, b._arcAppliedH = w, h
                 resized = true
             end
             StyleGroupButton(b, rt)
@@ -264,12 +305,12 @@ local function BuildRuntime(name, seed)
     -- via StyleRuntimeButtons.
     local cfg = { iconW = seed and seed.iconW or 36, iconH = seed and seed.iconH or 36 }
     local rt = { engines = {}, cfg = cfg, buttons = {} }
-    -- glow packs read W/H through here (engine button sizes are secret)
-    rt.sizeRef = { GetSize = function() return cfg.iconW, cfg.iconH end }
-    -- per-member styles, slot k = k-th member in grid order; prebuild seeds
-    -- them RAW so create-time styling works even when the whole session is
-    -- spent inside an instance
+    -- per-member styles + sizes, slot k = k-th member in grid order; prebuild
+    -- seeds them RAW so create-time styling works even when the whole session
+    -- is spent inside an instance. Glow packs read W/H through per-BUTTON
+    -- refs (see StyleGroupButton) — engine button rects are secret.
     rt.slotStyles = seed and seed.slotStyles or {}
+    rt.slotDims = seed and seed.slotDims or {}
 
     local WireAuraButton = ns.AuraIcons and ns.AuraIcons.WireAuraButton
 
@@ -299,8 +340,11 @@ local function BuildRuntime(name, seed)
                 maxFrameCount = (unit == "target") and 2 or 1,
                 initializeFrame = function(b)
                     if WireAuraButton then WireAuraButton(b) end
-                    b:SetSize(cfg.iconW, cfg.iconH)
-                    b._arcAppliedW, b._arcAppliedH = cfg.iconW, cfg.iconH
+                    local dims = rt.slotDims and rt.slotDims[k]
+                    local w = dims and dims.w or cfg.iconW
+                    local h = dims and dims.h or cfg.iconH
+                    b:SetSize(w, h)
+                    b._arcAppliedW, b._arcAppliedH = w, h
                     b._arcSlotIndex = k
                     b:EnableMouse(false)
                     if not b._arcGroupCollected then
@@ -309,7 +353,7 @@ local function BuildRuntime(name, seed)
                     end
                     StyleGroupButton(b, rt)
                 end,
-                candidateFilters = { includeSpellIDs = {} },  -- SyncAll assigns
+                candidateFilters = { includeSpellIDs = ParkMap() },  -- parked until SyncAll assigns
                 layout = {
                     elementSpacingX = 2, elementSpacingY = 2, -- pre-PTR7 keys
                     elementSpacing = 2, lineSpacing = 2,      -- PTR7 keys
@@ -332,6 +376,20 @@ end
 -- LAYOUT + ANCHORING (from the group's OWN settings — Grid Settings applies)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- The group's TRUE slot size (holder parity): "Icon Size" is a SCALE
+-- (iconSize/36) over the base width/height. ns.CDMGroups.GetSlotDimensions
+-- is the one authority; the same math is inlined for safety. Reading the
+-- raw keys as pixel sizes was the 2026-09-06 "aura group icons resize when
+-- the panel closes" bug — every non-36 group flipped to the wrong size.
+local function SlotDims(layout)
+    if ns.CDMGroups and ns.CDMGroups.GetSlotDimensions then
+        return ns.CDMGroups.GetSlotDimensions(layout)
+    end
+    local scale = (layout.iconSize or 36) / 36
+    return math.floor((layout.iconWidth or 36) * scale + 0.5),
+        math.floor((layout.iconHeight or 36) * scale + 0.5)
+end
+
 local function ApplyEngineLayout(name, group)
     local rt = runtimes[name]
     if not rt then return end
@@ -340,8 +398,7 @@ local function ApplyEngineLayout(name, group)
     local spacing = layout.spacingX or layout.spacing or 2
     local spacingY = layout.spacingY or layout.spacing or 2
     local perRow = layout.gridCols or 4
-    local iconW = layout.iconWidth or layout.iconSize or 36
-    local iconH = layout.iconHeight or layout.iconSize or 36
+    local iconW, iconH = SlotDims(layout)
     -- PIN RESOLUTION from the group's Alignment (the SAME shape-aware control
     -- normal groups use) + Row Growth. Alignment values pin their own axis:
     --   left/right/center (horizontal shapes)  -> horizontal pin
@@ -442,12 +499,20 @@ local function ApplyEngineLayout(name, group)
     if A and B then
         B:ClearAllPoints()
         -- TARGET (debuff) row placement:
-        --   "newline" (or centered growth, where an edge-chain would sit
-        --   off-center) -> its own line past the player row, h-aligned
-        --   like the pin; default -> continue the player row edge-to-edge.
+        --   "newline" -> its own line past the player row, h-aligned like
+        --   the pin; default -> continue the player row edge-to-edge (the
+        --   lab-proven ONE CONTIGUOUS ROW: the buff container self-resizes
+        --   as auras come/go and the chain slides the debuff row with it).
+        -- SINGLE-ROW groups chain even when CENTERED (Arc's call, 2026-09-06:
+        -- buffs and debuffs share the row under dynamic, exactly like the
+        -- panel grid) - the pin centers the BUFF container and the row
+        -- extends right of it, a drift accepted over splitting the row.
+        -- Centered VERTICAL/MULTI grids keep the own-line placement (a
+        -- horizontal chain makes no sense on a column).
         -- Chaining uses TOP/BOTTOM edges only: an EMPTY engine container has
         -- ~zero height, side MIDPOINTS drift to the row top (lab finding).
-        local newline = (al.debuffRow == "newline") or hMode == "CENTER"
+        local newline = (al.debuffRow == "newline")
+            or (hMode == "CENTER" and shape ~= "horizontal")
         if newline then
             if vMode == "BOTTOM" then
                 B:SetPoint("BOTTOM" .. hPart, A, "TOP" .. hPart, 0, spacingY)
@@ -533,6 +598,26 @@ local function AssignSlots(name)
             rt.slotStyles[k] = arcID and ns.ArcAuras.GetCachedSettings(arcID) or nil
         end
     end
+    -- per-member SIZES (holder parity — mirrors SetIconSize's member loop):
+    -- the group slot size, overridden when the icon opts out of group scale:
+    -- (width/height or slot) * scale
+    rt.slotDims = rt.slotDims or {}
+    for k = 1, MEMBER_SLOTS do
+        local arcID = members[k]
+        local dims = nil
+        if arcID then
+            local w, h = rt.cfg.iconW, rt.cfg.iconH
+            local icfg = ns.CDMEnhance and ns.CDMEnhance.GetEffectiveIconSettings
+                and ns.CDMEnhance.GetEffectiveIconSettings(arcID)
+            if icfg and icfg.useGroupScale == false then
+                local scale = icfg.scale or 1.0
+                w = (icfg.width or w) * scale
+                h = (icfg.height or h) * scale
+            end
+            dims = { w = w, h = h }
+        end
+        rt.slotDims[k] = dims
+    end
     if InCombatLockdown() then
         pendingSync = true   -- filter edits queue to regen (slots convention)
         return
@@ -542,7 +627,7 @@ local function AssignSlots(name)
             for k = 1, MEMBER_SLOTS do
                 local arcID = members[k]
                 c:SetAuraGroupCandidateFilters("arcSlot" .. k,
-                    { includeSpellIDs = arcID and MemberMapFor(arcID, unit) or {} })
+                    { includeSpellIDs = arcID and MemberMapFor(arcID, unit) or ParkMap() })
             end
         end
     end
@@ -572,7 +657,7 @@ function AG.SyncAll()
             for _, c in pairs(rt.engines) do
                 if not InCombatLockdown() and c.SetAuraGroupCandidateFilters then
                     for k = 1, MEMBER_SLOTS do
-                        c:SetAuraGroupCandidateFilters("arcSlot" .. k, { includeSpellIDs = {} })
+                        c:SetAuraGroupCandidateFilters("arcSlot" .. k, { includeSpellIDs = ParkMap() })
                     end
                 end
                 c:Hide()
@@ -624,8 +709,7 @@ local function PrebuildSavedGroups()
                 local s = seeds[gname]
                 if not s or (preferred and not s.preferred) then
                     s = { preferred = preferred or nil }
-                    s.iconW = ld.iconWidth or ld.iconSize or 36
-                    s.iconH = ld.iconHeight or ld.iconSize or 36
+                    s.iconW, s.iconH = SlotDims(ld)
                     -- ALL members in grid order -> per-SLOT styles (sparse
                     -- entries share the merged-settings key shape;
                     -- StyleActiveButton defaults everything absent; the full
@@ -649,15 +733,24 @@ local function PrebuildSavedGroups()
                             if a.key ~= b.key then return a.key < b.key end
                             return a.id < b.id
                         end)
-                        local slotStyles = {}
+                        local slotStyles, slotDims = {}, {}
                         for k, r in ipairs(rows) do
                             if k > MEMBER_SLOTS then break end
                             local raw = type(iset) == "table" and iset[r.id]
                             if type(raw) == "table" and next(raw) ~= nil then
                                 slotStyles[k] = CopyTable(raw)
+                                -- per-icon size opt-out, same math as AssignSlots
+                                if raw.useGroupScale == false then
+                                    local sc = raw.scale or 1.0
+                                    slotDims[k] = {
+                                        w = (raw.width or s.iconW) * sc,
+                                        h = (raw.height or s.iconH) * sc,
+                                    }
+                                end
                             end
                         end
                         if next(slotStyles) ~= nil then s.slotStyles = slotStyles end
+                        if next(slotDims) ~= nil then s.slotDims = slotDims end
                     end
                     seeds[gname] = s
                 end
@@ -684,10 +777,8 @@ local function PrebuildSavedGroups()
             if type(layoutSet) == "table" then
                 for gname, ld in pairs(layoutSet) do
                     if type(ld) == "table" and ld.groupType == "aura" and not seeds[gname] then
-                        seeds[gname] = {
-                            iconW = ld.iconWidth or ld.iconSize or 36,
-                            iconH = ld.iconHeight or ld.iconSize or 36,
-                        }
+                        local w, h = SlotDims(ld)
+                        seeds[gname] = { iconW = w, iconH = h }
                     end
                 end
             end
@@ -759,18 +850,30 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- CONTAINER REPAIR (12.1 engine bug -- full write-up in ns.CDMShared).
--- Aura GROUPS use AddAuraGroup rather than AddAuraSlot, so there are no
--- per-slot candidate filters to re-push here: the group carries its own filter
--- from creation. Cycling the container is therefore the ONLY repair available,
--- and it is the one that matters, since the reported symptom is the container
--- being bricked outright by a vehicle or cinematic.
+-- Since the per-member-slot rework (v2) every container carries TEN engine
+-- groups with per-group candidate filters, so the verified two-part repair
+-- applies in full: (1) cycle the container (SetEnabled false->true — the
+-- vehicle/cinematic/encounter-end filter break fails OPEN, which is how a
+-- whole row of identical copies appears: 10 filterless slots each showing
+-- the same arbitrary aura, the Maitecky screenshot), then (2) re-push every
+-- slot's believed-correct filter. SetAuraGroupCandidateFilters is data-only
+-- and legal in ANY context (combat included — the entomb case is mid-pull),
+-- so the re-push must NOT ride AssignSlots' combat-deferring path.
 function ns.AuraIconGroups.RepairContainers()
     local Sh = ns.CDMShared
     if not (Sh and Sh.RepairAuraContainer) then return end
-    for _, rt in pairs(runtimes) do
+    for name, rt in pairs(runtimes) do
         if rt and rt.engines then
-            for _, c in pairs(rt.engines) do
+            local members = AG.MembersOf(name)
+            for unit, c in pairs(rt.engines) do
                 Sh.RepairAuraContainer(c)
+                if c.SetAuraGroupCandidateFilters then
+                    for k = 1, MEMBER_SLOTS do
+                        local arcID = members[k]
+                        c:SetAuraGroupCandidateFilters("arcSlot" .. k,
+                            { includeSpellIDs = arcID and MemberMapFor(arcID, unit) or ParkMap() })
+                    end
+                end
             end
         end
     end

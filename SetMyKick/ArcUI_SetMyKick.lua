@@ -170,6 +170,7 @@ local eventFrame
 local slashRegistered = false
 local myName             -- our character name, cached while readable (UnitName is secret inside M+)
 local smartOpenExpire = 0  -- GetTime() until which Smart Open watches party chat
+local ActivateRuntime, DeactivateRuntime  -- defined at the bottom; forward-declared for the popup's master toggle
 
 -- Cache our own name while it is readable. UnitName("player") is secret inside instances,
 -- so we grab it on login / zoning and reuse that string to recognize our own chat echo.
@@ -670,7 +671,7 @@ local function CreateUI()
 	EnsureDB()
 
 	frame = CreateFrame("Frame", "ArcUI_SetMyKickFrame", UIParent, "BackdropTemplate")
-	frame:SetSize(300, 476)
+	frame:SetSize(300, 500)
 	frame:SetFrameStrata("DIALOG")
 	frame:SetToplevel(true)
 	frame:SetClampedToScreen(true)
@@ -697,7 +698,7 @@ local function CreateUI()
 
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	title:SetPoint("TOP", 0, -16)
-	title:SetText("Kick Assist")
+	title:SetText("ArcUI Kick Assist")
 
 	local instr = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	instr:SetPoint("TOP", title, "BOTTOM", 0, -6)
@@ -746,25 +747,41 @@ local function CreateUI()
 	end)
 	frame.noneButton = none
 
-	frame.readyCB = MakeCheck(frame, "Show on ready check (in Mythic+)", 22, -196,
+	-- Master switch, same account-wide flag as the options tab. Turning it OFF here
+	-- keeps THIS window open (so a mis-click can be undone on the spot) but stops the
+	-- runtime, so no more ready-check popups/announces until it is re-enabled.
+	frame.enableCB = MakeCheck(frame, "Enable Kick Assist", 22, -196,
+		function() return GDB.enabled end,
+		function(v)
+			GDB.enabled = v
+			if v then
+				ActivateRuntime()
+			else
+				-- DeactivateRuntime would hide this window; unhook by hand instead.
+				if eventFrame then eventFrame:UnregisterAllEvents() end
+				if alertFrame then alertFrame:UnregisterAllEvents() end
+			end
+		end)
+
+	frame.readyCB = MakeCheck(frame, "Show on ready check (in Mythic+)", 22, -220,
 		function() return DB.showOnReadyCheck end,
 		function(v) DB.showOnReadyCheck = v end)
 
-	frame.smartCB = MakeCheck(frame, "Smart open (only on a marker clash)", 22, -220,
+	frame.smartCB = MakeCheck(frame, "Smart open (only on a marker clash)", 22, -244,
 		function() return DB.smartOpen end,
 		function(v) DB.smartOpen = v end)
 
-	frame.announceCB = MakeCheck(frame, "Announce on ready check", 22, -244,
+	frame.announceCB = MakeCheck(frame, "Announce on ready check", 22, -268,
 		function() return DB.announceOnReadyCheck end,
 		function(v) DB.announceOnReadyCheck = v end)
 
 	local msgLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	msgLabel:SetPoint("TOPLEFT", 22, -274)
+	msgLabel:SetPoint("TOPLEFT", 22, -298)
 	msgLabel:SetText("Message (%MARKER% = your icon):")
 
 	local msgBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
 	msgBox:SetSize(246, 20)
-	msgBox:SetPoint("TOPLEFT", 28, -292)
+	msgBox:SetPoint("TOPLEFT", 28, -316)
 	msgBox:SetAutoFocus(false)
 	msgBox:SetText(DB.message or DEFAULTS.message)
 	msgBox:SetScript("OnEscapePressed", msgBox.ClearFocus)
@@ -777,7 +794,7 @@ local function CreateUI()
 
 	local announce = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	announce:SetSize(170, 26)
-	announce:SetPoint("TOP", 0, -324)
+	announce:SetPoint("TOP", 0, -348)
 	announce:SetText("Announce to Group")
 	announce:SetScript("OnClick", function()
 		DB.message = msgBox:GetText()
@@ -786,13 +803,13 @@ local function CreateUI()
 
 	local macroBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	macroBtn:SetSize(170, 24)
-	macroBtn:SetPoint("TOP", 0, -358)
+	macroBtn:SetPoint("TOP", 0, -382)
 	macroBtn:SetText("Edit Macro...")
 	macroBtn:SetScript("OnClick", function() SMK.ShowMacroEditor() end)
 
 	-- Drag-to-bars: two ready macros new users can drop straight onto their bars.
 	local dragHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	dragHeader:SetPoint("TOP", 0, -384)
+	dragHeader:SetPoint("TOP", 0, -408)
 	dragHeader:SetText("New? Drag a macro to your action bar:")
 
 	frame.dragIcons = {}
@@ -808,7 +825,7 @@ local function CreateUI()
 	local function MakeDragBox(xOff, labelText, desc, key, pickup)
 		local box = CreateFrame("Button", nil, frame, "BackdropTemplate")
 		box:SetSize(40, 40)
-		box:SetPoint("TOP", xOff, -402)
+		box:SetPoint("TOP", xOff, -426)
 		box:RegisterForDrag("LeftButton")
 		box:RegisterForClicks("LeftButtonUp")
 		box:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
@@ -863,6 +880,7 @@ function SMK.ShowUI(fromEvent)
 	end
 	CreateUI()
 	UpdateSelection()
+	frame.enableCB:Refresh()
 	frame.readyCB:Refresh()
 	frame.smartCB:Refresh()
 	frame.announceCB:Refresh()
@@ -1160,7 +1178,7 @@ end
 -- Runtime activation (only while enabled and not dormant)
 --------------------------------------------------------------------------------
 
-local function ActivateRuntime()
+function ActivateRuntime()
 	if not eventFrame then
 		eventFrame = CreateFrame("Frame")
 		eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
@@ -1203,10 +1221,20 @@ local function ActivateRuntime()
 	SyncInterruptAlert()
 end
 
-local function DeactivateRuntime()
+function DeactivateRuntime()
 	if eventFrame then eventFrame:UnregisterAllEvents() end
 	if alertFrame then alertFrame:UnregisterAllEvents() end
 	if frame then frame:Hide() end
+end
+
+-- Settings > Modules master switch: drives the SAME account-wide flag as the
+-- tab toggle and the popup checkbox (one flag, never two). While the
+-- standalone owns the feature the flag is still saved for later.
+function SMK.SetEnabled(v)
+	if EnsureDB() == nil then return end
+	GDB.enabled = v and true or false
+	if IsStandaloneLoaded() then return end
+	if GDB.enabled then ActivateRuntime() else DeactivateRuntime() end
 end
 
 --------------------------------------------------------------------------------

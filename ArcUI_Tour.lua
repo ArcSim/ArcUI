@@ -222,6 +222,107 @@ local TOURS = {
             text  = "The same green tile is here in Buffs/Debuffs.\n\nEnter a spell ID and it joins the aura catalog, so the buttons you already use will build a duration bar, a stack bar or a texture for auras the Cooldown Manager never sees.",
         },
     },
+
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- LOOT PLANNER (the ArcLootPlanner twin): sims, plans, coin protection.
+    -- SHIPS WITH 3.8.7 (key = the toc base version, so the once-per-release
+    -- offer fires when the options panel opens). Callouts are auto-positioned
+    -- until hand placement lands: run "/arctour dev", drag each box, then
+    -- "/arctour dump" and paste the offsets in.
+    -- ═══════════════════════════════════════════════════════════════════════
+    ["3.8.7"] = {
+        label = "Loot Planner",
+        -- the twin goes dormant when the standalone Arc Loot Planner addon is
+        -- installed, and this tab is a stub then: no tour in that case
+        check = function()
+            return ns.GetBonusRollOptionsTable ~= nil and not ns.BonusRollDormant
+        end,
+        -- teardown for everything the steps switch on: the Overview's sample
+        -- values go away and the Adventure Guide closes again if WE opened it
+        cleanup = function()
+            local h = ns.BonusRollTour
+            if h then
+                if h.SetDemo then h.SetDemo(false) end
+                if h.CloseGuide then h.CloseGuide() end
+            end
+        end,
+        {
+            tab   = { "bonusroll" },
+            find  = "Enable the Loot Planner module",
+            unionPanel = true,
+            title = "Meet the Loot Planner",
+            text  = "Your Raidbots sims, in the game: every boss and item gets a real DPS value, bonus rolls get planned instead of guessed, and your coins get protected.\n\nEverything lives under this tab, and this switch is the master for all of it. It comes enabled; turn it off here if it is not for you.",
+        },
+        {
+            tab   = { "bonusroll", "sims" },
+            find  = "Show me how (screenshots)",
+            grow  = 1,
+            alsoFind = "Sim Import",
+            title = "Feed it your sims",
+            text  = "Run a Raidbots Droptimizer and paste it in, three steps, no extra tools. This button walks you through it with screenshots.\n\nIf you use the WoWUtils addon, import is one click instead. Sims are stored per spec.",
+        },
+        {
+            tab   = { "bonusroll", "overview" },
+            -- sample EVs while the tour is around, so a fresh install still
+            -- shows a populated list (cleared by the tour's cleanup)
+            pre   = function()
+                local h = ns.BonusRollTour
+                if h and h.SetDemo then h.SetDemo(true) end
+                return true
+            end,
+            find  = "Difficulty",
+            grow  = 1,
+            alsoFind = "Bonus Roll Overview",
+            title = "Plan your coins",
+            text  = "Every boss with its expected value per coin, the best coin highlighted, and expandable gear lists with drop chances.\n\nClick a boss's coin to plan it for the week. Mythic+ plans whole dungeons, and every coin you spend is recorded in History automatically.\n\nNo sim yet? The numbers on screen right now are samples.",
+        },
+        {
+            tab   = { "bonusroll", "dropsview" },
+            pre   = function()
+                local h = ns.BonusRollTour
+                if h and h.SetDemo then h.SetDemo(true) end
+                return true
+            end,
+            find  = "Difficulty",
+            grow  = 1,
+            alsoFind = "Drops Overview",
+            title = "And your drops",
+            text  = "The same pricing with no coin math: every boss and dungeon valued from your drops sim, with your Top 5 upgrades ranked in gold everywhere they appear.\n\nNo drops sim yet? These numbers are samples as well.",
+        },
+        {
+            tab   = { "bonusroll", "journal" },
+            -- show the real thing at normal lighting: the guide opens on a
+            -- boss's LOOT page (planned boss, else best coin EV, else the
+            -- first boss) and every mark the addon adds gets its own ring -
+            -- the guide itself is never dimmed. OpenGuide remembers whether
+            -- the journal was already open; cleanup closes only what the
+            -- tour opened.
+            pre   = function()
+                local h = ns.BonusRollTour
+                return h and h.OpenGuide and h.OpenGuide()
+            end,
+            delay = 0.6,    -- boss select + loot list are async on a cold
+                            -- journal: give the marks time to exist
+            -- ONE ring, on the info bar: ringing every coin and value line
+            -- read as clutter, so the bar anchors the step and the text
+            -- points at the rest
+            rings = function()
+                local h = ns.BonusRollTour
+                local strip = h and h.StripFrame and h.StripFrame()
+                return strip and { strip } or nil
+            end,
+            title = "It lives in the Adventure Guide",
+            text  = "The circled bar is the Loot Planner inside your guide: rolls available, planned bosses and the gear scan.\n\nBelow it, every boss wears a coin with its roll value - click one right there to plan it - and the loot list carries value lines and owned check marks.\n\nEvery overlay has its switch on the Overlays tab, and need or greed roll windows get a value badge too.",
+        },
+        {
+            tab   = { "bonusroll", "protection" },
+            find  = "Enable bonus roll protection",
+            grow  = 1,
+            alsoFind = "Protection",
+            title = "Never waste a coin",
+            text  = "With a plan set, the roll button on every other boss gets a lock cover, and Pass is guarded on your planned bosses.\n\nOne click unlocks, always. The addon never rolls or passes for you.",
+        },
+    },
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -356,6 +457,19 @@ local function BuildSpot()
     local a = ag:CreateAnimation("Alpha")
     a:SetFromAlpha(1); a:SetToAlpha(0.45); a:SetDuration(0.85)
     s._pulse = ag
+
+    -- secondary ring for alsoFind targets (the sub-tab chip). A child of the
+    -- main ring so every Hide path covers it; anchored in UIParent coords.
+    local e = CreateFrame("Frame", nil, s, "BackdropTemplate")
+    e:SetFrameLevel(11)
+    e:EnableMouse(false)
+    e:SetBackdrop({ edgeFile = WHITE, edgeSize = 2 })
+    e:SetBackdropBorderColor(ARC[1], ARC[2], ARC[3], 1)
+    e.glow = e:CreateTexture(nil, "BACKGROUND")
+    e.glow:SetAllPoints()
+    e.glow:SetColorTexture(ARC[1], ARC[2], ARC[3], 0.10)
+    e:Hide()
+    s.extra = e
 
     s.dim = d
     d:Hide(); s:Hide()
@@ -630,6 +744,20 @@ local function RaiseTarget(f)
     f:SetFrameLevel(5)
 end
 
+-- Raise a LIST of frames (step.raise) above the dimmer WITHOUT making them
+-- part of the hole: the Loot Planner's guide step dims the whole Adventure
+-- Journal and lifts only the addon's own marks, so exactly OUR additions
+-- glow. Re-raising an already-raised frame is safe: LowerTarget restores in
+-- reverse, so the FIRST (true) record is applied last.
+local function RaiseList(list)
+    if type(list) ~= "table" then return end
+    for _i, fr in ipairs(list) do
+        if type(fr) == "table" and fr.SetFrameStrata and fr.IsShown and fr:IsShown() then
+            RaiseTarget(fr)
+        end
+    end
+end
+
 -- Click a control's own button so a dropdown shows its choices. Telling someone
 -- "you can pick a different scope here" lands far better with the list open in
 -- front of them than with a closed box. Best effort by design: if the widget has
@@ -686,6 +814,76 @@ local function ClampToPanel(r)
     local tt = math.min(r.b + r.h, panelRect.b + panelRect.h)
     if rr <= l or tt <= b then return r end
     return { l = l, b = b, w = rr - l, h = tt - b }
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RINGS MODE (step.rings): no dimmer, no hole. The step names the frames an
+-- addon added to an otherwise untouched Blizzard window (the Loot Planner's
+-- Adventure Guide marks) and each one is encircled in place - the window
+-- keeps its normal lighting. A list entry is a frame/region, or an ARRAY of
+-- regions that share one ring (a coin and the value text under it).
+-- ═══════════════════════════════════════════════════════════════════════════
+local ringPool = {}
+
+local function HideRings()
+    for _i, r in ipairs(ringPool) do r._pulse:Stop(); r:Hide() end
+end
+
+local function GetRing(i)
+    local r = ringPool[i]
+    if not r then
+        r = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        r:SetFrameStrata("TOOLTIP")
+        r:SetFrameLevel(12)
+        r:EnableMouse(false)
+        r:SetBackdrop({ edgeFile = WHITE, edgeSize = 2 })
+        r:SetBackdropBorderColor(ARC[1], ARC[2], ARC[3], 1)
+        local ag = r:CreateAnimationGroup()
+        ag:SetLooping("BOUNCE")
+        local a = ag:CreateAnimation("Alpha")
+        a:SetFromAlpha(1); a:SetToAlpha(0.45); a:SetDuration(0.85)
+        r._pulse = ag
+        ringPool[i] = r
+    end
+    return r
+end
+
+-- IsVisible, not IsShown: markers ride pooled Blizzard rows, and a hidden
+-- row's children still answer IsShown true from their stale position.
+local function VisibleRect(reg)
+    if type(reg) ~= "table" or not reg.GetLeft then return nil end
+    if reg.IsVisible and not reg:IsVisible() then return nil end
+    return RectOf(reg)
+end
+
+-- Circle every entry; returns the union of all rects (nil when none showed).
+local function ApplyRings(list, pad)
+    HideRings()
+    if type(list) ~= "table" then return nil end
+    local union
+    local n = 0
+    for _i, entry in ipairs(list) do
+        local rc
+        if type(entry) == "table" and entry.GetLeft then
+            rc = VisibleRect(entry)
+        elseif type(entry) == "table" then
+            for _j, reg in ipairs(entry) do
+                rc = UnionRect(rc, VisibleRect(reg))
+            end
+        end
+        if rc then
+            n = n + 1
+            local r = GetRing(n)
+            r:ClearAllPoints()
+            r:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", rc.l - pad, rc.b - pad)
+            r:SetSize(rc.w + pad * 2, rc.h + pad * 2)
+            r:SetAlpha(1)
+            r:Show()
+            r._pulse:Play()
+            union = UnionRect(union, rc)
+        end
+    end
+    return union
 end
 
 -- Does box (x,y,w,h) intersect rect r?
@@ -781,13 +979,15 @@ local function ShowStep()
     end
 
     LowerTarget()   -- drop anything the previous step lifted
+    HideRings()     -- and any per-element rings it drew
 
     -- put the panel into the state this step describes (select a spell, etc)
     -- BEFORE the redraw below, so the controls it talks about actually exist
     if step.pre then step.pre() end
 
     -- one frame for AceConfig to rebuild the tab before we go looking in it
-    C_Timer.After(0.06, function()
+    -- (a step can ask for longer via `delay`, e.g. to wait out async data)
+    C_Timer.After(step.delay or 0.06, function()
         if not steps then return end          -- stopped while we waited
         -- centre BEFORE measuring: every control rect below is relative to it
         CentrePanel()
@@ -815,6 +1015,7 @@ local function ShowStep()
                 end
             end
         end
+        if step.raise then RaiseList(step.raise()) end
         if not target and step.find then
             target = FindByLabel(step.find)
             -- open BEFORE growing: the button belongs to the control itself,
@@ -830,6 +1031,23 @@ local function ShowStep()
         -- unionPanel: light the control AND everything it governs. Ringing the
         -- Pings TAB alone says where to click but not what you get.
         if rect and step.unionPanel then rect = UnionRect(rect, panelRect) end
+        -- alsoFind: a SECONDARY highlight, deliberately not a bigger hole.
+        -- The classic use is the step's sub-tab chip: union-ing it into the
+        -- hole swallows the whole tab row (every chip shares that horizontal
+        -- band), so instead the named control is raised above the dimmer and
+        -- ringed on its own -- it lights up while its neighbours stay dark.
+        local extraRect
+        if step.alsoFind then
+            local extras = type(step.alsoFind) == "table" and step.alsoFind or { step.alsoFind }
+            for _i, lbl in ipairs(extras) do
+                local ef = FindByLabel(lbl)
+                local er = RectOf(ef)
+                if er then
+                    RaiseTarget(ef)
+                    extraRect = UnionRect(extraRect, er)
+                end
+            end
+        end
         rect = rect or panelRect or RectOf(PanelFrame())
         local pad = target and 4 or 0
 
@@ -863,6 +1081,25 @@ local function ShowStep()
         -- placement below, which measures GetHeight().
         f:SetHeight(math.max(150, TEXT_TOP + (f.body:GetStringHeight() or 0) + TEXT_BOTTOM))
 
+        -- rings mode replaces the whole spotlight: normal lighting, one ring
+        -- per addon-added element, callout placed beside the lot
+        if step.rings then
+            local union = ApplyRings(step.rings(), 3)
+            s._pulse:Stop(); s:Hide(); s.dim:Hide()
+            PlaceCallout(union, union ~= nil)
+            f:Show(); f:Raise()
+            lastRect = union or lastRect
+            -- async content (the guide's loot list) fills in late: one more
+            -- collection pass once it has had time to land
+            local me = step
+            C_Timer.After(0.5, function()
+                if steps and steps[index] == me then
+                    lastRect = ApplyRings(me.rings(), 3) or lastRect
+                end
+            end)
+            return
+        end
+
         if not rect then                       -- panel not open yet; text only
             s._pulse:Stop(); s:Hide(); s.dim:Hide()
             PlaceCallout(nil, false)
@@ -875,12 +1112,23 @@ local function ShowStep()
         local from = lastRect
         s._pulse:Stop()
         s:SetAlpha(1)
+        s.extra:Hide()                    -- re-shown on arrival if this step has one
         s.dim:Show(); s:Show()
         f:Show(); f:Raise()
 
         Glide(from, rect, pad, function()
             if not steps then return end
             s._pulse:Play()
+            -- second raise pass at arrival: async lists (the guide's loot)
+            -- may have grown new marks since the first collection
+            if step.raise then RaiseList(step.raise()) end
+            if extraRect then
+                local ep = 3
+                s.extra:ClearAllPoints()
+                s.extra:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", extraRect.l - ep, extraRect.b - ep)
+                s.extra:SetSize(extraRect.w + ep * 2, extraRect.h + ep * 2)
+                s.extra:Show()
+            end
         end)
         PlaceCallout(rect, target ~= nil)
         lastRect = rect
@@ -897,7 +1145,9 @@ function T.Next()
         local nextKey = steps.chain
         if nextKey and TOURS[nextKey] then
             local finished = running
+            local cl = steps.cleanup     -- run the OLD tour's cleanup once handed off
             if T.Start(nextKey) then
+                if cl then cl() end
                 local db = GetDB()
                 if db and finished then db.seen[finished] = true end
                 return
@@ -915,8 +1165,10 @@ end
 function T.SkipToChain()
     if not steps then return end
     local nextKey, finished = steps.chain, running
+    local cl = steps.cleanup             -- run the OLD tour's cleanup once handed off
     if not (nextKey and TOURS[nextKey]) then T.Stop(true) return end
     if T.Start(nextKey) then
+        if cl then cl() end
         local db = GetDB()
         if db and finished then db.seen[finished] = true end
     else
@@ -933,12 +1185,15 @@ end
 -- markSeen=false is used by the "replay" path so testing never burns the flag
 function T.Stop(markSeen)
     local ver = running
+    local cl = steps and steps.cleanup   -- the tour's own teardown (demo modes etc)
     steps, index, running, lastRect, panelRect = nil, 0, nil, nil, nil
     tweener:SetScript("OnUpdate", nil)     -- kill an in-flight glide
     LowerTarget()
+    HideRings()
     if frame then frame:Hide() end
     if spot then spot._pulse:Stop(); spot:Hide(); spot.dim:Hide() end
     RestorePanel()
+    if cl then cl() end
     if markSeen and ver then
         local db = GetDB()
         if db then db.seen[ver] = true end
@@ -957,7 +1212,7 @@ local function UsableSteps(list)
         if not s.check or s.check() then usable[#usable + 1] = s end
     end
     if #usable == 0 then return nil end
-    usable.chain, usable.label = list.chain, list.label
+    usable.chain, usable.label, usable.cleanup = list.chain, list.label, list.cleanup
     return usable
 end
 

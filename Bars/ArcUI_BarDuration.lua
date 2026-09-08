@@ -1337,6 +1337,13 @@ function BD.Attach(barFrame, fs, cooldownID, trackedSpellID, unit, opts)
         fillWidthFrac  = band.widthFrac,
         fillLevelBoost = band.boost,
         lockColor      = true,
+        -- sub-opts do NOT inherit the parent's flatFill: without this the
+        -- band layers carried the USER texture mapped across their own
+        -- (fractional) fills - per-band restarting gradient ramps, double-
+        -- shaded by the MOD slot (Arc's "colors are a bit off" report).
+        -- Steps pass stepKind and duration layers durSide; bands were the
+        -- one naked layer kind.
+        flatFill       = true,
       })
     end
 

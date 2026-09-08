@@ -296,7 +296,7 @@ local function ProcessSlotIntoCache(slot, bindingName)
     elseif actionType == "item" and id and not idIsSecret then
         keybindCache.byItemID[id] = keybindCache.byItemID[id] or formatted
         if GetItemSpell then
-            local _, spellID = GetItemSpell(id)
+            local _, spellID = C_Item.GetItemSpell(id)
             if spellID and not issecretvalue(spellID) then
                 keybindCache.bySpellID[spellID] = keybindCache.bySpellID[spellID] or formatted
             end
@@ -459,7 +459,7 @@ local function RescanAddonButtons()
                         elseif actionType == "item" and id and not idIsSecret then
                             keybindCache.byItemID[id] = keybindCache.byItemID[id] or formatted
                             if GetItemSpell then
-                                local _, spellID = GetItemSpell(id)
+                                local _, spellID = C_Item.GetItemSpell(id)
                                 if spellID and not issecretvalue(spellID) then
                                     keybindCache.bySpellID[spellID] = keybindCache.bySpellID[spellID] or formatted
                                 end
@@ -587,7 +587,7 @@ local function GetKeybindForFrame(frame)
                 return keybindCache.byItemID[numericID]
             end
             if GetItemSpell then
-                local _, spellID = GetItemSpell(numericID)
+                local _, spellID = C_Item.GetItemSpell(numericID)
                 if spellID and not issecretvalue(spellID) and keybindCache.bySpellID[spellID] then
                     return keybindCache.bySpellID[spellID]
                 end

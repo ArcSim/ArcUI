@@ -388,6 +388,54 @@ ns.API.OpenOptions = function()
 end
 
 -- ===================================================================
+-- MODULE MASTER SWITCHES (Settings > Modules)
+-- Peripheral modules can be turned off entirely: runtime gated AND their
+-- options tab hidden until re-enabled here. Account-wide. ONE flag per
+-- module, never two: Kick Assist and Loot Planner route to the master
+-- flags those modules already own; Castbar and Pings use
+-- ns.db.global.moduleToggles (nil = enabled, so current installs keep
+-- everything on).
+-- ===================================================================
+function ns.API.IsModuleEnabled(key)
+  if key == "kickassist" then
+    local g = ns.db and ns.db.global and ns.db.global.setMyKick
+    return not g or g.enabled ~= false
+  end
+  if key == "lootplanner" then
+    -- export absent = the standalone owns it (module file early-returns);
+    -- the tab then shows the dormant notice, so treat as enabled
+    if ns.BonusRollIsEnabled then return ns.BonusRollIsEnabled() and true or false end
+    return true
+  end
+  local t = ns.db and ns.db.global and ns.db.global.moduleToggles
+  return not t or t[key] ~= false
+end
+
+function ns.API.SetModuleEnabled(key, v)
+  v = v and true or false
+  if key == "kickassist" then
+    if ns.SetMyKick and ns.SetMyKick.SetEnabled then ns.SetMyKick.SetEnabled(v) end
+    return
+  end
+  if key == "lootplanner" then
+    if ns.BonusRollSetEnabled then ns.BonusRollSetEnabled(v) end
+    return
+  end
+  if ns.db and ns.db.global then
+    ns.db.global.moduleToggles = ns.db.global.moduleToggles or {}
+    ns.db.global.moduleToggles[key] = v
+  end
+  -- live apply: modules re-evaluate their own gates
+  if key == "castbar" then
+    if ns.Castbar and ns.Castbar.ApplyAppearance then ns.Castbar.ApplyAppearance() end
+    if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then ns.FocusCastbar.ApplyAppearance() end
+    if ns.TargetCastbar and ns.TargetCastbar.ApplyAppearance then ns.TargetCastbar.ApplyAppearance() end
+  elseif key == "pings" then
+    if ns.PingsOnModuleToggled then ns.PingsOnModuleToggled(v) end
+  end
+end
+
+-- ===================================================================
 -- MAIN OPTIONS TABLE
 -- ===================================================================
 local function GetOptionsTable()
@@ -774,6 +822,7 @@ local function GetOptionsTable()
         name        = "Castbar",
         order       = 5,
         childGroups = "tab",
+        hidden      = function() return not ns.API.IsModuleEnabled("castbar") end,
         args        = {
           playerCastbar = (function()
             local tbl = ns.CastbarOptions and ns.CastbarOptions.GetOptionsTable() or {
@@ -816,6 +865,7 @@ local function GetOptionsTable()
         }
         tbl.name  = "Kick Assist"
         tbl.order = 6
+        tbl.hidden = function() return not ns.API.IsModuleEnabled("kickassist") end
         return tbl
       end)(),
 
@@ -827,6 +877,23 @@ local function GetOptionsTable()
         }
         tbl.name  = "Pings"
         tbl.order = 6.5
+        tbl.hidden = function() return not ns.API.IsModuleEnabled("pings") end
+        return tbl
+      end)(),
+
+      bonusroll = (function()
+        -- the module early-returns when the standalone Arc Loot Planner
+        -- addon (or its old Arc Bonus Roll name) is installed, so a missing
+        -- table here means "standalone owns it"
+        local tbl = ns.GetBonusRollOptionsTable and ns.GetBonusRollOptionsTable() or {
+          type = "group",
+          name = "Loot Planner",
+          args = { standalone = { type = "description", order = 1, fontSize = "medium",
+            name = "The standalone Arc Loot Planner addon is installed and active - it owns this feature, and ArcUI's built-in copy is dormant. Configure it with /alp." } }
+        }
+        tbl.name  = "Loot Planner"
+        tbl.order = 6.6
+        tbl.hidden = function() return not ns.API.IsModuleEnabled("lootplanner") end
         return tbl
       end)(),
 
@@ -835,6 +902,44 @@ local function GetOptionsTable()
         name = "Settings",
         order = 9,
         args = {
+          modulesHeader = {
+            type = "header",
+            name = "Modules",
+            order = 0.1,
+          },
+          modulesDesc = {
+            type = "description",
+            order = 0.2,
+            name = "Master switches for ArcUI's side modules. Turning one OFF disables the whole module and hides its tab until you re-enable it here.",
+          },
+          moduleCastbar = {
+            type = "toggle", order = 0.3, width = 0.9,
+            name = "Castbar",
+            desc = "The player, focus, and target castbars. OFF hides all three bars, releases the Blizzard castbar, and hides the Castbar tab.",
+            get = function() return ns.API.IsModuleEnabled("castbar") end,
+            set = function(_, v) ns.API.SetModuleEnabled("castbar", v) end,
+          },
+          moduleKickAssist = {
+            type = "toggle", order = 0.4, width = 0.9,
+            name = "Kick Assist",
+            desc = "The interrupt-marker helper. Same switch as the one on its own tab and in its popup window.",
+            get = function() return ns.API.IsModuleEnabled("kickassist") end,
+            set = function(_, v) ns.API.SetModuleEnabled("kickassist", v) end,
+          },
+          modulePings = {
+            type = "toggle", order = 0.5, width = 0.9,
+            name = "Pings",
+            desc = "The ping feed window and ping keybinds. OFF stops the feed, disables every ping keybind entry, and hides the Pings tab.",
+            get = function() return ns.API.IsModuleEnabled("pings") end,
+            set = function(_, v) ns.API.SetModuleEnabled("pings", v) end,
+          },
+          moduleLootPlanner = {
+            type = "toggle", order = 0.6, width = 0.9,
+            name = "Loot Planner",
+            desc = "The bonus roll planner. Same switch as the one on its own tab. When the standalone Arc Loot Planner addon is installed it owns the feature and this toggle does nothing.",
+            get = function() return ns.API.IsModuleEnabled("lootplanner") end,
+            set = function(_, v) ns.API.SetModuleEnabled("lootplanner", v) end,
+          },
           menuHeader = {
             type = "header",
             name = "Background",

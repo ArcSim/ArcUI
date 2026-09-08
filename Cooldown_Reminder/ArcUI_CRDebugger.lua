@@ -434,13 +434,13 @@ local function StartTrackingItem(itemID)
         trackedItemSlot = nil
     end
     -- Resolve use-spell
-    local _, useSpell = GetItemSpell(itemID)
+    local _, useSpell = C_Item.GetItemSpell(itemID)
     trackedUseSpell = tonumber(useSpell) or nil
     startTime = GetTime()
     wipe(logLines)
     DumpEngineStatus()
 
-    local itemName = GetItemInfo(itemID) or ("item:" .. tostring(itemID))
+    local itemName = C_Item.GetItemInfo(itemID) or ("item:" .. tostring(itemID))
     local slotTag = trackedItemSlot
         and string.format(" [equipped slot %d]", trackedItemSlot)
         or  " [bag item]"

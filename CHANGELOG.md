@@ -1,3 +1,34 @@
+## 3.8.7
+
+### New Features
+
+- **Loot Planner** — A whole new module: your Raidbots sims in the game. Every raid boss and item shows a real DPS value in the Adventure Guide, bonus rolls get planned instead of guessed, coins are protected from accidental rolls, and your roll history is tracked. Plan reminders pop at the vault and when you earn coins, sims and loot pools are saved per spec, and it all lives under one tab with a single master switch. Goes dormant automatically if you run the standalone Arc Loot Planner addon.
+- **Loot Planner Tour** — The first time you open ArcUI's options on this version, a short guided tour offers to walk you through the new Loot Planner: sims, planning, protection, and the Adventure Guide view.
+- **Module Switches** — Settings now opens with a Modules section: master toggles for Castbar, Kick Assist, Pings, and Loot Planner. Turning one off disables the whole module on the spot and hides its tab until you switch it back on.
+- **Transparent Icons** — Setting Custom Icon to 0 (or Show Icon off) hides the icon art while glows, cooldown swipe, and texts keep working - track procs on an invisible icon again, like the old days.
+- **Kick Assist Window** — The ready-check window is now titled ArcUI Kick Assist and carries its own Enable Kick Assist checkbox, so you can switch the whole helper off right from the popup.
+
+### Improvements
+
+- **Honest Aura Alphas** — On aura icons, Aura Active alpha 0 now truly hides everything, and setting it to 0 also sets Inactive alpha to 0 (in combat the game hides aura state from addons, so the two cannot be split at zero - the tooltips now explain this).
+- **Addon Icon** — ArcUI now shows its own icon in the AddOns list, and the minimap button's icon sits centered in its ring.
+- **Future-Proof Item Lookups** — Item icons, keybind detection, and cooldown reminders moved to the current item APIs so deprecated-function errors can't bite.
+
+### Bug Fixes
+
+- **Tooltips After Hiding the UI** — Disabled icon tooltips no longer come back after hiding and re-showing the interface (Alt+Z or cinematics).
+- **Arc Icons After Spec Swap** — Icons created mid-session or after a spec change now respect click-through and tooltip settings immediately, without opening the options panel.
+- **Groups Borrowing Other Specs' Positions** — A new group can no longer silently adopt another spec's stored anchoring from a shared layout set; renaming onto a stored record is guarded too.
+- **Group Columns Growing Back** — Auto-reflow groups no longer regrow a deleted column on reload from a stale saved slot.
+- **Aura Group Sizing** — Aura group icons keep their exact size when the options panel closes, and per-icon size overrides now apply in the live view.
+- **Debuffs in Aura Groups** — Debuff icons added to a dynamic aura group now show up in the live view and share the row with buffs, in grid order.
+- **Duplicate Aura Rows** — Fixed whole rows of identical aura copies appearing after vehicles, cinematics, or encounter ends; the group now self-repairs its filters.
+- **Blizzard Proc Glow Color** — Custom colors on the Blizzard Proc glow now render true on aura icons instead of tinted gold.
+- **Black Box on Invisible Icons** — Aura icons no longer show a black square at Active alpha 0, or a dark backing at partial alpha when the Missing look is hidden.
+- **Segmented Bars Losing Customizations** — Segmented stack bars no longer lose textures and colors outside the options panel, including textures from addons that load late.
+- **Segmented Colors on Custom Aura Bars** — Color Ranges and Per Stack Overrides now render on engine-driven custom aura bars: matching shades, tick marks aligned to the fill, and range boundaries landing on the exact stack.
+- **Custom Bar Spell ID** — Typing a new spell ID for a custom bar no longer errors and reverts to the old ID.
+
 ## 3.8.6.a
 
 ### Bug Fixes

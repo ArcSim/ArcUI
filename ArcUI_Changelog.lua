@@ -29,6 +29,43 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.7",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Loot Planner", desc = "A whole new module: your Raidbots sims in the game. Every raid boss and item shows a real DPS value in the Adventure Guide, bonus rolls get planned instead of guessed, coins are protected from accidental rolls, and your roll history is tracked. Plan reminders pop at the vault and when you earn coins, sims and loot pools are saved per spec, and it all lives under one tab with a single master switch. Goes dormant automatically if you run the standalone Arc Loot Planner addon." },
+          { title = "Loot Planner Tour", desc = "The first time you open ArcUI's options on this version, a short guided tour offers to walk you through the new Loot Planner: sims, planning, protection, and the Adventure Guide view." },
+          { title = "Module Switches", desc = "Settings now opens with a Modules section: master toggles for Castbar, Kick Assist, Pings, and Loot Planner. Turning one off disables the whole module on the spot and hides its tab until you switch it back on." },
+          { title = "Transparent Icons", desc = "Setting Custom Icon to 0 (or Show Icon off) hides the icon art while glows, cooldown swipe, and texts keep working - track procs on an invisible icon again, like the old days." },
+          { title = "Kick Assist Window", desc = "The ready-check window is now titled ArcUI Kick Assist and carries its own Enable Kick Assist checkbox, so you can switch the whole helper off right from the popup." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Honest Aura Alphas", desc = "On aura icons, Aura Active alpha 0 now truly hides everything, and setting it to 0 also sets Inactive alpha to 0 (in combat the game hides aura state from addons, so the two cannot be split at zero - the tooltips now explain this)." },
+          { title = "Addon Icon", desc = "ArcUI now shows its own icon in the AddOns list, and the minimap button's icon sits centered in its ring." },
+          { title = "Future-Proof Item Lookups", desc = "Item icons, keybind detection, and cooldown reminders moved to the current item APIs so deprecated-function errors can't bite." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Tooltips After Hiding the UI", desc = "Disabled icon tooltips no longer come back after hiding and re-showing the interface (Alt+Z or cinematics)." },
+          { title = "Arc Icons After Spec Swap", desc = "Icons created mid-session or after a spec change now respect click-through and tooltip settings immediately, without opening the options panel." },
+          { title = "Groups Borrowing Other Specs' Positions", desc = "A new group can no longer silently adopt another spec's stored anchoring from a shared layout set; renaming onto a stored record is guarded too." },
+          { title = "Group Columns Growing Back", desc = "Auto-reflow groups no longer regrow a deleted column on reload from a stale saved slot." },
+          { title = "Aura Group Sizing", desc = "Aura group icons keep their exact size when the options panel closes, and per-icon size overrides now apply in the live view." },
+          { title = "Debuffs in Aura Groups", desc = "Debuff icons added to a dynamic aura group now show up in the live view and share the row with buffs, in grid order." },
+          { title = "Duplicate Aura Rows", desc = "Fixed whole rows of identical aura copies appearing after vehicles, cinematics, or encounter ends; the group now self-repairs its filters." },
+          { title = "Blizzard Proc Glow Color", desc = "Custom colors on the Blizzard Proc glow now render true on aura icons instead of tinted gold." },
+          { title = "Black Box on Invisible Icons", desc = "Aura icons no longer show a black square at Active alpha 0, or a dark backing at partial alpha when the Missing look is hidden." },
+          { title = "Segmented Bars Losing Customizations", desc = "Segmented stack bars no longer lose textures and colors outside the options panel, including textures from addons that load late." },
+          { title = "Segmented Colors on Custom Aura Bars", desc = "Color Ranges and Per Stack Overrides now render on engine-driven custom aura bars: matching shades, tick marks aligned to the fill, and range boundaries landing on the exact stack." },
+          { title = "Custom Bar Spell ID", desc = "Typing a new spell ID for a custom bar no longer errors and reverts to the old ID." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.6.a",
     sections = {
       {

@@ -3506,7 +3506,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     showIcon = {
       type = "toggle", name = "Show Icon",
-      desc = "Show the icon. Turn OFF to hide the whole icon (artwork, cooldown swipe and flash) and keep only the stack and duration text visible.",
+      desc = "Show the icon artwork. Turn OFF to make the icon TRANSPARENT: the art disappears while the cooldown swipe, border, texts and glows keep working (same as entering 0 in Custom Icon). Stack proc trackers on an invisible icon.",
       get = function()
         return GetAuraBoolSetting(function(c) return not c.forceHideIcon end, function() local c = GetAuraCfg(); return not (c and c.forceHideIcon) end)
       end,
@@ -3537,7 +3537,7 @@ function ns.GetCDMAuraIconsOptionsTable()
       type = "input",
       dialogControl = "ArcUI_EditBox",
       name = "Custom Icon",
-      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty / 0 to use the default icon.",
+      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty to use the default icon. Enter 0 for a TRANSPARENT icon: no art, while swipe, texts and glows still show.",
       get = function()
         -- arc icons: show the arc override, not customIconID
         local arcID = GetSingleSelectedArcIcon()
@@ -3858,7 +3858,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     activeStateAlpha = {
       type = "range",
       name = "Active Alpha",
-      desc = "Icon visibility when active",
+      desc = "Icon visibility when active. Setting this to 0 also sets Inactive Alpha to 0: in combat the game hides aura state from addons, so a fully hidden active icon requires the Aura Missing look hidden too - they cannot be split at zero.",
       min = 0, max = 1.0, step = 0.05,
       get = function()
         local c = GetAuraCfg()
@@ -3872,6 +3872,14 @@ function ns.GetCDMAuraIconsOptionsTable()
           if not c.cooldownStateVisuals then c.cooldownStateVisuals = {} end
           if not c.cooldownStateVisuals.readyState then c.cooldownStateVisuals.readyState = {} end
           c.cooldownStateVisuals.readyState.alpha = v
+          -- ZERO-LINK (Arc's call): Active 0 with a visible ghost is not
+          -- physically expressible (the Missing look would show in BOTH
+          -- states - presence is secret in combat, occlusion is the only
+          -- state logic), so 0 turns the Missing look off with it.
+          if v == 0 then
+            if not c.cooldownStateVisuals.cooldownState then c.cooldownStateVisuals.cooldownState = {} end
+            c.cooldownStateVisuals.cooldownState.alpha = 0
+          end
         end)
       end,
       order = 107.83, width = 0.8,
@@ -7815,7 +7823,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
     },
     showIcon = {
       type = "toggle", name = "Show Icon",
-      desc = "Show the icon. Turn OFF to hide the whole icon (artwork, cooldown swipe and flash) and keep only the charge and duration text visible.",
+      desc = "Show the icon artwork. Turn OFF to make the icon TRANSPARENT: the art disappears while the cooldown swipe, border, texts and glows keep working (same as entering 0 in Custom Icon). Stack proc trackers on an invisible icon.",
       get = function()
         return GetCooldownBoolSetting(function(c) return not c.forceHideIcon end, function() local c = GetCooldownCfg(); return not (c and c.forceHideIcon) end)
       end,
@@ -7846,7 +7854,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
       type = "input",
       dialogControl = "ArcUI_EditBox",
       name = "Custom Icon",
-      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty / 0 to use the default icon.",
+      desc = "Override the icon texture.\n\nCDM icons: enter a spell ID (e.g. 403) or texture file ID (e.g. 136116).\nArc icons: enter the number matching the ID Type picked next to this.\nLeave empty to use the default icon. Enter 0 for a TRANSPARENT icon: no art, while swipe, texts and glows still show.",
       get = function()
         -- arc icons: show the arc override, not customIconID
         local arcID = GetSingleSelectedArcIcon()
@@ -12741,7 +12749,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
       },
       activeStateAlpha = {
         type = "range", name = "Active Alpha", min = 0, max = 1.0, step = 0.05,
-        desc = "Icon visibility when active",
+        desc = "Icon visibility when active. Setting this to 0 also sets Inactive Alpha to 0: in combat the game hides aura state from addons, so a fully hidden active icon requires the Aura Missing look hidden too - they cannot be split at zero.",
         get = function()
           local g = GetAuraGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.readyState then
@@ -12754,6 +12762,11 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           if not g.cooldownStateVisuals then g.cooldownStateVisuals = {} end
           if not g.cooldownStateVisuals.readyState then g.cooldownStateVisuals.readyState = {} end
           g.cooldownStateVisuals.readyState.alpha = v
+          -- ZERO-LINK: same rule as the per-icon slider (see there)
+          if v == 0 then
+            if not g.cooldownStateVisuals.cooldownState then g.cooldownStateVisuals.cooldownState = {} end
+            g.cooldownStateVisuals.cooldownState.alpha = 0
+          end
           RefreshGlobalAuras()
         end,
         order = 14.1, width = 0.8,
@@ -16553,7 +16566,7 @@ function ns.GetCDMIconsOptionsTable()
         local itemID = GetInventoryItemID("player", slotID)
         local slotName = (slotID == 13) and "Trinket 1" or "Trinket 2"
         if itemID then
-          local itemName = GetItemInfo(itemID)
+          local itemName = C_Item.GetItemInfo(itemID)
           local isOnUse = ns.ArcAuras and ns.ArcAuras.IsItemOnUse and ns.ArcAuras.IsItemOnUse(itemID)
           local onUseStr = isOnUse and "|cff00ff00On-Use|r" or "|cff888888Passive|r"
           return string.format("|T%s:18|t  |cffffd700%s:|r %s (%s)",

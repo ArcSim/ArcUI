@@ -413,11 +413,11 @@ local function GetItemNameAndIcon(itemID)
     if not itemID then return nil, nil end
     
     -- First try GetItemInfo (returns full data if cached)
-    local name, _, _, _, _, _, _, _, _, icon = GetItemInfo(itemID)
+    local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(itemID)
     
     -- If not cached, use GetItemInfoInstant for basic info (always available from local DB)
     if not name or not icon then
-        local itemName, _, _, _, itemIcon = GetItemInfoInstant(itemID)
+        local itemName, _, _, _, itemIcon = C_Item.GetItemInfoInstant(itemID)
         name = name or itemName
         icon = icon or itemIcon
     end
@@ -434,13 +434,13 @@ end
 
 local function GetItemOnUseSpell(itemID)
     if not itemID then return nil, nil end
-    local spellName, spellID = GetItemSpell(itemID)
+    local spellName, spellID = C_Item.GetItemSpell(itemID)
     return spellName, spellID
 end
 
 local function IsItemOnUse(itemID)
     if not itemID then return false end
-    local spellName = GetItemSpell(itemID)
+    local spellName = C_Item.GetItemSpell(itemID)
     -- Secret-safe: use truthiness check, not ~= nil comparison
     -- In WoW 12.0, GetItemSpell may return a secret for the spell name
     if spellName then return true end
@@ -450,7 +450,7 @@ end
 -- Check if an item is passive (no on-use spell)
 local function IsItemPassive(itemID)
     if not itemID then return true end  -- No item = treat as passive
-    local spellName = GetItemSpell(itemID)
+    local spellName = C_Item.GetItemSpell(itemID)
     -- Secret-safe: a secret value is truthy even if "empty"
     -- For passive items, GetItemSpell returns nil (non-secret)
     if spellName then return false end
@@ -501,7 +501,7 @@ local function ShouldShowInventoryCount(itemID)
     if not itemID then return false end
     
     -- GetItemInfo returns classID as 12th value, subclassID as 13th
-    local _, _, _, _, _, _, _, _, _, _, _, classID, subclassID = GetItemInfo(itemID)
+    local _, _, _, _, _, _, _, _, _, _, _, classID, subclassID = C_Item.GetItemInfo(itemID)
     if not classID then return false end  -- Item info not loaded yet
     
     -- Consumables (potions, food, flasks, etc.) - always show count
@@ -579,7 +579,7 @@ local function ComputeStackDisplay(config)
     
     if config.type == "item" and config.itemID then
         -- First check if item has spell charges via C_Spell API
-        local spellName, spellID = GetItemSpell(config.itemID)
+        local spellName, spellID = C_Item.GetItemSpell(config.itemID)
         if spellID then
             local chargeInfo = C_Spell.GetSpellCharges(spellID)
             -- currentCharges is SECRET in 12.0 — comparing to nil returns false for secret numbers.
@@ -592,8 +592,8 @@ local function ComputeStackDisplay(config)
         
         -- Check for item-based charges (like Healthstone) via GetItemCount includeCharges=true
         -- This is what CooldownPanels uses — no tooltip parsing needed
-        local withCharges = GetItemCount(config.itemID, false, true)
-        local withoutCharges = GetItemCount(config.itemID, false, false)
+        local withCharges = C_Item.GetItemCount(config.itemID, false, true)
+        local withoutCharges = C_Item.GetItemCount(config.itemID, false, false)
         if withCharges and withoutCharges and withCharges > withoutCharges then
             return withCharges, true
         end
@@ -607,7 +607,7 @@ local function ComputeStackDisplay(config)
         -- Trinkets: check for spell charges
         local itemID = GetInventoryItemID("player", config.slotID)
         if itemID then
-            local spellName, spellID = GetItemSpell(itemID)
+            local spellName, spellID = C_Item.GetItemSpell(itemID)
             if spellID then
                 local chargeInfo = C_Spell.GetSpellCharges(spellID)
                 -- currentCharges is SECRET in 12.0 — if chargeInfo table exists, charge system confirmed
@@ -1110,6 +1110,29 @@ local function CreateArcAuraFrame(arcID, config)
     frame:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
+
+    -- Inherit the CURRENT tooltip / click-through state at birth. Icons
+    -- created mid-session (spec-swap rebuilds, fresh creates from the
+    -- panel or presets) showed tooltips and swallowed clicks until an
+    -- options round-trip, because only layout/settings passes applied the
+    -- state (Discord report 2026-09-04). Mirrors the free-icon setup path:
+    -- tooltips FIRST, click-through LAST (SetScript("OnEnter") above
+    -- implicitly re-enabled mouse).
+    if ns.CDMGroups and ns.CDMGroups.ApplyTooltipSettings then
+        local clickThrough = false
+        local Shared = ns.CDMShared
+        local gdb = Shared and Shared.GetCDMGroupsDB and Shared.GetCDMGroupsDB()
+        if gdb then clickThrough = gdb.clickThrough == true end
+        local ACD = LibStub("AceConfigDialog-3.0", true)
+        local panelOpen = ACD and ACD.OpenFrames and ACD.OpenFrames["ArcUI"] and true or false
+        if panelOpen or ns.CDMGroups.dragModeEnabled then clickThrough = false end
+        local disableTips = ns.CDMGroups.ShouldDisableTooltips
+            and ns.CDMGroups.ShouldDisableTooltips() or false
+        ns.CDMGroups.ApplyTooltipSettings(frame, clickThrough or disableTips)
+        if ns.CDMGroups.ApplyClickThrough then
+            ns.CDMGroups.ApplyClickThrough(frame, clickThrough)
+        end
+    end
 
     -- Right-click context menu REMOVED (3.8.0.a, by request): everything it
     -- offered (configure, always-show, change icon, remove) lives in the Arc
@@ -1681,8 +1704,25 @@ function ArcAuras.SetIconOverride(arcID, overrideID)
 
     local n = tonumber(overrideID)
 
+    -- 0 = TRANSPARENT ART (the restored "id 0" trick): stored as a real
+    -- override; every painter does SetTexture(0) = no art while swipe,
+    -- texts and glows keep working. Aura icons are the one exception -
+    -- their active-button art is painted by the 12.1 engine UNDER our
+    -- override layer, so 0 cannot erase it; Show Icon covers them.
+    if n == 0 then
+        if isAura then
+            print("|cff00CCFF[Arc Auras]|r Aura icons cannot use the transparent-icon trick (0) - use the Show Icon toggle instead.")
+            return false
+        end
+        config.iconOverride, config.iconOverrideID = 0, 0
+        if isTimer then config.icon, config.iconID = 0, 0 end
+        ArcAuras.RepaintIcon(arcID)
+        print("|cff00CCFF[Arc Auras]|r Icon set to transparent for " .. (config.name or arcID))
+        return true
+    end
+
     -- CLEAR ---------------------------------------------------------------
-    if not n or n <= 0 then
+    if not n or n < 0 then
         config.iconOverride, config.iconOverrideID = nil, nil
         if isTimer then config.icon, config.iconID = nil, nil end
         -- keep the stored source art current: catalog rows read
@@ -1795,7 +1835,7 @@ local function GetItemUseSpellID(itemID)
     if not itemID then return nil end
     local cached = itemUseSpellCache[itemID]
     if cached ~= nil then return cached or nil end
-    local _, spellID = GetItemSpell(itemID)
+    local _, spellID = C_Item.GetItemSpell(itemID)
     spellID = tonumber(spellID)
     itemUseSpellCache[itemID] = spellID or false
     return spellID
@@ -2485,7 +2525,7 @@ local function UpdateArcItemFrame(frame, arcID)
                     local isUnusableDim = false   -- controls alpha dimming
                     local isUnusableDesat = false -- controls desaturation
                     if config.type == "item" and config.itemID then
-                        local count = GetItemCount(config.itemID, false, false)
+                        local count = C_Item.GetItemCount(config.itemID, false, false)
                         local dimWhenEmpty = settings and settings.cooldownStateVisuals
                             and settings.cooldownStateVisuals.cooldownState
                             and settings.cooldownStateVisuals.cooldownState.dimWhenEmpty
@@ -2607,7 +2647,7 @@ local function UpdateArcItemFrame(frame, arcID)
                     
                     -- Suppress glow for consumed items (count = 0) — can't use what you don't have
                     if shouldShowGlow and not isGlowPreview and config.type == "item" and config.itemID then
-                        local count = GetItemCount(config.itemID, false, false)
+                        local count = C_Item.GetItemCount(config.itemID, false, false)
                         if count == 0 then
                             shouldShowGlow = false
                         end
@@ -3278,7 +3318,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 StaticPopupDialogs["ARCAURAS_ICON_OVERRIDE"] = {
-    text = "Enter a Spell ID or Item ID for the new icon:\n(Enter 0 or leave blank to reset to default)",
+    text = "Enter a Spell ID or Item ID for the new icon:\n(0 = transparent icon. Leave blank to reset to default)",
     button1 = "Apply", button2 = "Cancel",
     hasEditBox = true,
     OnShow = function(self)
@@ -3468,7 +3508,7 @@ function ArcAuras.AddTrackedItem(config)
             -- For items with on-use spells, schedule a delayed stack refresh
             -- This handles the case where tooltip data isn't ready immediately
             if config.type == "item" and config.itemID then
-                local spellName, spellID = GetItemSpell(config.itemID)
+                local spellName, spellID = C_Item.GetItemSpell(config.itemID)
                 if spellID then
                     C_Timer.After(0.5, function()
                         if ArcAuras.frames[arcID] then
@@ -5607,6 +5647,13 @@ local _arcAurasOnEvent = function(self, event, arg1)
             -- We must run AFTER ForceRepositionAllFrames completes (at ~2.5s)
             C_Timer.After(3.0, function()
                 ArcAuras._specChangeRefreshPending = false
+                -- the per-spec layout cache (click-through / tooltips) must
+                -- be current BEFORE frames register: SetupFreeIconDrag and
+                -- the free-icon path apply state from it, and a profile
+                -- load in the swap window may have rewritten the settings
+                if ns.CDMGroups and ns.CDMGroups.RefreshCachedLayoutSettings then
+                    ns.CDMGroups.RefreshCachedLayoutSettings()
+                end
                 ArcAuras.RefreshAllSettings()
                 
                 -- ═══════════════════════════════════════════════════════════════════════════
@@ -5857,7 +5904,7 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
         -- Trinket slot
         itemID = GetInventoryItemID("player", id)
         if itemID then
-            local itemName, _, _, _, _, _, _, _, _, itemIcon = GetItemInfo(itemID)
+            local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
             name = itemName or ("Trinket " .. id)
             icon = itemIcon or GetInventoryItemTexture("player", id) or 134400
         else
@@ -5867,7 +5914,7 @@ function ArcAuras.CreateCatalogEntry(cdID, frame)
     elseif arcType == "item" and id then
         -- Generic item
         itemID = id
-        local itemName, _, _, _, _, _, _, _, _, itemIcon = GetItemInfo(id)
+        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(id)
         name = itemName or "Item"
         icon = itemIcon or 134400
     elseif arcType == "spell" and id then
@@ -5993,7 +6040,7 @@ function ArcAuras.GetItemInfoForArcID(cdID)
     if arcType == "trinket" then
         itemID = GetInventoryItemID("player", id)
         if itemID then
-            local itemName, _, _, _, _, _, _, _, _, itemIcon = GetItemInfo(itemID)
+            local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
             name = itemName
             icon = itemIcon or GetInventoryItemTexture("player", id)
         else
@@ -6002,7 +6049,7 @@ function ArcAuras.GetItemInfoForArcID(cdID)
         end
     elseif arcType == "item" then
         itemID = id
-        local itemName, _, _, _, _, _, _, _, _, itemIcon = GetItemInfo(id)
+        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(id)
         name = itemName
         icon = itemIcon or 134400
     end

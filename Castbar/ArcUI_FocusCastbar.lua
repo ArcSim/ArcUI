@@ -831,7 +831,8 @@ function FC.ApplyAppearance()
     if not mainFrame then return end
     local cfg = GetDB()
     if not cfg then return end
-    if not cfg.enabled then
+    if not cfg.enabled
+       or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then
         mainFrame:Hide()
         mainFrame:EnableMouse(false)
         mainFrame.spark:Hide()
@@ -989,7 +990,8 @@ end
 StartCast = function()
     if not mainFrame or not UnitExists("focus") then return end
     local cfg = GetDB()
-    if not cfg or not cfg.enabled then return end
+    if not cfg or not cfg.enabled
+       or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then return end
 
     local name, text, texture, notInterruptible, spellID, isEmpowered
     local duration
@@ -1276,7 +1278,8 @@ function FC.ShowPreview()
     CreateFocusFrames()
     if not mainFrame then return end
     local cfg = GetDB()
-    if not cfg or not cfg.enabled then return end
+    if not cfg or not cfg.enabled
+       or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then return end
     if not isEnabled then FC.Enable() end
 
     ApplyAppearanceInternal(cfg)

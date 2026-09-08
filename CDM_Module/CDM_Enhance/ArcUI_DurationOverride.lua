@@ -65,12 +65,12 @@ local function ArcTriggerSpellID(arcID)
     if t == "spell" then
         return id
     elseif t == "item" and id then
-        local _, sid = GetItemSpell(id)
+        local _, sid = C_Item.GetItemSpell(id)
         return tonumber(sid)
     elseif t == "trinket" and id then
         local itemID = GetInventoryItemID("player", id)
         if itemID then
-            local _, sid = GetItemSpell(itemID)
+            local _, sid = C_Item.GetItemSpell(itemID)
             return tonumber(sid)
         end
     end

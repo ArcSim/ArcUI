@@ -1281,7 +1281,11 @@ local function CreateActiveBarEntry(barNum, orderBase, filterDisplayType, labelP
           return id and tostring(id) or ""
         end,
         set = function(_, v)
-          local newID = tonumber((v or ""):gsub("%D", ""))
+          -- gsub returns (string, count) - passed straight into tonumber the
+          -- COUNT becomes the BASE ("base out of range" on any clean numeric
+          -- input, aborting the set = "the ID reverts" report)
+          local cleaned = (v or ""):gsub("%D", "")
+          local newID = tonumber(cleaned)
           if not newID or newID <= 0 then return end
           local cfg = ns.API.GetBarConfig(barNum)
           if not cfg or not cfg.tracking.customAura then return end

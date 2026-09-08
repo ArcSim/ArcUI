@@ -757,6 +757,25 @@ local function AssignFrameToGroup(cdID, frame, groupName, row, col, viewerType, 
         if group.EnsureCellCapacity
            and group.layout
            and (r >= (group.layout.gridRows or 1) or c >= (group.layout.gridCols or 1)) then
+            -- AUTO-REFLOW GROUPS: the configured grid is AUTHORITATIVE (the
+            -- "Utility grows 3->6 columns on reload" regression, Discord
+            -- 1542106243676639362). The CDMGroups restore paths already hold
+            -- this rule, but this newer path still grew the grid for a stale
+            -- out-of-bounds saved home on every login - and the grown value
+            -- then persisted. Reflow decides the visual order anyway, so
+            -- fold the icon into a free in-bounds cell; the grow-back below
+            -- stays for STATIC groups (the shrink-while-hidden feature) and
+            -- as the last resort when every configured cell is held.
+            if group.autoReflow and group.FindNextFreeSlot then
+                local fr, fc = group:FindNextFreeSlot(false, true)
+                if fr ~= nil and fc ~= nil then
+                    TracePlacement("FrameController.ResolveTargetCell.foldOutOfBounds", {
+                        id = cdID, group = groupName, row = r, col = c,
+                        newRow = fr, newCol = fc,
+                    })
+                    return fr, fc
+                end
+            end
             group:EnsureCellCapacity(r, c)
             return r, c   -- the freshly created cell is necessarily free
         end

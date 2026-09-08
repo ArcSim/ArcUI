@@ -610,7 +610,9 @@ local function ApplyBlizzCastBarVisibility()
   local cfg = GetCastbarDB()
   local frame = PlayerCastingBarFrame
   if not frame then return end
-  local shouldHide = (cfg and cfg.hideCastBar) and true or false
+  -- module master off (Settings > Modules) releases the Blizzard castbar too
+  local moduleOn = not (ns.API and ns.API.IsModuleEnabled) or ns.API.IsModuleEnabled("castbar")
+  local shouldHide = (cfg and cfg.hideCastBar and moduleOn) and true or false
   local wasHiding  = blizzCastBarHideActive
   blizzCastBarHideActive = shouldHide
   if shouldHide then
@@ -639,7 +641,8 @@ function ns.Castbar.ApplyAppearance()
 
   local mainFrame, textFrame = GetOrCreateFrames()
 
-  if not cfg.enabled then
+  if not cfg.enabled
+     or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then
     mainFrame:Hide()
     textFrame:Hide()
     return
@@ -1025,7 +1028,8 @@ end
 -- ===================================================================
 local function ShowCast(spellID, startTimeMS, endTimeMS, isChannel, notInterruptible, isEmpowered, numStages, stageProps)
     local cfg = GetCastbarDB()
-  if not cfg or not cfg.enabled then
+  if not cfg or not cfg.enabled
+     or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then
     CastDebug("ShowCast blocked: castbar disabled (spellID=" .. tostring(spellID) .. ")")
     return
   end
@@ -1208,7 +1212,8 @@ end
 -- ===================================================================
 local function ShowPreview()
   local cfg = GetEffectiveCfg()  -- preview the cast-type profile currently being edited
-  if not cfg or not cfg.enabled then return end
+  if not cfg or not cfg.enabled
+     or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then return end
   if castActive or castFading then return end  -- don't override a live cast or fade-out
 
   local mainFrame, textFrame = GetOrCreateFrames()

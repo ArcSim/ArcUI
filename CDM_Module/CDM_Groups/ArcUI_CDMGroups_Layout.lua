@@ -394,6 +394,34 @@ end
 ns.CDMGroups.SetupFrameInContainer = SetupFrameInContainer
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- TOOLTIP REASSERT ON UI RE-SHOW (Discord report, 3.8.6: "Show Tooltips"
+-- disabled, but hiding then re-showing the whole UI brings tooltips back
+-- until the options panel is reopened). Hiding/re-showing the UI can leave
+-- icon mouse motion re-enabled even though frame._arcTooltipsDisabled still
+-- holds the user's intent. Re-assert the STORED intent only - no DB reads,
+-- no layout, no state writes - whenever UIParent comes back. This is the
+-- light version of what reopening the options panel does. Event-driven.
+-- ═══════════════════════════════════════════════════════════════════════════
+local function ReassertMouseMotion()
+    for _, group in pairs(ns.CDMGroups.groups or {}) do
+        if group and group.members then
+            for _, member in pairs(group.members) do
+                if member.frame then ApplyMouseMotionState(member.frame) end
+            end
+        end
+    end
+    for _, data in pairs(ns.CDMGroups.freeIcons or {}) do
+        if data.frame then ApplyMouseMotionState(data.frame) end
+    end
+end
+ns.CDMGroups.ReassertMouseMotion = ReassertMouseMotion
+
+UIParent:HookScript("OnShow", function()
+    -- deferred one tick: let the UI-show cascade finish before re-asserting
+    C_Timer.After(0, ReassertMouseMotion)
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- REFRESH ICON SETTINGS
 -- Apply tooltip/click-through settings to all managed icons
 -- Called when global options are changed

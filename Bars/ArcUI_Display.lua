@@ -876,6 +876,33 @@ function ns.Display.BumpConfigVersion(barNumber)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- LSM LATE REGISTRATION: a media pack can register its textures AFTER our
+-- first update pass tried to fetch them (login order race - ArcUI loads
+-- alphabetically early). When any statusbar medium lands, bust the per-frame
+-- texture caches and re-run the bars once. Burst-collapsed to one refresh
+-- per registration wave; fires only when media registers, zero idle cost.
+-- ═══════════════════════════════════════════════════════════════════════════
+if LSM and LSM.RegisterCallback then
+  local lsmRefreshQueued = false
+  LSM.RegisterCallback(ns.Display, "LibSharedMedia_Registered", function(_, mediatype)
+    if mediatype ~= "statusbar" then return end
+    for _, entry in pairs(ns.Display._barFrames or {}) do
+      local bf = entry and entry.barFrame
+      if bf then
+        bf._cachedTexturePath = nil
+        bf._lastConfigVersion = nil
+      end
+    end
+    if lsmRefreshQueued then return end
+    lsmRefreshQueued = true
+    C_Timer.After(0.25, function()
+      lsmRefreshQueued = false
+      if ns.Display.RefreshAllBars then ns.Display.RefreshAllBars() end
+    end)
+  end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- HELPER: Get CENTER-based position for scale-safe anchoring
 -- When scaling a frame, it scales from its anchor point. Using CENTER ensures
 -- the frame scales uniformly in all directions, preventing position drift.
@@ -1908,8 +1935,18 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
     local _, _hpx = GetPhysicalScreenSize()
     local onePx = (_hpx and _hpx > 0 and scale and scale > 0) and (768 / _hpx) / scale or 1
 
+    -- ENGINE-DRIVEN (custom aura) segment bars: the engine fill spans the
+    -- FULL frame - there are no classic segments to inset around - so the
+    -- ticks must span it too. Insetting them put tick 1 past the 1-stack
+    -- fill edge (Arc's report); re-pinning the geometry host instead broke
+    -- the layers' baked widths, so the TICKS follow the FILL, never the
+    -- other way around.
+    local engineFill = barConfig.tracking and barConfig.tracking.customAura
+      and (displayMode == "granular" or displayMode == "perStack")
+
     local segInset = 0
-    if barConfig.display.showBorder and (displayMode == "granular" or displayMode == "perStack") then
+    if barConfig.display.showBorder and not engineFill
+       and (displayMode == "granular" or displayMode == "perStack") then
       local btRaw = barConfig.display.drawnBorderThickness or 2
       segInset = onePx * btRaw
     end
@@ -1919,7 +1956,8 @@ local function UpdateTickMarks(barFrame, barConfig, maxValue, displayMode)
     -- honours the padding (granular/perStack segments + duration bars) —
     -- simple-mode fills don't inset, so their ticks don't either.
     local padL, padR, padT, padB = 0, 0, 0, 0
-    if displayMode == "granular" or displayMode == "perStack" or displayMode == "duration" then
+    if not engineFill
+       and (displayMode == "granular" or displayMode == "perStack" or displayMode == "duration") then
       padL = (barConfig.display.barPaddingL or 0) * onePx
       padR = (barConfig.display.barPaddingR or 0) * onePx
       padT = (barConfig.display.barPaddingT or 0) * onePx
@@ -2800,14 +2838,33 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   local texturePath = barFrame._cachedTexturePath
   if needsSetup or not texturePath then
     texturePath = "Interface\\TargetingFrame\\UI-StatusBar"
-    if LSM and barConfig.display.texture then
-      local fetchedTexture = LSM:Fetch("statusbar", barConfig.display.texture)
-      if fetchedTexture then texturePath = fetchedTexture end
+    local wantTexture = barConfig.display.texture
+    local textureMissing = false
+    if LSM and wantTexture then
+      -- noDefault fetch: nil = the medium is not registered YET (a media
+      -- pack loading after our first update - the login order race).
+      -- Without it Fetch hands back LSM's default, which then got CACHED
+      -- and version-locked: the segmented-vs-continuous split, because the
+      -- continuous bar is re-textured by ApplyAppearance's fresh fetch
+      -- while segments only ever read this cache.
+      local fetchedTexture = LSM:Fetch("statusbar", wantTexture, true)
+      if fetchedTexture then
+        texturePath = fetchedTexture
+      else
+        textureMissing = true
+      end
     end
-    barFrame._cachedTexturePath = texturePath
+    if textureMissing then
+      -- fallback for THIS call only - never cache a miss, and keep
+      -- needsSetup true (version unlocked) so every call retries until the
+      -- configured texture registers; the LSM callback also busts on landing
+      barFrame._cachedTexturePath = nil
+    else
+      barFrame._cachedTexturePath = texturePath
+    end
     -- Only lock in the config version when options are closed — while options are
     -- open the user may change settings every call, so always re-evaluate needsSetup
-    if not optionsOpen then
+    if not optionsOpen and not textureMissing then
       barFrame._lastConfigVersion = currentConfigVersion
     end
   end
@@ -3834,15 +3891,57 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
     if naturalFill then engineBaseColor = { r = 1, g = 1, b = 1, a = 1 } end
     do
       local list = {}
-      for i = 2, 6 do
-        local th = thresholds[i]
-        if th and th.enabled and th.color and not naturalFill then
-          local v = GetThresholdValue(th.minValue, nil, thresholdAsPercent, maxStacks)
-          v = v and math_floor(v + 0.5)
-          if v and v > 1 and v <= maxStacks then list[#list + 1] = { v = v, color = th.color } end
+      -- SEGMENTED (perStack) bars color by the EXPANDED per-stack map:
+      -- Color Ranges and Per Stack Override both write cfg.stackColors, and
+      -- the classic segment painter reads exactly that - the thresholds
+      -- table is the CONTINUOUS system's store. Building the engine bands
+      -- from thresholds only left engine-driven (custom aura) segmented
+      -- bars single-colored while the panel preview (classic painter)
+      -- showed the ranges (Arc's report, 2026-09-07). Contiguous same-color
+      -- RUNS become the band boundaries; colors stay OUT of bandsKey
+      -- (pushed live by BD), structural changes rewire.
+      local runsBuilt = false
+      if displayMode == "perStack" and not naturalFill then
+        local sc = barConfig.stackColors
+        local useMax = barConfig.display.enableMaxColor
+        if (sc and next(sc)) or useMax then
+          local function colAt(i)
+            if useMax and i == maxStacks then
+              return barConfig.display.maxColor or { r = 0, g = 1, b = 0, a = 1 }
+            end
+            return (sc and sc[i]) or baseColor
+          end
+          local function sameC(a, b)
+            return a == b or (a and b and a.r == b.r and a.g == b.g
+              and a.b == b.b and (a.a or 1) == (b.a or 1))
+          end
+          local prev = colAt(1)
+          for i = 2, maxStacks do
+            local c = colAt(i)
+            if not sameC(c, prev) then
+              list[#list + 1] = { v = i, color = c }
+              prev = c
+            end
+          end
+          -- every boundary is one engine overlay slot PER LANE: cap the
+          -- composition (highest boundaries dropped past the cap)
+          while #list > 7 do table.remove(list) end
+          baseColor = colAt(1)        -- the band chain's below-first color
+          engineBaseColor = colAt(1)  -- uniform custom color, no boundaries
+          runsBuilt = true
         end
       end
-      table.sort(list, function(x, y) return x.v < y.v end)
+      if not runsBuilt then
+        for i = 2, 6 do
+          local th = thresholds[i]
+          if th and th.enabled and th.color and not naturalFill then
+            local v = GetThresholdValue(th.minValue, nil, thresholdAsPercent, maxStacks)
+            v = v and math_floor(v + 0.5)
+            if v and v > 1 and v <= maxStacks then list[#list + 1] = { v = v, color = th.color } end
+          end
+        end
+        table.sort(list, function(x, y) return x.v < y.v end)
+      end
       if #list > 0 then
         local parts = {}
         -- The Style dropdown maps Segmented = thresholdMode "perStack" ONLY;
@@ -3859,12 +3958,17 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
           end
         else
           -- SEGMENTED: region band coloring (width-stretch overlays; smaller
-          -- thresholds drawn on top; base slot renders the top band's color)
+          -- thresholds drawn on top; base slot renders the top band's color).
+          -- e.v = the FIRST stack of the NEW color, so the below-color band
+          -- must stop one stack short: an overlay saturating at max = v
+          -- paints stack v's own segment in the OLD color (Arc's "8 blue
+          -- squares from a 1-7 range" report) - max = v - 1 covers exactly
+          -- stacks 1..v-1 and stack v shows the layer beneath.
           applicationBands = {}
           local below = baseColor
           for i, e in ipairs(list) do
             applicationBands[#applicationBands + 1] = {
-              max = e.v, widthFrac = e.v / maxStacks,
+              max = e.v - 1, widthFrac = (e.v - 1) / maxStacks,
               color = below, boost = #list - i + 1,
             }
             parts[#parts + 1] = "b" .. e.v
@@ -4661,10 +4765,15 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
   if needsSetup then
     -- Get texture (use global LSM from top of file) - only when needed
     local texturePath = "Interface\\TargetingFrame\\UI-StatusBar"
+    local textureMissing = false
     if LSM and barConfig.display.texture then
-      local fetchedTexture = LSM:Fetch("statusbar", barConfig.display.texture)
+      -- noDefault: nil = not registered yet (login race) - fall back for
+      -- this call and keep the version unlocked so the next call retries
+      local fetchedTexture = LSM:Fetch("statusbar", barConfig.display.texture, true)
       if fetchedTexture then
         texturePath = fetchedTexture
+      else
+        textureMissing = true
       end
     end
     
@@ -4701,8 +4810,10 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
       barFrame.bg:SetShown(barConfig.display.showBackground)
     end
     
-    -- Cache the version — only when options closed so live config changes keep triggering needsSetup
-    if not optionsOpen then
+    -- Cache the version — only when options closed so live config changes keep
+    -- triggering needsSetup, and never while the configured texture is still
+    -- missing (an unlocked version = retry the fetch next call)
+    if not optionsOpen and not textureMissing then
       barFrame._lastConfigVersion = currentConfigVersion
     end
   end
@@ -5981,13 +6092,29 @@ function ns.Display.ApplyAppearance(barNumber)
   local cfg = barConfig.display
   local displayType = cfg.displayType or "bar"
 
-  -- Always clear _setupDone on segment bars when ApplyAppearance runs.
-  -- The frame may be resized by UpdateBarForGroup called later in this function,
-  -- but UpdateBar runs immediately after so we can't rely on size-change detection
-  -- (WoW layout may not commit the new size before GetWidth() is called).
+  -- ApplyAppearance IS the "settings changed" edge for the segment world:
+  -- bust EVERY segment-side cache, not just the geometry flag. Most save
+  -- paths (imports, presets, profile loads, setup-tab edits) write the
+  -- config table WITHOUT bumping _configVersion (only the appearance panel
+  -- bumps), so the continuous bar - styled directly below with fresh
+  -- fetches - picked the changes up while segments re-baked from these
+  -- stale caches: the "segmented bars lose customizations outside edit
+  -- mode" report. A nil _lastConfigVersion forces a FULL needsSetup pass
+  -- (fresh texture fetch + color ranges) on the next update.
+  -- (_setupDone also clears because the frame may be resized by
+  -- UpdateBarForGroup later in this function, and WoW layout may not commit
+  -- the new size before GetWidth() is called.)
   if barFrame.granularBars then
     for _, _gb in ipairs(barFrame.granularBars) do _gb._setupDone = false end
   end
+  if barFrame.stackedBars then
+    for _, _sb in ipairs(barFrame.stackedBars) do _sb._setupDone = false end
+  end
+  if barFrame.maxColorBar then barFrame.maxColorBar._setupDone = false end
+  barFrame._cachedTexturePath = nil
+  barFrame._cachedColorRanges = nil
+  barFrame._cachedThresholdBoundary = nil
+  barFrame._lastConfigVersion = nil
   
   
   -- ═══════════════════════════════════════════════════════════════════

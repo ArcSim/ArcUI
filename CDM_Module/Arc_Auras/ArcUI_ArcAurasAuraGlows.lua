@@ -238,6 +238,10 @@ local function BuildPack(btn, styleKey, cfg, W, H)
     if styleKey == "Proc" then
         local tex = newTex()
         tex:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
+        -- the flipbook art is baked GOLD — desaturate like Pulse/Ants so the
+        -- user's vertex color drives the tint (blue-over-yellow bug otherwise;
+        -- the ns.Glows preview uses grayscale art, so only LIVE looked wrong)
+        tex:SetDesaturated(true)
         tex:SetSize((W + 20) * s, (H + 20) * s)
         tex:SetPoint("CENTER", host, "CENTER", 0, 0)
         local ag = newAG()
@@ -390,9 +394,9 @@ function AIG.ApplyPandemic(btn, holder, settings)
     local aa = (settings and settings.cooldownStateVisuals
         and settings.cooldownStateVisuals.readyState) or {}
     local pb = settings and settings.pandemicBorder or {}
-    -- Show Icon off: CDM parity — the whole visual suite hides, only the
-    -- duration/stack text survives. Glows are part of the suite.
-    local forceHide = settings and settings.forceHideIcon == true
+    -- Show Icon off no longer gates glows: the toggle now hides only the
+    -- icon ART (transparent-icons request) and glow visibility is owned by
+    -- the glow toggles themselves.
 
     -- host-level knobs (offset/strata/level): applied to the glow LAYER on
     -- every call — never part of the pack identity, so sliding them does not
@@ -426,7 +430,7 @@ function AIG.ApplyPandemic(btn, holder, settings)
     -- register=false -> always shown (visible whenever the button is — the
     --                   button hiding with the aura IS the on/off switch)
     local parts, recipes = {}, {}
-    if aa.glow == true and not forceHide then
+    if aa.glow == true then
         if aa.glowFollowPandemic then
             local style = STYLE_MAP[aa.glowType or "pixel"] or "Pixel"
             local col = ColorOf(aa.glowColor, 1, 0.85, 0.1)
@@ -450,7 +454,7 @@ function AIG.ApplyPandemic(btn, holder, settings)
                 .. ">" .. wStyle .. ":" .. table.concat(wCol, ",")
         end
     end
-    if pb.enabled and not forceHide then
+    if pb.enabled then
         recipes[#recipes + 1] = { style = "Edges", color = { 1, 0.25, 0.25 }, register = true }
         parts[#parts + 1] = "border"
     end

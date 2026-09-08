@@ -1361,6 +1361,15 @@ local function ResolveIconTexture(frame)
   local cfg = GetEffectiveIconSettings(cdID)
   if not cfg then return nil end
 
+  -- 0. TRANSPARENT art: Show Icon off, or Custom Icon 0 (the restored
+  --    "id 0" trick from the Discord transparent-icons request). 0 is a
+  --    first-class texture value here: SetTexture(0) renders NO art while
+  --    swipe, border, texts and GLOWS keep working - users stack proc
+  --    trackers on an invisible icon. The hook enforces it live like any
+  --    override. The old Show Icon path (whole-frame alpha 0 + text
+  --    floats) is retired at the _arcForceHideActive writer.
+  if cfg.forceHideIcon == true or cfg.customIconID == 0 then return 0 end
+
   -- 1. Custom Icon Override (spell ID or texture file ID)
   local customID = cfg.customIconID
   if customID and customID ~= 0 and customID ~= "" then
@@ -2796,12 +2805,16 @@ ApplyIconStyle = function(frame, cdID)
   -- for any SetAlpha during the rest of ApplyIconStyle; the hide + text float
   -- happen after the text overlays are built (post SetupCooldownText below).
   local wasForceHidden = frame._arcForceHideActive == true
-  -- Arc AURA icons opt out of the whole-frame hide: their duration/stack
-  -- texts live on the ENGINE BUTTON (a separate frame tree), so alpha-0 on
-  -- the holder would erase the very texts the option promises to keep.
-  -- AuraIcons.ApplySettings/StyleActiveButton own force-hide there (ghost
-  -- art + button art hide, texts survive).
-  frame._arcForceHideActive = (cfg.forceHideIcon == true) and not frame._arcIsAuraIcon
+  -- Show Icon now hides ONLY the icon ART, through the texture resolver
+  -- (ResolveIconTexture returns 0 -> SetTexture(0) = no art) - swipe,
+  -- border, texts and glows keep working, same as Custom Icon 0 (Arc's
+  -- call, from the Discord transparent-icons request). The whole-frame
+  -- alpha-0 machinery is RETIRED: _arcForceHideActive stays false forever
+  -- (its readers - the alpha hook, CooldownState skip, text floats - go
+  -- inert), while wasForceHidden still feeds the one-shot un-hide
+  -- transition below so users coming from the old build get their frame
+  -- alpha and floated texts restored on the first style pass.
+  frame._arcForceHideActive = false
   frame._arcWasForceHidden = wasForceHidden
 
   -- NOTE: CDMGroups controls all sizing - CDMEnhance does NOT call SetScale or SetSize

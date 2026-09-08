@@ -353,7 +353,7 @@ function Registry:GetSpellInfoForCooldownID(cooldownID)
             -- Get equipped trinket info
             local itemID = GetInventoryItemID("player", id)
             if itemID then
-                local name, _, _, _, _, _, _, _, _, icon = GetItemInfo(itemID)
+                local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(itemID)
                 return {
                     cooldownID = cooldownID,
                     spellID = nil,
@@ -377,7 +377,7 @@ function Registry:GetSpellInfoForCooldownID(cooldownID)
             end
         elseif arcType == "item" and id then
             -- Get specific item info
-            local name, _, _, _, _, _, _, _, _, icon = GetItemInfo(id)
+            local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(id)
             return {
                 cooldownID = cooldownID,
                 spellID = nil,

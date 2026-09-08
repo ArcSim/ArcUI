@@ -92,12 +92,21 @@ function ns.Options.InitMinimapButton()
   
   -- Register with LibDBIcon
   LDBIcon:Register("ArcUI", minimapButton, globalDB.minimap)
-  
+
   -- Show/hide based on settings
   if globalDB.minimap.hide then
     LDBIcon:Hide("ArcUI")
   else
     LDBIcon:Show("ArcUI")
+  end
+
+  -- LibDBIcon's retail branch centers the icon on the BUTTON, but the
+  -- TrackingBorder ring's hole sits at ~(16.0, -14.2) of the 31px button,
+  -- so the icon rides ~0.5px left and ~1.3px low. Re-seat it on the hole.
+  local btn = LDBIcon.GetMinimapButton and LDBIcon:GetMinimapButton("ArcUI")
+  if btn and btn.icon then
+    btn.icon:ClearAllPoints()
+    btn.icon:SetPoint("CENTER", btn, "CENTER", 0.5, 1.3)
   end
 end
 

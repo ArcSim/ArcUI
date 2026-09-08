@@ -1397,7 +1397,7 @@ local function ItemOutOfStock(frame, ci)
   itemID = itemID or CATEGORY_FALLBACK_ITEM[cat]
   if not itemID or not GetItemCount then return nil end
   -- includeCharges=true: a healthstone's stack is charges, not item count
-  local count = GetItemCount(itemID, false, true)
+  local count = C_Item.GetItemCount(itemID, false, true)
   if type(count) ~= "number" then return nil end
   return count <= 0
 end

@@ -502,7 +502,7 @@ local function ResolveItemUseSpell(itemID)
         if cached == false then return nil end
         return cached
     end
-    local _, spellID = GetItemSpell(itemID)
+    local _, spellID = C_Item.GetItemSpell(itemID)
     spellID = tonumber(spellID)
     _itemUseSpellCache[itemID] = spellID or false
     return spellID
@@ -1330,7 +1330,7 @@ function Engine:_EmitPulse(spellID, kind, reason, isItem)
         end
     end
     if isItem and type(IsEquippableItem) == "function" then
-        if IsEquippableItem(spellID) and type(IsEquippedItem) == "function"
+        if C_Item.IsEquippableItem(spellID) and type(IsEquippedItem) == "function"
            and not IsEquippedItem(spellID) then
             return
         end

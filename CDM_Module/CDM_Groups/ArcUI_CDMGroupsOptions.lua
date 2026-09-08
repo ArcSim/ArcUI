@@ -365,6 +365,19 @@ local function GetOptionsTable()
         -- Check runtime groups first (authoritative for existence check)
         if not ns.CDMGroups.groups[oldName] then return false end -- Old group doesn't exist
         if ns.CDMGroups.groups[newName] then return false end -- New name already exists
+
+        -- A DORMANT stored record under the new name blocks the rename too:
+        -- in a linked global Group Layout that record belongs to another
+        -- spec's group, and landing on it would adopt/overwrite it (the
+        -- cross-spec anchoring leak). The one exception is THIS group's own
+        -- record (matching stable id) - e.g. renaming back and forth.
+        if ns.CDMGroups.FindStoredGroupRecord then
+            local rec = ns.CDMGroups.FindStoredGroupRecord(newName)
+            if rec then
+                local myID = ns.CDMGroups.GetGroupID and ns.CDMGroups.GetGroupID(oldName)
+                if not (myID and rec.id == myID) then return false end
+            end
+        end
         
         -- Get profile for updating groupLayouts
         local specData = GetSpecData()
@@ -1748,11 +1761,19 @@ local function GetOptionsTable()
                 order = 22,
                 width = 0.8,
                 func = function()
-                    -- Generate unique name (check runtime groups, authoritative for existence)
+                    -- Generate a unique name. Runtime groups alone are NOT
+                    -- enough: a linked global Group Layout can hold a dormant
+                    -- record under the name from ANOTHER spec, and CreateGroup
+                    -- would adopt it wholesale (the cross-spec anchoring leak).
                     local baseName = "Group"
                     local num = 1
                     local groups = ns.CDMGroups.groups or {}
-                    while groups[baseName .. num] do
+                    local function nameTaken(n)
+                        if groups[n] then return true end
+                        return ns.CDMGroups.FindStoredGroupRecord
+                            and ns.CDMGroups.FindStoredGroupRecord(n) ~= nil
+                    end
+                    while nameTaken(baseName .. num) do
                         num = num + 1
                     end
                     local newName = baseName .. num
@@ -1775,7 +1796,12 @@ local function GetOptionsTable()
                     local baseName = "Aura Group"
                     local num = 1
                     local groups = ns.CDMGroups.groups or {}
-                    while groups[baseName .. num] do
+                    local function nameTaken(n)
+                        if groups[n] then return true end
+                        return ns.CDMGroups.FindStoredGroupRecord
+                            and ns.CDMGroups.FindStoredGroupRecord(n) ~= nil
+                    end
+                    while nameTaken(baseName .. num) do
                         num = num + 1
                     end
                     local newName = baseName .. num

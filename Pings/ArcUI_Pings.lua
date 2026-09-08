@@ -1164,6 +1164,8 @@ end
 -- pings. Combat-first rule: the option doesn't ship at all.
 local function AddEntry(text, sender, guid, isPreview)
     if not Cfg("enabled") then return end
+    -- Settings > Modules master switch: whole module off = no feed at all
+    if ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("pings") then return end
     -- a real ping replaces the preview immediately
     if not isPreview then RemovePreviewEntries() end
     EnsureWindow()
@@ -1919,7 +1921,11 @@ end
 -- survive being toggled off -- that is what separates "Enable Ping" (temporary)
 -- from "Remove" (permanent). enabled == nil means enabled: entries created
 -- before the flag existed keep working.
-local function PKEntryOn(e) return e and e.enabled ~= false end
+local function PKEntryOn(e)
+    -- Settings > Modules master switch: module off = every entry reads OFF
+    if ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("pings") then return false end
+    return e and e.enabled ~= false
+end
 
 -- Each mode needs a different key to exist, so the check is mode-aware.
 -- (PKEntryMode is defined further down, so the modes are read directly here.)
@@ -2431,7 +2437,7 @@ PKButtonSubject = function(btn)
         end
         if not sid and GetMacroItem and GetItemInfoInstant then
             local _mn, mlink = GetMacroItem(id)
-            local iid = mlink and GetItemInfoInstant(mlink)
+            local iid = mlink and C_Item.GetItemInfoInstant(mlink)
             if iid then kind, sid = "item", iid end
         end
     end
@@ -4600,5 +4606,14 @@ function ns.GetPingsOptionsTable()
             },
         },
     }
+end
+
+-- Settings > Modules master switch (ArcUI Options > Settings): live apply.
+-- OFF hides the feed window and releases every ping keybind (PKEntryOn reads
+-- the module flag, so a re-arm pass applies the new truth); ON re-arms.
+-- Binding changes are combat-deferred by PKApply's own machinery.
+function ns.PingsOnModuleToggled(enabled)
+    if not enabled and win then win:Hide() end
+    if PKApply then PKApply() end
 end
 

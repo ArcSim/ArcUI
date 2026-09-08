@@ -249,6 +249,13 @@ with the first tag (3.7.2).**
    packager reads (`##` = version, `###` = New Features / Improvements / Bug Fixes). Assemble it
    recollection-THEN-diff per the changelog conventions above.
 3. `luac -p` every touched Lua file.
+3b. **TOUR KEY GATE:** if a tour is authored for this release (`TOURS` in `ArcUI_Tour.lua`),
+   rename its key to the EXACT new base version from step 1 (hotfix suffix stripped:
+   3.8.7.a offers as 3.8.7). The once-per-release offer keys off `BaseVersion()`, so a
+   mismatched key means NOBODY is ever offered the tour - it ships silently dead. Then
+   verify anchors in-game with `/arctour check X.Y.Z`, and make sure hand placements are
+   baked (`place =` values, captured via `/arctour dev` + `dump`). See the `arcui-tours`
+   skill.
 4. **Show the user the changelog and get explicit approval** (the gate above).
 5. Mirror the SAME approved notes into the in-game "What's New" (`ArcUI_Changelog.lua` `CL.versions`,
    newest first). Wago is now automated — the packager uploads the file + this changelog there too.
