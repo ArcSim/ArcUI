@@ -230,7 +230,10 @@ local TOURS = {
     -- until hand placement lands: run "/arctour dev", drag each box, then
     -- "/arctour dump" and paste the offsets in.
     -- ═══════════════════════════════════════════════════════════════════════
-    ["3.8.7"] = {
+    -- TOUR KEY GATE: this key must equal the release's BASE version or the
+    -- once-per-release offer never fires (3.8.7 shipped it live; renamed to
+    -- 3.8.8 so fresh installs and updaters get the offer on this release)
+    ["3.8.8"] = {
         label = "Loot Planner",
         -- the twin goes dormant when the standalone Arc Loot Planner addon is
         -- installed, and this tab is a stub then: no tour in that case

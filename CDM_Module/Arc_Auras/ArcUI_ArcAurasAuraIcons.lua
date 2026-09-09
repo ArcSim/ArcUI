@@ -494,6 +494,10 @@ local function FilterForLane(def, lane)
     end
     return def.ownOnly and "HARMFUL|PLAYER" or "HARMFUL"
 end
+-- Exported for the Aura Group engine rows (one-path rule, same as LanesFor):
+-- a member's per-slot filter string must resolve exactly like its single-icon
+-- slots, or "Only mine" would mean different things in the two presentations.
+AuraIcons.FilterForLane = FilterForLane
 
 local function IncludeMap(def)
     -- full candidate set when present (CDM imports carry base + override +

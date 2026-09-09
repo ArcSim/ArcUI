@@ -2,7 +2,7 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.8.7
+## Version: 3.8.8
 ## IconTexture: Interface\AddOns\ArcUI\Textures\ArcUI_Icon_400x400
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614
@@ -77,6 +77,7 @@ Pings\ArcUI_Pings.lua
 
 # Bonus Roll (raid bonus-roll ledger/planner; dormant if the standalone Arc Bonus Roll is loaded)
 Bonus_Roll\ArcUI_BonusRollTheme.lua
+Bonus_Roll\ArcUI_BonusRoll_Seed.lua
 Bonus_Roll\ArcUI_BonusRoll.lua
 
 # Options Panels

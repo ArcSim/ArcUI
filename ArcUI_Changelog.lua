@@ -29,6 +29,25 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.8",
+    sections = {
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Loot Planner", desc = "Now ships knowing every class and spec's loot for the current raids and Mythic+ season and keeps its lists fresh on its own - every page is full from the first open, the Mythic+ drops page works even without a sim, and old-content coins or slow loading can no longer leave the overview on the wrong raid or half-filled." },
+          { title = "Loot Planner", desc = "Item tooltips show the real item at the right item level (sim-priced items at the exact level your sim used), items best used through the Catalyst are tagged with the set piece they become, and tooltips open at your cursor." },
+          { title = "Loot Planner", desc = "Smarter sims: healers can import QE Live Upgrade Finder reports, a sim finds its own character and spec on import, a drop and its Catalyst conversion count as one roll instead of two, and owned checks no longer trigger off an alt's lower-difficulty version." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Aura Groups", desc = "Targeting yourself or a friendly player no longer fills tracked-debuff slots with random debuffs; those slots now stay empty until you have a valid target, while utility debuffs that always identify keep working everywhere." },
+          { title = "Aura Groups", desc = "Only Mine is respected in the live view: another player's copy of a debuff you track no longer shows in your row." },
+          { title = "Aura Groups", desc = "Changing targets updates the row immediately, in combat too." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.7",
     sections = {
       {
