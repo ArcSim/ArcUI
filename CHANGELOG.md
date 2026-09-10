@@ -1,3 +1,9 @@
+## 3.8.8.a
+
+### Bug Fixes
+
+- **Guided Tour** — Fixed the tour highlight getting stuck on screen or showing up in combat. The tour now runs only from the options panel and cleans up completely when you leave it.
+
 ## 3.8.8
 
 ### Improvements

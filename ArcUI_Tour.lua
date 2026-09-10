@@ -634,7 +634,21 @@ local function BuildFrame()
     if not tContains(UISpecialFrames, "ArcUITourFrame") then
         tinsert(UISpecialFrames, "ArcUITourFrame")
     end
+    -- ANY exit is a FULL exit (code red, 2026-09-09): UISpecialFrames' ESC
+    -- hides only THIS frame — before this hook, the spotlight, dimmer, rings,
+    -- raised frames and the centred panel all stayed stranded on screen with
+    -- their only dismiss buttons gone, unrecoverable without a /reload. The
+    -- callout dying — ESC, a cinematic hiding UIParent, anything — now tears
+    -- the whole tour down. Stop() nils `steps` before it hides this frame,
+    -- so its own Hide re-enters here as a no-op.
+    -- ARMED AFTER the initial Hide below: a new frame is SHOWN by default,
+    -- so this creation-time Hide fires OnHide — hooked first, it stopped the
+    -- tour from inside its own first draw and the rest of that draw then
+    -- dereferenced the nil'd state (the 2026-09-09 line-1073 error).
     f:Hide()
+    f:SetScript("OnHide", function()
+        if steps then T.Stop(false) end
+    end)
     frame = f
     return f
 end
@@ -650,6 +664,7 @@ end
 -- next ApplyStatus is a harmless re-application of our own numbers.
 -- ═══════════════════════════════════════════════════════════════════════════
 local savedPanelPos
+local tourPanel    -- the exact panel frame object the running tour is bound to
 
 local function PanelFrame()
     local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
@@ -972,10 +987,12 @@ local function ShowStep()
     local step = steps and steps[index]
     if not step then T.Stop(true) return end
 
-    -- Open ONLY if it is not already open. OpenOptions restores the player's
-    -- saved position into the status table on every call, so calling it each
-    -- step dragged the panel straight back out of centre.
-    if not PanelFrame() and ns.API and ns.API.OpenOptions then ns.API.OpenOptions() end
+    -- NO REOPEN FALLBACK (the walls): T.Start guarantees the panel and the
+    -- panel closing kills the tour, so a missing panel here means a wall
+    -- already failed — a tour must DIE then, never resurrect the panel
+    -- (dragging the options window back onto someone's screen is exactly
+    -- the failure this system is walled against).
+    if not PanelFrame() then T.Stop(false) return end
     local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
     if acd and step.tab then
         acd:SelectGroup("ArcUI", unpack(step.tab))
@@ -992,10 +1009,19 @@ local function ShowStep()
     -- (a step can ask for longer via `delay`, e.g. to wait out async data)
     C_Timer.After(step.delay or 0.06, function()
         if not steps then return end          -- stopped while we waited
+        -- DRAW-TIME WALLS: the world may have changed during the wait.
+        -- Combat begun or panel gone = the tour dies before drawing one
+        -- pixel (the event/callback walls also fire, but this draw must
+        -- never depend on them having run first).
+        if InCombatLockdown() or not PanelFrame() then T.Stop(false) return end
         -- centre BEFORE measuring: every control rect below is relative to it
         CentrePanel()
         local f = BuildFrame()
         local s = BuildSpot()
+        -- re-check after the builders: anything in this callback that ends
+        -- the tour (a teardown hook firing on a creation-time Hide was the
+        -- 2026-09-09 case) must abort the draw, never run on nil'd state
+        if not steps then return end
 
         -- Three ways to pick a subject, in order of preference:
         --   frame = a real UI frame (the Ping Feed window)
@@ -1190,6 +1216,7 @@ function T.Stop(markSeen)
     local ver = running
     local cl = steps and steps.cleanup   -- the tour's own teardown (demo modes etc)
     steps, index, running, lastRect, panelRect = nil, 0, nil, nil, nil
+    tourPanel = nil                      -- unbind from the panel frame
     tweener:SetScript("OnUpdate", nil)     -- kill an in-flight glide
     LowerTarget()
     HideRings()
@@ -1234,7 +1261,41 @@ local function FirstRunnable(version)
     return nil, nil
 end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- THE WALLS (Arc's contract, 2026-09-09, after the tour fired inside a key):
+-- a tour NEVER exists in combat, NEVER without the options panel on screen,
+-- and runs only when explicitly asked. Start is the ONE chokepoint every
+-- entry path funnels through (offer yes-click, the What's New button, the
+-- slash command, chain handoffs), and the walls repeat at runtime: combat
+-- start kills a running tour, the panel closing kills it, ESC kills it —
+-- each wall independent of the others, so no single failure re-opens this.
+-- ═══════════════════════════════════════════════════════════════════════════
 function T.Start(version)
+    if InCombatLockdown() then
+        print("|cff00ccffArcUI|r: the tour can't run in combat. Ask again afterwards with /arctour.")
+        return false
+    end
+    local gdb = GetDB()
+    if gdb and gdb.disabled then return false end     -- /arctour off: dead switch
+    -- the tour lives INSIDE the options panel: open it first, and refuse to
+    -- exist at all if it is not actually open — never a spotlight over the
+    -- open world
+    if not PanelFrame() and ns.API and ns.API.OpenOptions then ns.API.OpenOptions() end
+    local panel = PanelFrame()
+    if not panel then return false end
+    -- HARD TIE to the panel frame's own lifetime, independent of the
+    -- CDMShared close callback: this exact frame object hiding FOR ANY
+    -- REASON kills the tour. AceGUI recycles dialog frames through a shared
+    -- pool, so the hook is per-object-once and the handler checks it is
+    -- still OUR bound panel before acting (a pooled frame serving some
+    -- other dialog later must not kill an unrelated tour).
+    tourPanel = panel
+    if not panel._arcTourHideHooked then
+        panel._arcTourHideHooked = true
+        panel:HookScript("OnHide", function(self)
+            if steps and self == tourPanel then T.Stop(false) end
+        end)
+    end
     version = version or BaseVersion()
     local key, usable = FirstRunnable(version)
     if not usable then return false end
@@ -1268,6 +1329,15 @@ local function MarkOffered(version)
 end
 
 function T.OfferIfNew()
+    -- FIRE-TIME WALLS: the caller defers this (the panel needs a frame to
+    -- draw), so every precondition is re-checked HERE, not where it was
+    -- scheduled. In combat or with the panel already gone the offer simply
+    -- does not appear — and is NOT marked offered, so it returns on the
+    -- next peaceful panel open. Only an actual answer burns the flag.
+    if InCombatLockdown() then return false end
+    if not PanelFrame() then return false end
+    local db = GetDB()
+    if db and db.disabled then return false end       -- /arctour off
     local ver = BaseVersion()
     if not T.HasTour(ver) then return false end
     if T.Seen(ver) or T.Offered(ver) then return false end
@@ -1318,6 +1388,13 @@ function T.OfferIfNew()
             MarkOffered()
             f:Hide()
         end)
+
+        -- ESC must close the question too (an unanswered popup with no ESC
+        -- path is its own failure mode). ESC is not an answer, so the flag
+        -- is untouched and the ask returns on the next peaceful panel open.
+        if not tContains(UISpecialFrames, "ArcUITourOffer") then
+            tinsert(UISpecialFrames, "ArcUITourOffer")
+        end
 
         offerFrame = f
     end
@@ -1418,6 +1495,38 @@ local function SelfCheck(version)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- RUNTIME WALLS (code red, 2026-09-09): the walls in T.Start gate ENTRY;
+-- these two enforce the same law for the tour's whole LIFETIME.
+--   * combat starting = instant full teardown of the tour AND the offer.
+--     Neither is marked seen/offered: both may return in peacetime, but
+--     nothing of ours exists on a combat screen. No exceptions.
+--   * the options panel closing = the same teardown. The tour has no
+--     meaning outside the panel; it must never outlive it.
+-- Panel binding registers at PLAYER_LOGIN because CDMShared loads after
+-- this file.
+-- ═══════════════════════════════════════════════════════════════════════════
+local walls = CreateFrame("Frame")
+walls:RegisterEvent("PLAYER_REGEN_DISABLED")
+walls:RegisterEvent("PLAYER_LOGIN")
+walls:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        if steps then T.Stop(false) end
+        if offerFrame and offerFrame:IsShown() then offerFrame:Hide() end
+        return
+    end
+    -- PLAYER_LOGIN: bind the tour's lifetime to the options panel
+    walls:UnregisterEvent("PLAYER_LOGIN")
+    if ns.CDMShared and ns.CDMShared.RegisterPanelCallback then
+        ns.CDMShared.RegisterPanelCallback("ArcTour", {
+            onClose = function()
+                if steps then T.Stop(false) end
+                if offerFrame and offerFrame:IsShown() then offerFrame:Hide() end
+            end,
+        })
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- slash
 -- ═══════════════════════════════════════════════════════════════════════════
 SLASH_ARCTOUR1 = "/arctour"
@@ -1430,6 +1539,31 @@ SlashCmdList["ARCTOUR"] = function(msg)
         local db = GetDB()
         if db then wipe(db.seen) end
         print("|cff00ccffArcUI|r: tour reset. The What's New window will offer it again.")
+        return
+    end
+
+    -- the panic button: full teardown of everything the tour system can put
+    -- on screen, safe to run any time, running tour or not
+    if cmd == "stop" then
+        local was = steps ~= nil
+        T.Stop(false)
+        if offerFrame then offerFrame:Hide() end
+        print(was and "|cff00ccffArcUI|r: tour stopped, everything cleared."
+                  or  "|cff00ccffArcUI|r: no tour running; overlays cleared anyway.")
+        return
+    end
+
+    -- the dead switch: nothing offers, nothing starts, until turned back on
+    if cmd == "off" or cmd == "on" then
+        local db = GetDB()
+        if db then db.disabled = (cmd == "off") or nil end
+        if cmd == "off" then
+            T.Stop(false)
+            if offerFrame then offerFrame:Hide() end
+            print("|cff00ccffArcUI|r: tours disabled. Nothing will offer or start a tour until /arctour on.")
+        else
+            print("|cff00ccffArcUI|r: tours enabled again.")
+        end
         return
     end
 
@@ -1485,7 +1619,7 @@ SlashCmdList["ARCTOUR"] = function(msg)
         local a = Authored()
         print(("|cff00ccffArcUI|r: tours authored for %s. This build is %s.")
             :format(#a > 0 and table.concat(a, ", ") or "nothing", BaseVersion()))
-        print("  |cff8298b4/arctour|r run  |cff8298b4check|r verify anchors  |cff8298b4reset|r re-offer the tour")
+        print("  |cff8298b4/arctour|r run  |cff8298b4stop|r clear everything  |cff8298b4off|r/|cff8298b4on|r kill switch  |cff8298b4check|r verify anchors  |cff8298b4reset|r re-offer")
 --@debug@
         print("  |cff8298b4dev|r place boxes by hand  |cff8298b4dump|r print them  |cff8298b4clear|r discard them")
 --@end-debug@

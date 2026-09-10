@@ -29,6 +29,16 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.8.8.a",
+    sections = {
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Guided Tour", desc = "Fixed the tour highlight getting stuck on screen or showing up in combat. The tour now runs only from the options panel and cleans up completely when you leave it." },
+        },
+      },
+    },
+  },
+  {
     version = "3.8.8",
     sections = {
       {
@@ -885,8 +895,10 @@ local function BuildFrame()
     if fp then tfs:SetFont(fp, 14, fl) end
   end
   tour:SetScript("OnClick", function()
-    f:Hide()
-    if ns.Tour and ns.Tour.Start then ns.Tour.Start() end
+    -- Start carries the walls (no combat, options panel required): only
+    -- close this window when the tour actually began, so a refusal (with
+    -- its printed reason) leaves the player where they were.
+    if ns.Tour and ns.Tour.Start and ns.Tour.Start() then f:Hide() end
   end)
   f._tourBtn = tour
 
