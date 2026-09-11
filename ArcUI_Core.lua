@@ -2390,7 +2390,8 @@ function ns.API.ScanAvailableBuffs()
       -- Fallback to frame.cooldownInfo if API didn't work
       if not spellName and frame.cooldownInfo then
         spellID = frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
-        if spellID and spellID > 0 then
+        -- frame.cooldownInfo holds secret values in combat; detect-and-skip, never compare
+        if spellID and not (issecretvalue and issecretvalue(spellID)) and spellID > 0 then
           spellName = C_Spell.GetSpellName(spellID)
           iconTextureID = C_Spell.GetSpellTexture(spellID)
         end
@@ -2705,7 +2706,8 @@ function ns.API.ScanAvailableBarsWithDuration()
       -- Fallback to frame.cooldownInfo if API didn't work
       if not spellName and frame.cooldownInfo then
         spellID = frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
-        if spellID and spellID > 0 then
+        -- frame.cooldownInfo holds secret values in combat; detect-and-skip, never compare
+        if spellID and not (issecretvalue and issecretvalue(spellID)) and spellID > 0 then
           spellName = C_Spell.GetSpellName(spellID)
           iconTextureID = C_Spell.GetSpellTexture(spellID)
         end
