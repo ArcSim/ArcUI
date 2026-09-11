@@ -2967,6 +2967,9 @@ function ArcAuras.ApplySettingsToFrame(arcID, frame)
     -- Check if Masque is globally enabled - skip ArcUI visuals even if frame not yet registered
     -- This prevents visual conflicts during zone load when frames are updated before Masque registration
     local masqueActive = ns.Masque and ns.Masque.IsEnabled and ns.Masque.IsEnabled()
+    -- AURA ICONS: Masque support is parked (2026-09-11) — never registered,
+    -- so ArcUI never yields their visuals to Masque either
+    if frame._arcIsAuraIcon then masqueActive = false end
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- MASQUE RE-SKIN: When Masque is active, it calculates Icon insets based on
@@ -5221,36 +5224,49 @@ function ArcAuras.RefreshMasqueState()
     local masqueEnabled = ns.Masque and ns.Masque.IsEnabled and ns.Masque.IsEnabled()
     
     for arcID, frame in pairs(ArcAuras.frames) do
-        if masqueEnabled then
-            -- Masque is now enabled - register via unified system if not already
-            if not frame._arcMasqueAdded then
-                if ns.Masque and ns.Masque.AddFrame then
-                    ns.Masque.AddFrame(frame, "ArcAuras", arcID)
-                    frame._arcMasqueSkinW = frame:GetWidth()
-                    frame._arcMasqueSkinH = frame:GetHeight()
-                end
-            end
-            -- Reset icon texture to default 1:1 for Masque to control
-            if frame.Icon and frame.Icon.SetTexCoord then
-                frame.Icon:SetTexCoord(0, 1, 0, 1)
+        -- AURA ICONS: never Masque-registered (parked - ArcUI keeps full
+        -- visual control, ghost included; the AddFrame chokepoint refuses
+        -- them too) and their texcoords are NEVER reset here - the ghost's
+        -- zoom belongs to AuraIcons.ApplySettings, which also runs any
+        -- leftover-registration cleanup.
+        local isAuraIcon = frame._arcIsAuraIcon
+            or (type(arcID) == "string" and arcID:match("^arc_aura_") ~= nil)
+        if isAuraIcon then
+            if ns.AuraIcons and ns.AuraIcons.ApplySettings then
+                ns.AuraIcons.ApplySettings(arcID)
             end
         else
-            -- Masque is now disabled - unregister via unified system
-            if frame._arcMasqueAdded then
-                if ns.Masque and ns.Masque.RemoveFrame then
-                    ns.Masque.RemoveFrame(frame)
+            if masqueEnabled then
+                -- Masque is now enabled - register via unified system if not already
+                if not frame._arcMasqueAdded then
+                    if ns.Masque and ns.Masque.AddFrame then
+                        ns.Masque.AddFrame(frame, "ArcAuras", arcID)
+                        frame._arcMasqueSkinW = frame:GetWidth()
+                        frame._arcMasqueSkinH = frame:GetHeight()
+                    end
                 end
-                frame._arcMasqueSkinW = nil
-                frame._arcMasqueSkinH = nil
-                -- Reset icon texture to default
+                -- Reset icon texture to default 1:1 for Masque to control
                 if frame.Icon and frame.Icon.SetTexCoord then
                     frame.Icon:SetTexCoord(0, 1, 0, 1)
                 end
+            else
+                -- Masque is now disabled - unregister via unified system
+                if frame._arcMasqueAdded then
+                    if ns.Masque and ns.Masque.RemoveFrame then
+                        ns.Masque.RemoveFrame(frame)
+                    end
+                    frame._arcMasqueSkinW = nil
+                    frame._arcMasqueSkinH = nil
+                    -- Reset icon texture to default
+                    if frame.Icon and frame.Icon.SetTexCoord then
+                        frame.Icon:SetTexCoord(0, 1, 0, 1)
+                    end
+                end
             end
+
+            -- Refresh settings regardless
+            ArcAuras.RefreshFrameSettings(arcID)
         end
-        
-        -- Refresh settings regardless
-        ArcAuras.RefreshFrameSettings(arcID)
     end
 end
 

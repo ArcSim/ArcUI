@@ -2409,13 +2409,45 @@ local function BuildEJStrip()
     s.plan:SetFont(STANDARD_TEXT_FONT, 12, "")
     s.plan:SetPoint("LEFT", s.count, "RIGHT", 18, 0)
     s.plan:SetTextColor(AT.COL.ink[1], AT.COL.ink[2], AT.COL.ink[3])
-    -- scans the shown loot list and CHECKS OFF what you already have.
-    -- Shorter than the strip so its border never kisses the strip's edge
-    -- (the clipping Arc saw when both were the same height).
+    -- right-side controls, outermost first: [Set Up] [%] [x]
+    -- All buttons shorter than the strip so their borders never kiss the
+    -- strip's edge (the clipping Arc saw when both were the same height).
+    -- x = the module off-switch, right on the guide (Arc's ask 2026-09-10):
+    -- the fastest honest exit for someone who does not want the overlays.
+    -- Confirms, then flips the SAME master switch as Settings > Modules -
+    -- looked up through NS at click time (SetModuleEnabled is declared
+    -- later in the file; a direct upvalue here would capture nil).
+    local offBtn = AT.MakeSmallButton(s, "x", 16)
+    offBtn:SetHeight(16)
+    offBtn:SetPoint("RIGHT", -6, 0)
+    offBtn:SetScript("OnClick", function()
+        if not StaticPopupDialogs["ARCUI_LOOTPLANNER_DISABLE"] then
+            StaticPopupDialogs["ARCUI_LOOTPLANNER_DISABLE"] = {
+                text = "Turn off the ArcUI Loot Planner?\n\nThis removes all of it: the Adventure Guide overlays, roll planning, reminders, and its options tab.\n\nRe-enable any time in ArcUI Options > Settings > Modules.",
+                button1 = "Turn Off",
+                button2 = "Cancel",
+                OnAccept = function()
+                    if NS.BonusRollSetEnabled then NS.BonusRollSetEnabled(false) end
+                end,
+                timeout = 0, whileDead = true, hideOnEscape = true,
+                preferredIndex = 3,
+            }
+        end
+        StaticPopup_Show("ARCUI_LOOTPLANNER_DISABLE")
+    end)
+    offBtn:HookScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Turn off the Loot Planner", 0.2, 0.8, 1)
+        GameTooltip:AddLine("Removes the whole module: these overlays, roll planning, reminders, and its options tab.", 1, 1, 1, true)
+        GameTooltip:AddLine("Re-enable any time in ArcUI Options > Settings > Modules.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    offBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
     -- absolute vs percent EV, right on the guide (mirrors the /abr toggle)
     local pctBtn = AT.MakeSmallButton(s, "%", 24)
     pctBtn:SetHeight(16)
-    pctBtn:SetPoint("RIGHT", -6, 0)
+    pctBtn:SetPoint("RIGHT", offBtn, "LEFT", -5, 0)
     local function SyncPctBtn()
         pctBtn.fs:SetText(char and char.settings.evPercent and "#" or "%")
     end
@@ -2434,21 +2466,27 @@ local function BuildEJStrip()
     pctBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
     s.syncPctBtn = SyncPctBtn
 
-    local detect = AT.MakeSmallButton(s, "Scan gear", 78)
-    detect:SetHeight(16)
-    detect:SetPoint("RIGHT", pctBtn, "LEFT", -5, 0)
-    detect:SetScript("OnClick", function() EstimateLootedScan() end)
-    detect:HookScript("OnEnter", function(self)
+    -- straight to the Loot Planner options (replaced the Scan gear button,
+    -- Arc's call 2026-09-10: setup beats a niche scan here - the scan lives
+    -- on as the options tab's "Scan gear for looted items")
+    local setup = AT.MakeSmallButton(s, "Set Up", 62)
+    setup:SetHeight(16)
+    setup:SetPoint("RIGHT", pctBtn, "LEFT", -5, 0)
+    setup:SetScript("OnClick", function()
+        if NS.API and NS.API.OpenOptions then NS.API.OpenOptions() end
+        local acd = LibStub and LibStub("AceConfigDialog-3.0", true)
+        if acd then acd:SelectGroup("ArcUI", "bonusroll") end
+    end)
+    setup:HookScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Scan gear", 0.2, 0.8, 1)
-        GameTooltip:AddLine("Checks your equipped gear, bags, and transmog collection against the selected boss's loot on this difficulty, and checks off what you already have.", 1, 1, 1, true)
-        GameTooltip:AddLine("An estimate - click any check it makes to undo it.", 0.7, 0.7, 0.7, true)
+        GameTooltip:SetText("Loot Planner options", 0.2, 0.8, 1)
+        GameTooltip:AddLine("Open the Loot Planner tab: import sims, plan your coins, and tune every overlay.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
-    detect:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    setup:HookScript("OnLeave", function() GameTooltip:Hide() end)
     s.used = s:CreateFontString(nil, "OVERLAY")
     s.used:SetFont(STANDARD_TEXT_FONT, 12, "")
-    s.used:SetPoint("RIGHT", detect, "LEFT", -14, 0)
+    s.used:SetPoint("RIGHT", setup, "LEFT", -14, 0)
     s.used:SetTextColor(AT.COL.ink[1], AT.COL.ink[2], AT.COL.ink[3])
     -- the planned list is the flex element: bound it on the right so a
     -- narrow placement TRUNCATES it instead of overlapping its neighbors
@@ -5093,7 +5131,7 @@ function NS.GetBonusRollOptionsTable()
                     stripHeader = { type = "header", order = 10, name = "Adventure Guide Info Bar" },
                     showStrip = {
                         type = "toggle", order = 11, name = "Journal info bar", width = "full",
-                        desc = "The Arc Loot Planner bar inside the Adventure Guide: rolls available, planned bosses, the roll counter, and the Scan gear button.",
+                        desc = "The Arc Loot Planner bar inside the Adventure Guide: rolls available, planned bosses, the roll counter, and shortcuts to these options and the module switch.",
                         get = function() return char and char.settings.showStrip end,
                         set = function(_, v) if char then char.settings.showStrip = v; RefreshEJ(); RefreshEJStrip() end end,
                     },

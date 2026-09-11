@@ -315,7 +315,7 @@ local TOURS = {
                 return strip and { strip } or nil
             end,
             title = "It lives in the Adventure Guide",
-            text  = "The circled bar is the Loot Planner inside your guide: rolls available, planned bosses and the gear scan.\n\nBelow it, every boss wears a coin with its roll value - click one right there to plan it - and the loot list carries value lines and owned check marks.\n\nEvery overlay has its switch on the Overlays tab, and need or greed roll windows get a value badge too.",
+            text  = "The circled bar is the Loot Planner inside your guide: rolls available, planned bosses, and buttons that jump to its options or switch the module off.\n\nBelow it, every boss wears a coin with its roll value - click one right there to plan it - and the loot list carries value lines and owned check marks.\n\nEvery overlay has its switch on the Overlays tab, and need or greed roll windows get a value badge too.",
         },
         {
             tab   = { "bonusroll", "protection" },

@@ -168,8 +168,20 @@ local function IsMasqueActive()
     if ns.Masque.IsEnabled then
         return ns.Masque.IsEnabled()
     end
-    
+
     return false
+end
+
+-- Helper for the AURA panel's Zoom/Aspect/Padding gates: Masque governs the
+-- selection ONLY when it is active AND the selected icon is a CDM aura icon.
+-- Arc AURA icons are never Masque-skinned (support parked 2026-09-11), so
+-- their appearance sliders stay live regardless of Masque state.
+local function MasqueControlsAuraSelection()
+    if not IsMasqueActive() then return false end
+    if type(selectedAuraIcon) == "string" and selectedAuraIcon:match("^arc_aura_") then
+        return false
+    end
+    return true
 end
 
 -- Helper: Check if Masque controls cooldown animations (disables cooldown swipe options)
@@ -3309,7 +3321,10 @@ function ns.GetCDMAuraIconsOptionsTable()
       order = 100.1,
       width = "full",
       fontSize = "medium",
-      hidden = function() return collapsedSections.iconAppearance or not IsMasqueActive() end,
+      -- arc aura icons are never Masque-skinned: no notice for them
+      hidden = function()
+        return collapsedSections.iconAppearance or not MasqueControlsAuraSelection()
+      end,
     },
     
     useGroupScale = {
@@ -3439,27 +3454,27 @@ function ns.GetCDMAuraIconsOptionsTable()
     },
     aspectRatio = {
       type = "range", name = "Aspect Ratio", min = 0.25, max = 2.5, step = 0.05,
-      desc = "Adjusts icon shape. 1 = square, higher = wider, lower = taller.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls icon appearance via its skin settings.",
+      desc = "Adjusts icon shape. 1 = square, higher = wider, lower = taller.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls icon appearance via its skin settings. Arc aura icons are never Masque-skinned, so these always apply to them.",
       get = function() local c = GetAuraCfg(); return c and c.aspectRatio or 1.0 end,
       set = function(_, v) ApplyAuraSetting(function(c) c.aspectRatio = v end) end,
       order = 104, width = 0.85, hidden = HideAuraIconAppearance,
-      disabled = IsMasqueActive,
+      disabled = MasqueControlsAuraSelection,
     },
     zoom = {
       type = "range", name = "Zoom", min = 0, max = 0.3, step = 0.01,
-      desc = "Crops icon edges for a cleaner look.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings.",
+      desc = "Crops icon edges for a cleaner look.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls zoom via its skin settings. Arc aura icons are never Masque-skinned, so this always applies to them.",
       get = function() local c = GetAuraCfg(); return c and c.zoom or 0.08 end,
       set = function(_, v) ApplyAuraSetting(function(c) c.zoom = v end) end,
       order = 105, width = 0.65, hidden = HideAuraIconAppearance,
-      disabled = IsMasqueActive,
+      disabled = MasqueControlsAuraSelection,
     },
     padding = {
       type = "range", name = "Padding", min = -5, max = 20, step = 1,
-      desc = "Space between icon and frame edges.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls icon appearance via its skin settings.",
+      desc = "Space between icon and frame edges.\n\n|cffff9900Note:|r Disabled when Masque is active - Masque controls icon appearance via its skin settings. Arc aura icons are never Masque-skinned, so this always applies to them.",
       get = function() local c = GetAuraCfg(); return c and c.padding or 0 end,
       set = function(_, v) ApplyAuraSetting(function(c) c.padding = v end) end,
       order = 106, width = 0.65, hidden = HideAuraIconAppearance,
-      disabled = IsMasqueActive,
+      disabled = MasqueControlsAuraSelection,
     },
     shadowSize = {
       type = "range", name = "Shadow Size",
@@ -4808,7 +4823,7 @@ function ns.GetCDMAuraIconsOptionsTable()
     inactiveStateAlpha = {
       type = "range",
       name = "Inactive Alpha",
-      desc = "Icon visibility when inactive",
+      desc = "Icon visibility when inactive.\n\nNote: Masque skins are not yet supported on aura icons - they stay unskinned so no skin piece can cover the live aura.",
       min = 0, max = 1.0, step = 0.05,
       get = function()
         local c = GetAuraCfg()
@@ -13173,7 +13188,7 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
       },
       inactiveStateAlpha = {
         type = "range", name = "Inactive Alpha", min = 0, max = 1.0, step = 0.05,
-        desc = "Icon visibility when inactive",
+        desc = "Icon visibility when inactive.\n\nNote: Masque skins are not yet supported on aura icons - they stay unskinned so no skin piece can cover the live aura.",
         get = function()
           local g = GetAuraGlobalCfg()
           if g.cooldownStateVisuals and g.cooldownStateVisuals.cooldownState then
@@ -17069,6 +17084,178 @@ function ns.GetCDMIconsOptionsTable()
   }
   -- (icon override input lives in Icon Appearance's Custom Icon field,
   -- arc-aware with the ID Type selector — no duplicate here)
+
+  -- ── AURA TRACKING (Arc AURA icons): the Add popup's fields on a LIVE
+  -- icon — type, units, Own Auras Only, spell ID ("I forgot Only Mine"
+  -- no longer means delete-and-recreate). All validation and the
+  -- disposition prune live in ns.AuraIcons.UpdateTracking (one path);
+  -- slots rewire immediately, groups re-sync on the queued pass. ──
+  local function GetSingleArcAuraID()
+    local id = GetSingleArcID()
+    if id and id:match("^arc_aura_") and ns.AuraIcons and ns.AuraIcons.Get
+       and ns.AuraIcons.Get(id) then
+      return id
+    end
+    return nil
+  end
+  local function HideAuraTracking() return GetSingleArcAuraID() == nil end
+  local function HideAuraTrackingBody()
+    return HideAuraTracking() or collapsedSections.arcAuraTracking
+  end
+  args.arcAuraTrackHeader = {
+    type = "toggle",
+    name = "Aura Tracking",
+    desc = "Click to expand/collapse.\n\nWhat this icon watches: buff or debuff, on which units, only your own casts or anyone's, and the spell ID. The same choices as the Add window, editable after creation.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not collapsedSections.arcAuraTracking end,
+    set = function(_, v) collapsedSections.arcAuraTracking = not v end,
+    order = 99.86,
+    width = "full",
+    hidden = HideAuraTracking,
+  }
+  args.arcAuraTrackType = {
+    type = "select",
+    name = "Track",
+    desc = "Buff, debuff, or both. Switching to a debuff drops units that can never be hostile: the game ignores spell-ID filters for debuffs on friendly units, so such an icon would light for ANY debuff.",
+    order = 99.861,
+    width = 0.9,
+    values = { buff = "Buff", debuff = "Debuff", both = "Buff and Debuff" },
+    sorting = { "buff", "debuff", "both" },
+    hidden = HideAuraTrackingBody,
+    get = function()
+      local id = GetSingleArcAuraID()
+      if not id then return "buff" end
+      return (ns.AuraIcons.GetTrackingShape(id)) or "buff"
+    end,
+    set = function(_, v)
+      local id = GetSingleArcAuraID()
+      if not id then return end
+      local _, u = ns.AuraIcons.GetTrackingShape(id)
+      local copy = {}
+      for k, on in pairs(u or {}) do if on then copy[k] = true end end
+      ns.AuraIcons.UpdateTracking(id, { auraType = v, units = copy })
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
+  args.arcAuraTrackUnitsLbl = {
+    type = "description",
+    name = "|cffaaaaaaLights while the aura is on ANY of the ticked units:|r",
+    order = 99.8615,
+    width = "full",
+    fontSize = "small",
+    hidden = HideAuraTrackingBody,
+  }
+  local AURA_TRACK_UNITS = {
+    { "player", "You" }, { "target", "Target" }, { "focus", "Focus" },
+    { "pet", "Pet" }, { "party", "Party" },
+  }
+  for i, unitDef in ipairs(AURA_TRACK_UNITS) do
+    local unitKey, unitLabel = unitDef[1], unitDef[2]
+    args["arcAuraTrackUnit" .. unitKey] = {
+      type = "toggle",
+      name = unitLabel,
+      order = 99.862 + i * 0.0001,
+      width = 0.6,
+      hidden = function()
+        if HideAuraTrackingBody() then return true end
+        local id = GetSingleArcAuraID()
+        if not id then return true end
+        local t = ns.AuraIcons.GetTrackingShape(id)
+        if t == "buff" then return false end
+        -- non-buff: hostile-capable units, plus You only for a spell the
+        -- game never hides (mirrors UpdateTracking's prune)
+        if unitKey == "target" or unitKey == "focus" then return false end
+        if unitKey == "player" then
+          return not (ns.AuraIcons.DefNeverSecret and ns.AuraIcons.DefNeverSecret(id))
+        end
+        return true
+      end,
+      get = function()
+        local id = GetSingleArcAuraID()
+        if not id then return false end
+        local _, u = ns.AuraIcons.GetTrackingShape(id)
+        return u and u[unitKey] and true or false
+      end,
+      set = function(_, val)
+        local id = GetSingleArcAuraID()
+        if not id then return end
+        local t, u = ns.AuraIcons.GetTrackingShape(id)
+        local copy = {}
+        for k, on in pairs(u or {}) do if on then copy[k] = true end end
+        copy[unitKey] = val and true or nil
+        if not next(copy) then copy[unitKey] = true end   -- never nothing to watch
+        ns.AuraIcons.UpdateTracking(id, { auraType = t, units = copy })
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+    }
+  end
+  args.arcAuraTrackOwnOnly = {
+    type = "toggle",
+    name = "Own Auras Only",
+    desc = "Only your own casts count (your pet's and your vehicle's too) - other players' copies of the aura are ignored. The same option the Add window offers.",
+    order = 99.864,
+    width = 1.2,
+    hidden = HideAuraTrackingBody,
+    get = function()
+      local id = GetSingleArcAuraID()
+      if not id then return false end
+      local _, _, own = ns.AuraIcons.GetTrackingShape(id)
+      return own
+    end,
+    set = function(_, val)
+      local id = GetSingleArcAuraID()
+      if not id then return end
+      ns.AuraIcons.UpdateTracking(id, { ownOnly = val and true or false })
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
+  args.arcAuraTrackSpellID = {
+    type = "input",
+    dialogControl = "ArcUI_EditBox",
+    name = "Spell ID",
+    desc = "Change which aura this icon watches. The icon keeps its look, position, and group placement - only the tracked spell changes (name and art follow the new spell).",
+    order = 99.865,
+    width = 0.8,
+    hidden = function()
+      if HideAuraTrackingBody() then return true end
+      local id = GetSingleArcAuraID()
+      if not id then return true end
+      local _mt, _mu, _mo, _msid, multi = ns.AuraIcons.GetTrackingShape(id)
+      return multi and true or false
+    end,
+    get = function()
+      local id = GetSingleArcAuraID()
+      if not id then return "" end
+      local _t, _u, _o, spellID = ns.AuraIcons.GetTrackingShape(id)
+      return spellID and tostring(spellID) or ""
+    end,
+    set = function(_, v)
+      local id = GetSingleArcAuraID()
+      if not id then return end
+      -- extra parens: gsub's second return must not land in tonumber's base
+      local newID = tonumber(((v or ""):gsub("%D", "")))
+      if not newID then return end
+      local ok, err = ns.AuraIcons.UpdateTracking(id, { spellID = newID })
+      if not ok and err then
+        print("|cff00CCFF[Arc Auras]|r " .. err)
+      end
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
+  args.arcAuraTrackMultiNote = {
+    type = "description",
+    name = "|cff8298b4This icon tracks a fixed list of spells (a preset or CDM import), so its IDs are not editable - everything above still applies to the whole list.|r",
+    order = 99.8655,
+    width = "full",
+    fontSize = "small",
+    hidden = function()
+      if HideAuraTrackingBody() then return true end
+      local id = GetSingleArcAuraID()
+      if not id then return true end
+      local _mt, _mu, _mo, _msid, multi = ns.AuraIcons.GetTrackingShape(id)
+      return not multi
+    end,
+  }
 
   -- ── CUSTOM TIMER EDITOR (mounted from the Custom Icons tab) ──
   -- Every "editor*" entry of the Custom Icons options table is copied in

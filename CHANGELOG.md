@@ -1,3 +1,14 @@
+## 3.8.9
+
+### New Features
+
+- **Aura Tracking Editor** — Aura icons can now be edited after creation: select one in the Icon Catalog and the new Aura Tracking section changes what it watches - buff or debuff, which units, Own Auras Only, even the spell ID - while the icon keeps its look, position, and group placement. No more delete-and-recreate because one option was missed.
+- **Loot Planner Guide Buttons** — The bar inside the Adventure Guide now carries a Set Up button that opens the Loot Planner options directly, and a small x that can switch the whole module off right from the guide (re-enable any time in Settings > Modules). Gear scanning moved into the Loot Planner options tab.
+
+### Bug Fixes
+
+- **Masque and Aura Icons** — With Masque enabled, aura icons no longer show broken skin pieces (empty silver border squares, a backdrop covering the live aura), and they keep their own Zoom, Aspect Ratio, and Padding instead of losing them to Masque - the sliders stay editable too. Masque skinning is not yet supported on aura icons (a proper version is planned), so they now stay cleanly under ArcUI's control; every other icon type is unaffected.
+
 ## 3.8.8.a
 
 ### Bug Fixes

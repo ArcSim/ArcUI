@@ -2,7 +2,7 @@
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.8.8.a
+## Version: 3.8.9
 ## IconTexture: Interface\AddOns\ArcUI\Textures\ArcUI_Icon_400x400
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614

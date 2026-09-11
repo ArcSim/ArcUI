@@ -1256,6 +1256,13 @@ local function GetEffectiveIconSettings(cooldownID)
   -- Masque controls icon borders/textures, so ArcUI shouldn't apply zoom/padding/aspectRatio
   -- Check requires: ns.Masque exists, IsEnabled function exists, AND IsEnabled() returns true
   local masqueEnabled = ns.Masque and ns.Masque.IsEnabled and (ns.Masque.IsEnabled() == true)
+  -- AURA ICONS: Masque support is parked (2026-09-11) — they are never
+  -- skinned, so the cascade must never flatten their zoom/aspect/padding
+  -- for Masque either (this flattening was why aura ghosts lost their
+  -- zoom whenever the Masque toggle was on — the cfg zoom=0 probe find)
+  if masqueEnabled and type(cooldownID) == "string" and cooldownID:match("^arc_aura_") then
+    masqueEnabled = false
+  end
   if masqueEnabled then
     effective.aspectRatio = 1.0
     effective.zoom = 0
@@ -2835,7 +2842,12 @@ ApplyIconStyle = function(frame, cdID)
   
   -- MASQUE COMPATIBILITY: Check if Masque skinning is enabled for this viewer type
   local masqueActive = ns.Masque and ns.Masque.ShouldMasqueControlIcon and ns.Masque.ShouldMasqueControlIcon(vType)
-  
+
+  -- AURA ICONS: Masque support is parked (2026-09-11) — they are never
+  -- registered, so ArcUI must NEVER yield their zoom/aspect/padding to
+  -- Masque either, or the ghost renders unzoomed whenever Masque is on.
+  if frame._arcIsAuraIcon then masqueActive = false end
+
   if masqueActive then
     -- Masque controls icon appearance - use defaults (no zoom/padding from ArcUI)
     aspectRatio = 1.0

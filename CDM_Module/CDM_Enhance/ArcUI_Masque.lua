@@ -507,6 +507,18 @@ function ns.Masque.AddFrame(frame, viewerName, cdID)
     -- frame creation sweeps) can resurrect the skin on a hidden ghost.
     if frame._arcMasqueGhostSuppressed then return end
 
+    -- AURA ICONS ARE NEVER REGISTERED (Arc's call 2026-09-11): ArcUI keeps
+    -- full visual control of aura icons — the ghost included — while Masque
+    -- support for them is parked. Gated HERE, the one chokepoint, so no
+    -- path (holder creation, RefreshMasqueState, ReregisterAllFrames, resize
+    -- reskins) can slip one in at any timing. The frame flag is stamped at
+    -- holder build, before any settings pass; the id match covers calls that
+    -- pass the arcID before the flag could exist.
+    if frame._arcIsAuraIcon
+       or (type(cdID) == "string" and cdID:match("^arc_aura_")) then
+        return
+    end
+
     -- Get cdID if not provided
     cdID = cdID or frame.cooldownID or frame._arcCDID
     if not cdID then return end
@@ -652,6 +664,35 @@ function ns.Masque.RemoveFrame(frame)
     frame._arcMasqueAdded = nil
     frame._arcMasqueGroupKey = nil
     frame._arcMasqueCdID = nil
+end
+
+-- residual layer keys checked by HideResidualSkin (module-level: no per-call table)
+local RESIDUAL_SKIN_KEYS = { "Normal", "Normal_Custom" }
+
+--- Hide the skin Masque leaves behind on removal. RemoveButton does NOT
+--- strip its skin — it repaints the button with the DEFAULT skin on the way
+--- out (Masque Group.lua: "Removes a button from the group and applies the
+--- default skin"), and for our plain-Frame holders that leaves the classic
+--- silver border painted over a hidden ghost (the 2026-09-10 empty-square
+--- report). That border is a Masque-CREATED texture: plain Frames register
+--- in strict mode, so it never appears in the region table the public
+--- GetLayer API reads — the only reach is the per-button config Masque
+--- stores on OUR frame (_MSQ_CFG). Hide it exactly the way Masque hides a
+--- skin's Normal layer (SetTexture + Hide, Regions/Normal.lua): fully
+--- reversible, re-registration re-skins and ends in Region:Show(). Every
+--- access is nil-guarded so a future Masque rename degrades to a no-op,
+--- never an error.
+function ns.Masque.HideResidualSkin(frame)
+    local cfg = frame and frame._MSQ_CFG
+    if type(cfg) ~= "table" then return end
+    for _i, key in ipairs(RESIDUAL_SKIN_KEYS) do
+        local tex = cfg[key]
+        if type(tex) == "table" and tex.SetTexture and tex.Hide
+           and tex ~= frame.Icon then
+            tex:SetTexture()
+            tex:Hide()
+        end
+    end
 end
 
 --- Remove all frames from Masque (used when settings change that require re-registration)
