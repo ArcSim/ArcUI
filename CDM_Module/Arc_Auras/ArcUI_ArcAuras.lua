@@ -1039,6 +1039,12 @@ local function CreateArcAuraFrame(arcID, config)
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
+    -- WIRE-ONCE LAW: construction runs on frame REUSE too (orphaned named
+    -- frames fall through into this block), and the SetScripts below REPLACE
+    -- any CDMGroups free-drag handlers the old frame carried - clear the free
+    -- path's wire-once flag so SetupFreeIconDrag re-wires instead of trusting
+    -- a stale "already wired".
+    frame._cdmgFreeDragScriptsWired = nil
     frame:SetScript("OnDragStart", function(self)
         if self._isDraggable then
             self:StartMoving()
@@ -1446,6 +1452,14 @@ function ArcAuras.DestroyFrame(arcID)
         frame:SetScript("OnDragStart", nil)
         frame:SetScript("OnDragStop", nil)
         frame:SetScript("OnUpdate", nil)
+        -- WIRE-ONCE LAW (2026-09-04): the free-drag scripts are installed
+        -- once behind _cdmgFreeDragScriptsWired — clearing the scripts
+        -- WITHOUT the flag leaves a REUSED named frame (CreateArcAuraFrame
+        -- reuses orphans; totems destroy/recreate on every spec change)
+        -- claiming "already wired" with no drag scripts installed = a
+        -- permanently undraggable free icon (the 2026-09-14 totem slots
+        -- report). This was the missing FIFTH script-clearing site.
+        frame._cdmgFreeDragScriptsWired = nil
     end
     
     -- ═══════════════════════════════════════════════════════════════════════════
@@ -3479,6 +3493,17 @@ function ArcAuras.AddTrackedItem(config)
         isAutoTrackSlot = config.isAutoTrackSlot or false,
         hideWhenUnequipped = config.hideWhenUnequipped or false,
     }
+
+    -- NEW-ICON DEFAULT (Arc's call 2026-09-14): an EXPLICIT user add loads
+    -- only on the spec it was created on (allowCopy = options Add popup,
+    -- isUserAdd = drag-drop widget). Automatic callers (auto-track trinket
+    -- slots, equip scans) set neither and keep the all-specs default -
+    -- gear icons re-added by sweeps must not be pinned to whatever spec
+    -- the sweep happened to run on.
+    if config.allowCopy or config.isUserAdd then
+        local curSpec = GetSpecialization and GetSpecialization()
+        if curSpec then entry.showOnSpecs = { curSpec } end
+    end
     
     -- Save to database
     db.trackedItems[arcID] = entry

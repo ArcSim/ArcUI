@@ -1179,7 +1179,21 @@ initFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 initFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         InitMasque()
-        
+
+        -- LOGIN CACHE FIX (the /arcskin probe discovery + Discord report
+        -- 1549086692, skins missing on alts after profile copies): ArcUI
+        -- loads BEFORE the Masque addon (alphabetical load order), so any
+        -- IsEnabled()/ShouldMasqueControlCooldowns() call during our load
+        -- cached FALSE, and nothing invalidated it until an options-panel
+        -- open — Masque silently inactive for the whole session on some
+        -- login orders. Masque is guaranteed loaded by PLAYER_LOGIN: drop
+        -- the stale caches (and the CDMEnhance settings cascade built on
+        -- them) so every later consumer sees the truth.
+        InvalidateMasqueCache()
+        if ns.CDMEnhance and ns.CDMEnhance.InvalidateCache then
+            ns.CDMEnhance.InvalidateCache()
+        end
+
         -- Check for conflicting addons after a short delay
         C_Timer.After(1, function()
             CheckForConflictingAddons()

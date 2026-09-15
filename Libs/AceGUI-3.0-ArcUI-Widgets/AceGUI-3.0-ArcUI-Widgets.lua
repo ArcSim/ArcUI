@@ -215,6 +215,7 @@ local function Constructor()
                     type = "item",
                     itemID = itemID,
                     enabled = true,
+                    isUserAdd = true,  -- explicit add: default load spec = current spec only
                 })
                 
                 if success then

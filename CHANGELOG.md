@@ -1,3 +1,17 @@
+## 3.8.10
+
+### Improvements
+
+- **New Icons Load Only On Their Spec** — A newly created aura icon or arc icon now loads only on the spec it was created on instead of all specs. Widen it any time with the spec checkboxes in Load Conditions; existing icons are unchanged.
+- **Totem Slot Controls in the Icon Catalog** — Selecting a totem slot icon in the Icon Catalog now shows the totem tracking switches (the master toggle and each per-slot toggle) right there, instead of only in the Add Arc Icon section.
+
+### Bug Fixes
+
+- **Totem Slot Dragging** — Free-placed totem slot icons could permanently lose their dragging after a spec change or reload while everything else about them looked fine. They now stay movable.
+- **Spec Settings Survive Profile Sync** — With shared same-class profiles, unchecking specs or setting talent conditions on a synced character no longer gets reverted at the next login. Each character now keeps its own load conditions; everything else still syncs from the source as before.
+- **Masque Skins at Login** — Masque skins now apply right at login. Previously they could silently stay off for the whole session until the options panel was opened once.
+- **Tooltips on Reappearing Groups** — Icons in groups shown by visibility conditions (for example combat-only groups) no longer come back with their tooltip behavior flipped against your settings.
+
 ## 3.8.9
 
 ### New Features

@@ -1769,6 +1769,19 @@ function AuraIcons.Create(defIn)
         units    = defIn.units,
         ownOnly  = defIn.ownOnly and true or false,
     }
+
+    -- NEW-ICON DEFAULT (Arc's call 2026-09-14): a new aura icon loads only
+    -- on the spec it was created on (every caller is a user-initiated
+    -- create: add form, presets, slash, CDM import). The Load Conditions
+    -- spec toggles widen it; nil/empty still means "all specs", so existing
+    -- icons are untouched. Callers may pass their own showOnSpecs.
+    if defIn.showOnSpecs ~= nil then
+        def.showOnSpecs = defIn.showOnSpecs
+    else
+        local curSpec = GetSpecialization and GetSpecialization()
+        if curSpec then def.showOnSpecs = { curSpec } end
+    end
+
     db.auraIcons[arcID] = def
 
     -- NEW-ICON DEFAULT (Arc's call): the aura-missing ghost starts

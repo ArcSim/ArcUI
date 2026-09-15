@@ -1888,6 +1888,16 @@ function ArcAurasCooldown.AddTrackedSpell(spellID, allowCopy)
         -- for engineering enchants, items-as-spells, profession abilities, etc.
     }
 
+    -- NEW-ICON DEFAULT (Arc's call 2026-09-14): a freshly added spell icon
+    -- loads only on the spec it was created on, not all specs (every caller
+    -- of this function is an explicit user add - options popup, drag-drop
+    -- widget). The Load Conditions spec toggles widen it; imports and shared
+    -- profiles copy configs wholesale and never pass through here.
+    local curSpec = GetSpecialization and GetSpecialization()
+    if curSpec then
+        db.trackedSpells[arcID].showOnSpecs = { curSpec }
+    end
+
     if ArcAuras.InvalidateSettingsCache then ArcAuras.InvalidateSettingsCache(arcID) end
 
     if ArcAuras.isEnabled and ArcAurasCooldown.ShouldFrameBeVisible(db.trackedSpells[arcID], spellID) then

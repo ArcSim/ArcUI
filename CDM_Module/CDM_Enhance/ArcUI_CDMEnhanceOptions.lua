@@ -17257,6 +17257,76 @@ function ns.GetCDMIconsOptionsTable()
     end,
   }
 
+  -- ── TOTEM SLOTS (totem selection): the same master + per-slot switches
+  -- that live in Add Arc Icon > Totem Slots, surfaced when a totem slot
+  -- icon is selected in the catalog (Arc's ask 2026-09-14). Like trinket
+  -- auto-track icons, totem icons are RECREATED from the slot setup at
+  -- every login — these switches are the honest controls, so they must be
+  -- reachable from the icon itself. ──
+  local function GetSingleArcTotemSlot()
+    local id = GetSingleArcID()
+    if not (id and ns.ArcAurasTotems and ns.ArcAurasTotems.ParseID) then return nil end
+    return ns.ArcAurasTotems.ParseID(id)
+  end
+  local function HideTotemSlotSection() return GetSingleArcTotemSlot() == nil end
+  local function HideTotemSlotBody()
+    return HideTotemSlotSection() or collapsedSections.arcTotemSlots
+  end
+  args.arcTotemHeader = {
+    type = "toggle",
+    name = "Totem Slots",
+    desc = "Click to expand/collapse.\n\nThe totem slot switches - the same controls as Add Arc Icon > Totem Slots.",
+    dialogControl = "CollapsibleHeader",
+    get = function() return not collapsedSections.arcTotemSlots end,
+    set = function(_, v) collapsedSections.arcTotemSlots = not v end,
+    order = 99.87,
+    width = "full",
+    hidden = HideTotemSlotSection,
+  }
+  args.arcTotemDesc = {
+    type = "description",
+    name = "|cffaaaaaaTotem slot icons are managed by these switches: each icon is recreated from the slot setup at login (like auto-tracked trinkets), so turn a slot off HERE rather than removing its icon.|r",
+    order = 99.8705,
+    width = "full",
+    fontSize = "small",
+    hidden = HideTotemSlotBody,
+  }
+  args.arcTotemEnable = {
+    type = "toggle",
+    name = "Enable Totem Slot Tracking",
+    desc = "Show an icon for each of your totem slots.",
+    order = 99.871,
+    width = 1.5,
+    hidden = HideTotemSlotBody,
+    get = function() return ns.ArcAurasTotems and ns.ArcAurasTotems.IsEnabled() end,
+    set = function(_, v)
+      if ns.ArcAurasTotems then ns.ArcAurasTotems.SetEnabled(v) end
+      LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+    end,
+  }
+  for slot = 1, 8 do
+    local thisSlot = slot
+    args["arcTotemSlot" .. thisSlot] = {
+      type = "toggle",
+      name = "Slot " .. thisSlot,
+      desc = "Track totem slot " .. thisSlot .. ".",
+      order = 99.871 + thisSlot * 0.0001,
+      width = 0.7,
+      hidden = function()
+        if HideTotemSlotBody() then return true end
+        if not (ns.ArcAurasTotems and ns.ArcAurasTotems.IsEnabled()) then return true end
+        return thisSlot > ns.ArcAurasTotems.GetNumSlots()
+      end,
+      get = function()
+        return ns.ArcAurasTotems and ns.ArcAurasTotems.IsSlotEnabled(thisSlot)
+      end,
+      set = function(_, v)
+        if ns.ArcAurasTotems then ns.ArcAurasTotems.SetSlotEnabled(thisSlot, v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+    }
+  end
+
   -- ── CUSTOM TIMER EDITOR (mounted from the Custom Icons tab) ──
   -- Every "editor*" entry of the Custom Icons options table is copied in
   -- with orders compressed into 99.9x and hidden additionally gated on a

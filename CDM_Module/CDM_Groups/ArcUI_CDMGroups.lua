@@ -12439,13 +12439,20 @@ function ns.CDMGroups.CreateGroup(name, groupType)
             -- (frame may have transitioned from free position where button was hidden)
             ns.CDMGroups.UpdateSingleEditButton(frame)
         end
-        
+
+        -- WIRE-ONCE LAW: the member scripts below REPLACE the free-icon handlers,
+        -- so the free path's wire-once flag must be cleared here - otherwise a
+        -- frame that later returns to free keeps the member OnDragStart, whose
+        -- members-table guard silently refuses for a free icon (undraggable
+        -- while every free-path state probe reads correct).
+        frame._cdmgFreeDragScriptsWired = nil
+
         -- Add click handler for icon selection
         -- OnDragStop handles drag completion separately
         frame:SetScript("OnMouseUp", function(self, button)
             local cdID = self.cooldownID
             if not cdID then return end
-            
+
             -- If we were dragging, OnDragStop handles it - don't process as click
             if self._groupDragging then return end
             
@@ -13808,6 +13815,25 @@ local function ComputeHasVisConditions(group)
     return true
 end
 
+-- one deferred mouse-motion re-assert per visibility wave (Discord
+-- 1548626974): a condition-driven RE-SHOW (entering combat with
+-- "combat"-only groups) can leave icon mouse motion re-enabled against the
+-- stored tooltip intent — the same failure the UIParent OnShow re-assert
+-- fixed for Alt+Z/cinematics, on an edge UIParent never sees. Re-assert
+-- the STORED intent only, once per wave, only when a group actually
+-- flipped to shown.
+local visReassertQueued = false
+local function QueueMouseMotionReassert()
+    if visReassertQueued then return end
+    visReassertQueued = true
+    C_Timer.After(0, function()
+        visReassertQueued = false
+        if ns.CDMGroups.ReassertMouseMotion then
+            ns.CDMGroups.ReassertMouseMotion()
+        end
+    end)
+end
+
 function ns.CDMGroups.UpdateGroupVisibility()
     -- MASTER TOGGLE: Do nothing if CDMGroups is disabled
     if not _cdmGroupsEnabled then return end
@@ -14037,6 +14063,9 @@ function ns.CDMGroups.UpdateGroupVisibility()
                     group._arcLastVisState = targetAlpha
                     SafeShowContainer(group.container, targetAlpha)
                     if shouldShow then
+                        -- real hidden->shown flip: re-assert tooltip intent
+                        -- (see QueueMouseMotionReassert above)
+                        QueueMouseMotionReassert()
                         if ns.CDMGroups.dragModeEnabled and group.dragBar then
                             group.dragBar:Show()
                         end

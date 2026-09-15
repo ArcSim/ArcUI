@@ -578,16 +578,28 @@ function SP.Pull(specKey)
     end
     
     -- ─── Sync Arc Auras tracked spells (source is authoritative) ────────────────
-    -- When shared sync is on, the source's spell config (forceShow, showOnSpecs,
-    -- talentConditions, etc.) overwrites the alt's. New spells added, existing
-    -- updated, removed spells cleaned.
+    -- When shared sync is on, the source's spell config (forceShow etc.)
+    -- overwrites the alt's. New spells added, existing updated, removed
+    -- spells cleaned. EXCEPTION - LOAD CONDITIONS ARE LOCAL (2026-09-14,
+    -- the Wind Gust revert report): showOnSpecs / talentConditions /
+    -- talentConditionMode on an entry the alt ALREADY HAS keep the alt's
+    -- own values (nil included - "all specs" is a local choice too), so
+    -- a character's spec edits survive every pull. Entries the alt does
+    -- not have yet arrive with the source's conditions.
     if source.arcAuras and source.arcAuras.trackedSpells then
         local arcDB = ns.db.char and ns.db.char.arcAuras
         if arcDB then
             if not arcDB.trackedSpells then arcDB.trackedSpells = {} end
-            -- Replace all spell configs from source
+            -- Replace all spell configs from source (load conditions local-wins)
             for arcID, config in pairs(source.arcAuras.trackedSpells) do
-                arcDB.trackedSpells[arcID] = DeepCopy(config)
+                local prev = arcDB.trackedSpells[arcID]
+                local copy = DeepCopy(config)
+                if prev then
+                    copy.showOnSpecs = prev.showOnSpecs
+                    copy.talentConditions = prev.talentConditions
+                    copy.talentConditionMode = prev.talentConditionMode
+                end
+                arcDB.trackedSpells[arcID] = copy
             end
             -- Remove spells that source no longer has
             local toRemove = {}
@@ -622,7 +634,15 @@ function SP.Pull(specKey)
             if not arcDB.trackedItems then arcDB.trackedItems = {} end
             for arcID, config in pairs(source.arcAuras.trackedItems) do
                 if placedItems[arcID] and not config.isAutoTrackSlot then
-                    arcDB.trackedItems[arcID] = DeepCopy(config)
+                    -- LOAD CONDITIONS ARE LOCAL (same rule as trackedSpells above)
+                    local prev = arcDB.trackedItems[arcID]
+                    local copy = DeepCopy(config)
+                    if prev then
+                        copy.showOnSpecs = prev.showOnSpecs
+                        copy.talentConditions = prev.talentConditions
+                        copy.talentConditionMode = prev.talentConditionMode
+                    end
+                    arcDB.trackedItems[arcID] = copy
                 end
             end
         end
@@ -659,7 +679,23 @@ function SP.Pull(specKey)
         if arcDB then
             for _, store in ipairs({ "auraIcons", "customTimers", "totemSlots" }) do
                 if source.arcAuras[store] then
+                    -- LOAD CONDITIONS ARE LOCAL (same rule as trackedSpells
+                    -- above): defs the alt already has keep the alt's own
+                    -- showOnSpecs / talentConditions / talentConditionMode
+                    -- across the wholesale replace. totemSlots is exempt -
+                    -- it is per-spec by design and carries no such fields.
+                    local old = arcDB[store]
                     arcDB[store] = DeepCopy(source.arcAuras[store])
+                    if old and store ~= "totemSlots" then
+                        for arcID, def in pairs(arcDB[store]) do
+                            local prev = old[arcID]
+                            if type(def) == "table" and type(prev) == "table" then
+                                def.showOnSpecs = prev.showOnSpecs
+                                def.talentConditions = prev.talentConditions
+                                def.talentConditionMode = prev.talentConditionMode
+                            end
+                        end
+                    end
                 end
             end
         end

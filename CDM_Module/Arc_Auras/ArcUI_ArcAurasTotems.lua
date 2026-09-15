@@ -673,6 +673,123 @@ SlashCmdList.ARCTOTEM = function(msg)
         for arcID, entry in pairs(Totems.frames) do
             print(string.format("  %s  active=%s", arcID, tostring(Totems.IsSlotActive(arcID))))
         end
+    elseif msg == "trace" then
+        -- LIVE DRAG EVENT TRACE: HookScript fires even when the original
+        -- handler's guards early-return, so this splits the last two
+        -- possibilities - OnDragStart never firing (drag registration
+        -- lost) vs firing and being fought (position enforcement snapping
+        -- the frame back).
+        for slot = 1, NumSlots() do
+            local arcID = MakeID(slot)
+            local entry = Totems.frames[arcID]
+            local f = entry and entry.frame
+            if f and not f._arcTotemTraceHooked then
+                f._arcTotemTraceHooked = true
+                local id = arcID
+                f:HookScript("OnMouseDown", function()
+                    print("|cff00CCFF[ArcTotem]|r " .. id .. " OnMouseDown")
+                end)
+                f:HookScript("OnDragStart", function(self)
+                    print(string.format(
+                        "|cff00CCFF[ArcTotem]|r %s OnDragStart fired  freeDragging=%s",
+                        id, tostring(self._freeDragging)))
+                end)
+                f:HookScript("OnDragStop", function(self)
+                    local x, y = self:GetCenter()
+                    print(string.format(
+                        "|cff00CCFF[ArcTotem]|r %s OnDragStop  center=%.0f,%.0f",
+                        id, x or 0, y or 0))
+                end)
+            end
+        end
+        print("|cff00CCFF[ArcTotem]|r trace hooks installed - try dragging the slots now")
+    elseif msg == "hover" then
+        -- WHAT IS EATING THE CLICK: GetMouseFoci returns the mouse-enabled
+        -- frames under the cursor, topmost first - the #1 entry receives
+        -- the drag. Hover the broken slot before the timer fires.
+        print("|cff00CCFF[ArcTotem]|r hover the broken totem slot - capturing the mouse stack in 3 seconds...")
+        C_Timer.After(3, function()
+            local foci = GetMouseFoci and GetMouseFoci()
+            if not foci or #foci == 0 then
+                print("|cff00CCFF[ArcTotem]|r nothing mouse-enabled under the cursor")
+                return
+            end
+            for i, f in ipairs(foci) do
+                local dbg = (f.GetDebugName and f:GetDebugName())
+                    or (f.GetName and f:GetName()) or "?"
+                print(string.format("  %d. %s  strata=%s level=%s",
+                    i, tostring(dbg),
+                    tostring(f.GetFrameStrata and f:GetFrameStrata()),
+                    tostring(f.GetFrameLevel and f:GetFrameLevel())))
+            end
+        end)
+    elseif msg == "drag" then
+        -- evaluate the EXACT free-drag OnDragStart guard chain per slot:
+        -- the drag is silently refused when any of these is false, and
+        -- regFrameSame=false is the placeholder-entry race (a freeIcons
+        -- entry created before the totem frame existed never adopts the
+        -- real frame, so the identity check fails forever)
+        for slot = 1, NumSlots() do
+            local arcID = MakeID(slot)
+            local entry = Totems.frames[arcID]
+            local f = entry and entry.frame
+            if f then
+                local fi = ns.CDMGroups and ns.CDMGroups.freeIcons
+                    and ns.CDMGroups.freeIcons[arcID]
+                print(string.format(
+                    "|cff00CCFF[ArcTotem]|r slot %d: allowDrag=%s cdID=%s entry=%s entryFrame=%s regFrameSame=%s placeholder=%s",
+                    slot,
+                    tostring(ns.CDMGroups and ns.CDMGroups.ShouldAllowDrag
+                        and ns.CDMGroups.ShouldAllowDrag()),
+                    tostring(f.cooldownID), tostring(fi ~= nil),
+                    tostring(fi and fi.frame ~= nil),
+                    tostring(fi and fi.frame == f),
+                    tostring(fi and fi.isPlaceholder)))
+            end
+        end
+    elseif msg == "debug" then
+        -- PER-SLOT DRAG/PLACEMENT DUMP (the slots 1+2 undraggable hunt):
+        -- everything that decides whether a slot can drag - the saved
+        -- position record, free/member registration, the wire-once flag vs
+        -- the ACTUAL drag script, and the live mouse state. All reads are
+        -- on our own frames.
+        print(string.format("|cff00CCFF[ArcTotem]|r debug  spec=%s enabled=%s slots=%d dragMode=%s",
+            tostring(CurrentSpecKey()), tostring(Totems.IsEnabled()), NumSlots(),
+            tostring(ns.CDMGroups and ns.CDMGroups.dragModeEnabled)))
+        for slot = 1, math.max(NumSlots(), 4) do
+            local arcID = MakeID(slot)
+            local entry = Totems.frames[arcID]
+            local f = entry and entry.frame
+            local sp = ns.CDMGroups and ns.CDMGroups.savedPositions
+                and ns.CDMGroups.savedPositions[arcID]
+            local spDesc = "none"
+            if sp then
+                spDesc = string.format("%s%s r=%s c=%s x=%s y=%s",
+                    tostring(sp.type), sp.target and (":" .. tostring(sp.target)) or "",
+                    tostring(sp.row), tostring(sp.col), tostring(sp.x), tostring(sp.y))
+            end
+            local inFree = ns.CDMGroups and ns.CDMGroups.freeIcons
+                and ns.CDMGroups.freeIcons[arcID] ~= nil
+            local memberOf
+            if ns.CDMGroups and ns.CDMGroups.groups then
+                for gname, g in pairs(ns.CDMGroups.groups) do
+                    if g.members and g.members[arcID] then memberOf = gname break end
+                end
+            end
+            print(string.format("|cffffd100slot %d|r %s  slotOn=%s frame=%s shown=%s",
+                slot, arcID, tostring(Totems.IsSlotEnabled(slot)),
+                tostring(f ~= nil), tostring(f and f:IsShown())))
+            print(string.format("    saved=[%s]  freeIcons=%s  member=%s",
+                spDesc, tostring(inFree), tostring(memberOf or "no")))
+            if f then
+                print(string.format("    freeFlag=%s wired=%s dragScript=%s mouseUpScript=%s mouse=%s movable=%s parent=%s",
+                    tostring(f._cdmgIsFreeIcon), tostring(f._cdmgFreeDragScriptsWired),
+                    tostring(f:GetScript("OnDragStart") ~= nil),
+                    tostring(f:GetScript("OnMouseUp") ~= nil),
+                    tostring(f:IsMouseEnabled()), tostring(f:IsMovable()),
+                    f:GetParent() and (f:GetParent():GetName() or "unnamed") or "nil"))
+            end
+        end
     else
         print("|cff00CCFF[ArcTotem]|r commands: on | off | list   (slots: " .. NumSlots() .. ")")
     end
