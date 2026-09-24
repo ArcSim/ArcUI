@@ -75,6 +75,51 @@ end
 
 local activeGlows = setmetatable({}, { __mode = "k" })
 
+-- ── Blizzard default (untinted) glow colours ─────────────────────────────
+-- LCG's Button and Proc glows DESATURATE their artwork and tint it whenever a
+-- colour is handed in, so Blizzard's original look is reachable ONLY by passing
+-- no colour at all -- no colour-wheel value reproduces it. Account-wide switch
+-- read through a module-local: Start is a hot path (fires on every cast) and
+-- must never touch the DB per glow. Resolved lazily on first use so there is no
+-- login-order dependency, and ns.Glows.SetNativeColors is the one writer after.
+local nativeColorsEnabled = nil   -- nil = not resolved from the DB yet
+
+local function NativeColorsOn()
+    if nativeColorsEnabled == nil then
+        local g = ns.db and ns.db.global
+        nativeColorsEnabled = (g and g.nativeGlowColors) and true or false
+    end
+    return nativeColorsEnabled
+end
+
+function ns.Glows.IsNativeColors()
+    return NativeColorsOn()
+end
+
+-- Flip the switch and repaint every live Button/Proc glow.
+-- STOP-then-START is required, not a plain re-Start: LCG tints its textures when
+-- the glow is CREATED, so re-applying params alone would keep the old tint.
+-- The restart list is collected FIRST -- Stop clears the entry and Start writes
+-- a new one, and mutating a table while pairs() walks it is undefined.
+function ns.Glows.SetNativeColors(enabled)
+    enabled = enabled and true or false
+    if NativeColorsOn() == enabled then return end
+    nativeColorsEnabled = enabled
+
+    local pending = {}
+    for frame, frameGlows in pairs(activeGlows) do
+        for key, entry in pairs(frameGlows) do
+            if entry.type == "button" or entry.type == "proc" then
+                pending[#pending + 1] = { frame = frame, key = key, type = entry.type, opts = entry.opts }
+            end
+        end
+    end
+    for _, p in ipairs(pending) do
+        ns.Glows.Stop(p.frame, p.key)
+        ns.Glows.Start(p.frame, p.key, p.type, p.opts)
+    end
+end
+
 -- ── Cached frame sizes ────────────────────────────────────────────────────
 -- frameSizeCache[frame] = { w, h }
 -- When GetWidth/GetHeight returns a non-secret value, we store it here.
@@ -858,6 +903,17 @@ function ns.Glows.Start(frame, key, glowType, opts)
         else
             colorArray = color
         end
+    end
+
+    -- NATIVE (untinted) colour. LCG's Button and Proc glows DESATURATE their
+    -- textures and tint them whenever a colour is handed in, so Blizzard's
+    -- original look is reachable ONLY by passing no colour at all -- no
+    -- colour-wheel value reproduces it. This is also why the Proc Glow section
+    -- already shows native gold (it passes nil for the default style) while the
+    -- Aura Active / Aura Missing sections do not. Only these two types tint
+    -- their art; the rest take the colour literally and are unaffected.
+    if (opts.nativeColor or NativeColorsOn()) and (glowType == "button" or glowType == "proc") then
+        colorArray = nil
     end
 
     local lvl = opts.frameLevel or GLOW_LEVEL_OFFSET

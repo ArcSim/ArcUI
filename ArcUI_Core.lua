@@ -64,6 +64,30 @@ end
 ns.API.HasAuraInstanceID = HasAuraInstanceID
 
 -- ===================================================================
+-- SECRET-SAFE SPELL ID READ (detect, don't test)
+--
+-- CDM's cooldownInfo and GetCooldownViewerCooldownInfo hand back SECRET spell
+-- IDs inside instances. Secrecy is INSTANCE-based, not combat-based, so the
+-- InCombatLockdown guard on the scanners below is no protection at all: the
+-- delayed rescans run out of combat, in a raid, and compared a secret --
+-- "attempt to compare local 'spellID' (a secret number value)", 150x per
+-- dungeon (Discord 1550642951).
+--
+-- Returns the id only when it is a plain comparable number, else nil, so the
+-- caller skips that entry. A secret id cannot be compared, cannot be named,
+-- cannot key a dedupe table (secrets cannot index tables), and must never
+-- reach SavedVariables -- there is nothing useful to do with one here.
+-- ===================================================================
+local function NonSecretSpellID(value)
+  if value == nil then return nil end
+  if issecretvalue and issecretvalue(value) then return nil end
+  if type(value) ~= "number" then return nil end
+  return value
+end
+ns.API = ns.API or {}
+ns.API.NonSecretSpellID = NonSecretSpellID
+
+-- ===================================================================
 -- SECRET-SAFE USABILITY READ (detect, don't test)
 --
 -- C_Spell.IsSpellUsable takes SecretArguments = "AllowedWhenTainted", so a
@@ -720,7 +744,8 @@ local function BuildSpellToCooldownIDMapping()
     if cooldownIDs then
       for _, cdID in ipairs(cooldownIDs) do
         local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-        if info and info.spellID and info.spellID > 0 then
+        local infoSpellID = info and NonSecretSpellID(info.spellID)
+        if infoSpellID and infoSpellID > 0 then
           -- Store mapping: spellID → ORDERED LIST of cooldownIDs. One spellID can
           -- legitimately produce several (the same aura listed under both
           -- TrackedBuff and TrackedBar, ranks, variants), and keeping only the
@@ -728,7 +753,8 @@ local function BuildSpellToCooldownIDMapping()
           -- entry and fail validation anyway. Callers walk the list and take the
           -- first one that actually has a live frame.
           local function addTo(sid)
-            if type(sid) ~= "number" or sid <= 0 then return end
+            sid = NonSecretSpellID(sid)
+            if not sid or sid <= 0 then return end
             local list = mapping[sid]
             if not list then
               list = {}
@@ -879,7 +905,10 @@ function ns.API.GetActiveCooldownIDForBar(barNum, validCooldownIDs)
 
   local spellCandidates, seenCandidate = {}, {}
   local function addCandidate(sid)
-    if type(sid) ~= "number" or sid <= 0 or seenCandidate[sid] then return end
+    -- addSpellIDsOf feeds this straight from cooldownInfo, so in an instance sid
+    -- can be SECRET: it would throw on the compare AND on the seenCandidate index.
+    sid = NonSecretSpellID(sid)
+    if not sid or sid <= 0 or seenCandidate[sid] then return end
     seenCandidate[sid] = true
     table.insert(spellCandidates, sid)
   end
@@ -1308,8 +1337,35 @@ local function FindCDMFrameForCooldownID(targetCdID)
       end
     end
   end
-  
+
   return nil
+end
+
+-- EVERY frame currently bound to a cooldownID (group member, free icon, and
+-- each viewer's children). CDM can hold the same cooldownID on more than one
+-- frame at once - a bar-viewer item AND an icon-viewer item during a
+-- bar<->icon switch, or a released frame that still carries the id for a
+-- tick - and a bar's "Hide CDM Icon/Bar" has to cover all of them, not the
+-- first hit (Ironfur report: the bar-viewer copy stayed up).
+local function FindAllCDMFramesForCooldownID(targetCdID)
+  local found = {}
+  if not targetCdID then return found end
+  local seen = {}
+  local function add(f)
+    if f and not seen[f] then seen[f] = true; found[#found + 1] = f end
+  end
+  add(FindCDMFrameForCooldownID(targetCdID))
+  local viewerNames = {"BuffIconCooldownViewer", "BuffBarCooldownViewer",
+                       "CooldownIconCooldownViewer", "CooldownBarCooldownViewer"}
+  for _, vName in ipairs(viewerNames) do
+    local viewer = _G[vName]
+    if viewer then
+      for _, child in ipairs({viewer:GetChildren()}) do
+        if GetFrameCooldownID(child) == targetCdID then add(child) end
+      end
+    end
+  end
+  return found
 end
 
 -- Refresh hidden CDM frames: detect stale entries where CDM recycled a frame,
@@ -1330,15 +1386,23 @@ local function RefreshHiddenCDMFrames()
   
   -- Clean up stale entries and re-find correct frames
   for _, entry in ipairs(staleEntries) do
-    -- Release the old (wrong) frame
+    -- Release the old (wrong) frame. Show it back ONLY when CDM still has it
+    -- bound to something: a frame whose id went to nil is one CDM RELEASED
+    -- to its pool, and showing it resurrects a ghost the layout no longer
+    -- manages (the Ironfur "bar that shouldn't exist" report). CDM shows a
+    -- pool frame itself when it rebinds it; our flags are cleared, so that
+    -- Show goes through.
     CleanupFrameHidingState(entry.frame)
-    entry.frame:Show()  -- Let CDM show it again
-    
-    -- Find the new frame for that cooldownID and hide it properly
+    if GetFrameCooldownID(entry.frame) then
+      entry.frame:Show()
+    end
+
+    -- Find EVERY frame now bound to that cooldownID and hide each properly
     -- using ForceHideCDMFrame which installs Show + SetCooldownID hooks
-    local newFrame = FindCDMFrameForCooldownID(entry.expectedCdID)
-    if newFrame and not hiddenCDMFrames[newFrame] then
-      ForceHideCDMFrame(newFrame, entry.expectedCdID)
+    for _, newFrame in ipairs(FindAllCDMFramesForCooldownID(entry.expectedCdID)) do
+      if not hiddenCDMFrames[newFrame] then
+        ForceHideCDMFrame(newFrame, entry.expectedCdID)
+      end
     end
   end
 end
@@ -1389,16 +1453,20 @@ ForceHideCDMFrame = function(frame, expectedCooldownID)
     return
   end
   
-  -- DEDUP: If a DIFFERENT frame is already tracked for this same cooldownID,
-  -- clean it up. O(1) via reverse lookup instead of iterating hiddenCDMFrames.
-  local existingFrame = hiddenCDMFramesByCD[expectedCooldownID]
-  if existingFrame and existingFrame ~= frame then
-    CleanupFrameHidingState(existingFrame)
-    existingFrame:Show()  -- Let CDM show the now-unrelated frame
-  end
-  
+  -- A DIFFERENT frame may already be hidden for this same cooldownID (CDM
+  -- can bind one id to a bar-viewer item AND an icon-viewer item, or hand
+  -- it to a fresh frame while the old one still reads it). The old dedup
+  -- released and SHOWED the previous frame here, which either revealed a
+  -- still-bound twin or resurrected a released pool frame (Ironfur). Now
+  -- both stay hidden: hiddenCDMFrames is per frame, the reverse map just
+  -- points at the newest; RefreshHiddenCDMFrames drops a frame once CDM
+  -- rebinds it elsewhere.
   hiddenCDMFrames[frame] = expectedCooldownID
   hiddenCDMFramesByCD[expectedCooldownID] = frame
+  -- Sticky memo (survives CleanupFrameHidingState): the last cooldownID a bar
+  -- hid this frame for, so ReassertCDMHideRequests can put down a released
+  -- copy that is somehow still showing.
+  frame._arcBarHideLastCdID = expectedCooldownID
   
   -- ═══════════════════════════════════════════════════════════════════
   -- PROTECTION HOOKS: Prevent CDM from re-showing hidden frames.
@@ -1706,10 +1774,33 @@ local function ReassertCDMHideRequests()
   -- combat re-bound it (RefreshData -> SetCooldownID -> HideCDMFrameIfRequested).
   -- Once ForceHideCDMFrame runs, its Show/SetShown hooks keep it hidden against
   -- any later show (including Core's own restore step and CDM refreshes).
+  -- EVERY bound frame, not the first hit: CDM can carry one cooldownID on a
+  -- bar-viewer item and an icon-viewer item at the same time.
   for cdID in pairs(cdmHideRequestsByCD) do
-    local f = FindCDMFrameForCooldownID(cdID)
-    if f and not hiddenCDMFrames[f] then
-      ForceHideCDMFrame(f, cdID)
+    for _, f in ipairs(FindAllCDMFramesForCooldownID(cdID)) do
+      if not hiddenCDMFrames[f] then
+        ForceHideCDMFrame(f, cdID)
+      end
+    end
+  end
+
+  -- SAFETY NET (Arc's ask on the Ironfur report): a viewer child that CDM
+  -- released (no cooldownID) but that is still SHOWN, and that a bar last
+  -- hid for a cooldownID it still wants hidden, is a ghost - put it down.
+  -- Plain Hide, no flags and no state: CDM lays out only bound items and
+  -- Shows a pool frame itself when it rebinds it, so nothing here can keep
+  -- a legit item down.
+  for _, vName in ipairs({"BuffIconCooldownViewer", "BuffBarCooldownViewer",
+                          "CooldownIconCooldownViewer", "CooldownBarCooldownViewer"}) do
+    local viewer = _G[vName]
+    if viewer then
+      for _, child in ipairs({viewer:GetChildren()}) do
+        local lastCd = child._arcBarHideLastCdID
+        if lastCd and cdmHideRequestsByCD[lastCd] and not hiddenCDMFrames[child]
+          and not GetFrameCooldownID(child) and child:IsShown() then
+          child:Hide()
+        end
+      end
     end
   end
 end
@@ -2364,10 +2455,12 @@ function ns.API.ScanAvailableBuffs()
       local info = type(cdID) == "number" and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
       
       if info then
-        local baseSpellID = info.spellID or 0
-        local overrideSpellID = info.overrideSpellID
+        -- Secret-safe: in an instance these ids arrive SECRET. Drop them at the
+        -- read so every comparison below sees a plain number or nil.
+        local baseSpellID = NonSecretSpellID(info.spellID) or 0
+        local overrideSpellID = NonSecretSpellID(info.overrideSpellID)
         local linkedSpellIDs = info.linkedSpellIDs
-        local firstLinkedSpellID = linkedSpellIDs and linkedSpellIDs[1]
+        local firstLinkedSpellID = NonSecretSpellID(linkedSpellIDs and linkedSpellIDs[1])
         
         -- Priority: first linkedSpellID > overrideSpellID > baseSpellID
         local displaySpellID = firstLinkedSpellID or overrideSpellID or baseSpellID
@@ -2389,7 +2482,8 @@ function ns.API.ScanAvailableBuffs()
       
       -- Fallback to frame.cooldownInfo if API didn't work
       if not spellName and frame.cooldownInfo then
-        spellID = frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
+        spellID = NonSecretSpellID(frame.cooldownInfo.overrideSpellID)
+          or NonSecretSpellID(frame.cooldownInfo.spellID)
         if spellID and spellID > 0 then
           spellName = C_Spell.GetSpellName(spellID)
           iconTextureID = C_Spell.GetSpellTexture(spellID)
@@ -2679,10 +2773,12 @@ function ns.API.ScanAvailableBarsWithDuration()
       local info = type(cdID) == "number" and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
       
       if info then
-        local baseSpellID = info.spellID or 0
-        local overrideSpellID = info.overrideSpellID
+        -- Secret-safe: in an instance these ids arrive SECRET. Drop them at the
+        -- read so every comparison below sees a plain number or nil.
+        local baseSpellID = NonSecretSpellID(info.spellID) or 0
+        local overrideSpellID = NonSecretSpellID(info.overrideSpellID)
         local linkedSpellIDs = info.linkedSpellIDs
-        local firstLinkedSpellID = linkedSpellIDs and linkedSpellIDs[1]
+        local firstLinkedSpellID = NonSecretSpellID(linkedSpellIDs and linkedSpellIDs[1])
         
         -- Priority: first linkedSpellID > overrideSpellID > baseSpellID
         local displaySpellID = firstLinkedSpellID or overrideSpellID or baseSpellID
@@ -2704,7 +2800,8 @@ function ns.API.ScanAvailableBarsWithDuration()
       
       -- Fallback to frame.cooldownInfo if API didn't work
       if not spellName and frame.cooldownInfo then
-        spellID = frame.cooldownInfo.overrideSpellID or frame.cooldownInfo.spellID
+        spellID = NonSecretSpellID(frame.cooldownInfo.overrideSpellID)
+          or NonSecretSpellID(frame.cooldownInfo.spellID)
         if spellID and spellID > 0 then
           spellName = C_Spell.GetSpellName(spellID)
           iconTextureID = C_Spell.GetSpellTexture(spellID)
@@ -4457,6 +4554,18 @@ function ns.API.ScanAllCDMIcons()
     return 0
   end
   
+  -- A scan taken INSIDE an instance can come back with SECRET spell ids (see
+  -- NonSecretSpellID), which would downgrade a name we already resolved in the
+  -- open world to "Unknown" until the next scan outside. Carry the last GOOD
+  -- identity across the wipe. This only ever fills a blank: a freshly resolved
+  -- name always wins, so a rebound cooldownID corrects itself on the next scan.
+  local lastGood = {}
+  for prevID, prev in pairs(cdmIconCache) do
+    if prev.name and prev.name ~= "Unknown" then
+      lastGood[prevID] = { name = prev.name, icon = prev.icon, spellID = prev.spellID }
+    end
+  end
+
   wipe(cdmIconCache)
   local totalCount = 0
   
@@ -4500,11 +4609,13 @@ function ns.API.ScanAllCDMIcons()
             
             -- Get spell info from API
             local spellID, name, icon
-            local baseSpellID = info.spellID or 0
-            local overrideSpellID = info.overrideSpellID
-            local overrideTooltipSpellID = info.overrideTooltipSpellID
+            -- Secret-safe: in an instance CDM hands these back SECRET, and the
+            -- baseSpellID / overrideTooltipSpellID compares below would throw.
+            local baseSpellID = NonSecretSpellID(info.spellID) or 0
+            local overrideSpellID = NonSecretSpellID(info.overrideSpellID)
+            local overrideTooltipSpellID = NonSecretSpellID(info.overrideTooltipSpellID)
             local linkedSpellIDs = info.linkedSpellIDs
-            local firstLinkedSpellID = linkedSpellIDs and linkedSpellIDs[1]
+            local firstLinkedSpellID = NonSecretSpellID(linkedSpellIDs and linkedSpellIDs[1])
             
             -- Priority: first linkedSpellID > overrideSpellID > baseSpellID
             local displaySpellID = firstLinkedSpellID or overrideSpellID or baseSpellID
@@ -4606,11 +4717,12 @@ function ns.API.ScanAllCDMIcons()
               end
             else
               -- Create new entry
+              local remembered = lastGood[cdID]
               cdmIconCache[cdID] = {
                 cooldownID = cdID,
-                spellID = spellID or 0,
-                name = name or "Unknown",
-                icon = icon or 134400,
+                spellID = spellID or (remembered and remembered.spellID) or 0,
+                name = name or (remembered and remembered.name) or "Unknown",
+                icon = icon or (remembered and remembered.icon) or 134400,
                 category = viewerInfo.category,
                 categoryName = CATEGORY_NAMES[viewerInfo.category] or viewerInfo.category,
                 viewerType = viewerInfo.viewerType,
@@ -4654,11 +4766,13 @@ function ns.API.ScanAllCDMIcons()
         -- CRITICAL: If CDM API returns nil, this cooldown was removed from CDM - skip it entirely
         if info then
           local spellID, name, icon
-          local baseSpellID = info.spellID or 0
-          local overrideSpellID = info.overrideSpellID
-          local overrideTooltipSpellID = info.overrideTooltipSpellID
+          -- Secret-safe: in an instance CDM hands these back SECRET, and the
+          -- baseSpellID / overrideTooltipSpellID compares below would throw.
+          local baseSpellID = NonSecretSpellID(info.spellID) or 0
+          local overrideSpellID = NonSecretSpellID(info.overrideSpellID)
+          local overrideTooltipSpellID = NonSecretSpellID(info.overrideTooltipSpellID)
           local linkedSpellIDs = info.linkedSpellIDs
-          local firstLinkedSpellID = linkedSpellIDs and linkedSpellIDs[1]
+          local firstLinkedSpellID = NonSecretSpellID(linkedSpellIDs and linkedSpellIDs[1])
           local displaySpellID = firstLinkedSpellID or overrideSpellID or baseSpellID
           
           spellID = baseSpellID
@@ -4750,11 +4864,12 @@ function ns.API.ScanAllCDMIcons()
             isAura = true
           end
           
+          local remembered = lastGood[cdID]
           cdmIconCache[cdID] = {
             cooldownID = cdID,
-            spellID = spellID or 0,
-            name = name or "Unknown",
-            icon = icon or 134400,
+            spellID = spellID or (remembered and remembered.spellID) or 0,
+            name = name or (remembered and remembered.name) or "Unknown",
+            icon = icon or (remembered and remembered.icon) or 134400,
             category = category,
             categoryName = CATEGORY_NAMES[category] or category,
             viewerType = data.viewerType,
@@ -4790,11 +4905,13 @@ function ns.API.ScanAllCDMIcons()
       
       if info then
         local spellID, name, icon
-        local baseSpellID = info.spellID or 0
-        local overrideSpellID = info.overrideSpellID
-        local overrideTooltipSpellID = info.overrideTooltipSpellID
+        -- Secret-safe: in an instance CDM hands these back SECRET, and the
+        -- baseSpellID / overrideTooltipSpellID compares below would throw.
+        local baseSpellID = NonSecretSpellID(info.spellID) or 0
+        local overrideSpellID = NonSecretSpellID(info.overrideSpellID)
+        local overrideTooltipSpellID = NonSecretSpellID(info.overrideTooltipSpellID)
         local linkedSpellIDs = info.linkedSpellIDs
-        local firstLinkedSpellID = linkedSpellIDs and linkedSpellIDs[1]
+        local firstLinkedSpellID = NonSecretSpellID(linkedSpellIDs and linkedSpellIDs[1])
         local displaySpellID = firstLinkedSpellID or overrideSpellID or baseSpellID
         
         spellID = baseSpellID
@@ -4889,11 +5006,12 @@ function ns.API.ScanAllCDMIcons()
           cdmIconCache[cdID].groupName = data.groupName
           cdmIconCache[cdID].gridPosition = data.gridPosition
         else
+          local remembered = lastGood[cdID]
           cdmIconCache[cdID] = {
             cooldownID = cdID,
-            spellID = spellID or 0,
-            name = name or "Unknown",
-            icon = icon or 134400,
+            spellID = spellID or (remembered and remembered.spellID) or 0,
+            name = name or (remembered and remembered.name) or "Unknown",
+            icon = icon or (remembered and remembered.icon) or 134400,
             category = category,
             categoryName = CATEGORY_NAMES[category] or category,
             viewerType = data.viewerType,

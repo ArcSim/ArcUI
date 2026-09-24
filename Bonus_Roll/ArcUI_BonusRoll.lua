@@ -1575,6 +1575,26 @@ local function EnsureLootPool()
                         pool.gainSum = pool.gainSum + gain
                     end
                 end
+            elseif info and info.encounterID and not info.displayAsPerPlayerLoot
+                and info.itemID and IsTokenItem(info.itemID) and not OMNI_TOKENS[info.itemID] then
+                -- SLOT TOKEN rows are coin outcomes too (only the omni never
+                -- rolls), so the boss's token counts toward the live share
+                -- (user report: two gear pieces read 50% and the token
+                -- nothing). It stays OUT of the cached per-spec pool on
+                -- purpose: BossSimEV adds the token's PIECE as its own
+                -- outcome, and a token entry there would count it twice.
+                local pool = lootPool[info.encounterID]
+                if not pool then
+                    pool = { total = 0, owned = 0, gainSum = 0 }
+                    lootPool[info.encounterID] = pool
+                end
+                pool.total = pool.total + 1
+                local owned = IsOwnedItem(info.itemID, ownDiff)
+                if not owned then
+                    local piece = TokenPieceFor(info.itemID)
+                    if piece then owned = IsOwnedItem(piece, ownDiff) end
+                end
+                if owned then pool.owned = pool.owned + 1 end
             end
         end
         if fresh then
@@ -1990,10 +2010,13 @@ local function ItemMarkerUpdate(m)
                 local col = bGain >= 0.5 and "|cff4cde4c" or "|cff8ca0b8"
                 bonusTxt = ("%s%s|r"):format(col, FormatGainNumber(bGain, bKey))
             end
-            -- share: prefer the roll-EV remaining (it counts the token
-            -- outcomes too), fall back to the pool count when no sim
+            -- share: the LIVE journal pool (slot token included) follows the
+            -- guide's class/spec filter, so it is the denominator whenever the
+            -- boss has one; the sim's remaining count only stands in when the
+            -- journal gave us no pool at all (user report: with a sim loaded
+            -- the share ignored the loot-spec filter)
             local shareDen = remaining
-            if not dungeonMode and btn.encounterID then
+            if not pool and not dungeonMode and btn.encounterID then
                 local _bev, rr = BossSimEV(btn.encounterID, bKey, diff, diff)
                 if rr and rr > 0 then shareDen = rr end
             end
@@ -4039,7 +4062,64 @@ end
 
 -- Drops tab: the same boss list priced from the RAW drop sims - what each
 -- boss is worth when its loot just drops for you. No coin math on this tab.
+-- ── Drops Overview slot filter (feature-want 1552310662) ─────────────────
+-- One table (the file sits near the 200-local cap): the ordered slot list
+-- plus the matcher. A slot other than "all" makes the Drops list expand
+-- EVERY boss and show only that slot's items, hiding bosses with none.
+-- Inventory types come from C_Item.GetItemInventoryTypeByID (InventoryType
+-- enum, Head = 1); "token" catches slotless tier tokens via IsTokenItem.
+local SlotFilter = {
+    list = {
+        { key = "all",      text = "All Slots" },
+        { key = "head",     text = "Head",     inv = { "IndexHeadType" } },
+        { key = "neck",     text = "Neck",     inv = { "IndexNeckType" } },
+        { key = "shoulder", text = "Shoulder", inv = { "IndexShoulderType" } },
+        { key = "back",     text = "Back",     inv = { "IndexCloakType" } },
+        { key = "chest",    text = "Chest",    inv = { "IndexChestType", "IndexRobeType" } },
+        { key = "wrist",    text = "Wrist",    inv = { "IndexWristType" } },
+        { key = "hands",    text = "Hands",    inv = { "IndexHandType" } },
+        { key = "waist",    text = "Waist",    inv = { "IndexWaistType" } },
+        { key = "legs",     text = "Legs",     inv = { "IndexLegsType" } },
+        { key = "feet",     text = "Feet",     inv = { "IndexFeetType" } },
+        { key = "finger",   text = "Finger",   inv = { "IndexFingerType" } },
+        { key = "trinket",  text = "Trinket",  inv = { "IndexTrinketType" } },
+        { key = "weapon",   text = "Weapons",
+          inv = { "IndexWeaponType", "Index2HweaponType", "IndexWeaponmainhandType",
+                  "IndexWeaponoffhandType", "IndexRangedType", "IndexRangedrightType",
+                  "IndexThrownType" } },
+        { key = "offhand",  text = "Off Hand", inv = { "IndexShieldType", "IndexHoldableType" } },
+        { key = "token",    text = "Tier Tokens", token = true },
+    },
+}
+function SlotFilter.Matches(itemID, key)
+    if not key or key == "all" then return true end
+    local def
+    for _, d in ipairs(SlotFilter.list) do
+        if d.key == key then def = d break end
+    end
+    if not def then return true end
+    if def.token then return IsTokenItem(itemID) end
+    if not (itemID and C_Item and C_Item.GetItemInventoryTypeByID and Enum and Enum.InventoryType) then
+        return false
+    end
+    local inv = C_Item.GetItemInventoryTypeByID(itemID)
+    if inv == nil then return false end
+    for _, name in ipairs(def.inv or {}) do
+        if Enum.InventoryType[name] == inv then return true end
+    end
+    return false
+end
+function SlotFilter.Current()
+    local v = char and char.settings and char.settings.dropsSlot
+    return (type(v) == "string" and v ~= "") and v or "all"
+end
+
 local function BuildDropsArgs()
+    local slotValues, slotOrder = {}, {}
+    for _, d in ipairs(SlotFilter.list) do
+        slotValues[d.key] = d.text
+        slotOrder[#slotOrder + 1] = d.key
+    end
     return {
         diff = {
             type = "select", order = 1, name = "Difficulty", width = 1.0,
@@ -4049,6 +4129,16 @@ local function BuildDropsArgs()
             get = function() return DropsDiff() end,
             set = function(_, v)
                 if char then char.settings.dropsDiff = v; OvRefreshList() end
+            end,
+        },
+        slot = {
+            type = "select", order = 1.5, name = "Slot", width = 1.0,
+            desc = "Show only one gear slot. Every boss opens at once with just that slot's drops, so you can compare all the options for it; bosses with nothing in that slot are hidden.",
+            values = slotValues,
+            sorting = slotOrder,
+            get = function() return SlotFilter.Current() end,
+            set = function(_, v)
+                if char then char.settings.dropsSlot = (v ~= "all") and v or nil; OvRefreshList() end
             end,
         },
         pct = {
@@ -4295,8 +4385,12 @@ local function OvItemTooltip(self)
         if linkLv ~= s.simLv then
             local b = ResolveIlvlBonus(s.simLv)
             if b then
-                GameTooltip:SetHyperlink(("item:%d::::::::%d::::1:%d"):format(
-                    s.itemID, UnitLevel("player") or 80, b))
+                -- the link's specialization field decides which primary stat a
+                -- multi-stat item highlights; empty = the item's first stat, so
+                -- a warrior read Agility/Intellect in white (Discord 1552232083).
+                -- Fill it with the player's spec, exactly like an equipped link.
+                GameTooltip:SetHyperlink(("item:%d::::::::%d:%d:::1:%d"):format(
+                    s.itemID, UnitLevel("player") or 80, CurrentSpecID() or 0, b))
                 GameTooltip:AddLine(("Shown at your sim's item level (%d)."):format(s.simLv), 0.25, 0.79, 0.95, true)
                 synthetic = true
             end
@@ -4476,6 +4570,9 @@ OvRefreshList = function()
     -- rolls read the BONUS TRACK sim when imported; drops read the raw bucket
     local simKey = drops and diff or (mplusRolls and "mplusBonus" or RollSimKey(diff))
     local week = CurrentWeek()
+    -- Drops slot filter: expands every boss, keeps only that slot's items
+    local slotKey = drops and SlotFilter.Current() or "all"
+    local slotOn = slotKey ~= "all"
     ovHost.content:SetWidth(math.max(200, ovHost.scroll:GetWidth() or 0))
     local rankTop = drops and DropsTopRanks(diff, ownDiff) or nil
     -- live list when the journal engine is free, else the STATIC copy from
@@ -4582,7 +4679,7 @@ OvRefreshList = function()
             bestEV, bestRow = evValue, row
         end
         row:Show()
-        if selected then
+        if selected or slotOn then
             local list, remaining, confirmed
             if mplusDrops then
                 -- the dungeon's confirmed pool priced by the pooled run sim
@@ -4609,7 +4706,24 @@ OvRefreshList = function()
             else
                 list, remaining, confirmed = GearList(id, diff, simKey, drops)
             end
-            for _, e in ipairs(list) do
+            -- slot filter: keep only matching items; a CONFIRMED pool with
+            -- nothing in the slot drops the boss row entirely (an unconfirmed
+            -- or empty pool keeps its "confirming..." placeholder below)
+            local rawCount = #list
+            if slotOn and rawCount > 0 then
+                local kept = {}
+                for _, e in ipairs(list) do
+                    if SlotFilter.Matches(e.itemID, slotKey) then kept[#kept + 1] = e end
+                end
+                list = kept
+                if #list == 0 and confirmed then
+                    row:Hide()
+                    shown = shown - 1
+                    y = y + 30
+                    list = nil
+                end
+            end
+            for _, e in ipairs(list or {}) do
                 itemsShown = itemsShown + 1
                 local it = ovHost.itemRows[itemsShown] or OvCreateItemRow(itemsShown)
                 it:ClearAllPoints()
@@ -4649,7 +4763,7 @@ OvRefreshList = function()
                 end
                 it:Show()
             end
-            if #list == 0 or not confirmed then
+            if list and (rawCount == 0 or not confirmed) then
                 itemsShown = itemsShown + 1
                 local it = ovHost.itemRows[itemsShown] or OvCreateItemRow(itemsShown)
                 it:ClearAllPoints()
@@ -4672,7 +4786,7 @@ OvRefreshList = function()
             end
         end
     end
-    if bestRow then bestRow.best:Show() end
+    if bestRow and bestRow:IsShown() then bestRow.best:Show() end
     for k = shown + 1, #ovHost.rows do ovHost.rows[k]:Hide() end
     for k = itemsShown + 1, #ovHost.itemRows do ovHost.itemRows[k]:Hide() end
     ovHost.content:SetHeight(math.max(1, -y + 4))

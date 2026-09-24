@@ -187,6 +187,17 @@ ns.CDMEnhance.DebugLog = DebugLog
 -- NOTE: In combat, GetTexture() may return secret values - use issecretvalue() to check
 -- ===================================================================
 local function GetIconTextureFromFrame(frame, isAura, baseSpellID, overrideSpellID, displaySpellID, overrideTooltipSpellID)
+  -- Secret-safe: the two ids this function COMPARES below can arrive raw from a
+  -- caller that read CDM info directly, and inside an instance those are SECRET
+  -- ("attempt to compare ... a secret number value"). Neutralise them once here.
+  -- overrideSpellID / displaySpellID are deliberately left alone: they are only
+  -- ever passed to C_Spell APIs, never compared, and secret ids still resolve
+  -- a texture there.
+  local NonSecretSpellID = ns.API and ns.API.NonSecretSpellID
+  if NonSecretSpellID then
+    baseSpellID = NonSecretSpellID(baseSpellID)
+    overrideTooltipSpellID = NonSecretSpellID(overrideTooltipSpellID)
+  end
   local icon = nil
   
   -- Try to read from frame first (shows actual CDM texture)

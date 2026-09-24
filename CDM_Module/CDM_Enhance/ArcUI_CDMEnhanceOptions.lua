@@ -34,6 +34,7 @@ local cooldownFilterMode = "all"
 -- Collapsible sections (shared between aura and cooldown options display)
 local collapsedSections = {
   globalOptions = true,
+  glowColors = true,       -- Utilities > Glow Colors
   autoTrackSlots = true,   -- Auto-Track Trinket Slots (unified panel, under Global Options)
   keybinds = true,
   iconAppearance = true,
@@ -140,7 +141,7 @@ local SECTION_FIELDS = {
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
   cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride", "cooldownSwipe.ignoreHardICD" },
   chargeText = { "chargeText.enabled", "chargeText.showSingleStack", "chargeText.hideAtZero", "chargeText.font", "chargeText.size", "chargeText.color", "chargeText.outline", "chargeText.anchor", "chargeText.offsetX", "chargeText.offsetY", "chargeText.shadow", "chargeText.shadowColor", "chargeText.shadowOffsetX", "chargeText.shadowOffsetY", "chargeText.mode", "chargeText.position", "chargeText.freeX", "chargeText.freeY", "chargeText.thresholdColorEnabled", "chargeText.thresholdBands" },
-  cooldownText = { "cooldownText.enabled", "cooldownText.hideWhenHasCharges", "cooldownText.durationColor", "cooldownText.durationColorPreset", "cooldownText.durationColorCustom", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.decimalThreshold", "cooldownText.abbrevThreshold", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
+  cooldownText = { "cooldownText.enabled", "cooldownText.hideWhenHasCharges", "cooldownText.durationColor", "cooldownText.durationColorPreset", "cooldownText.durationColorCustom", "cooldownText.font", "cooldownText.size", "cooldownText.color", "cooldownText.outline", "cooldownText.anchor", "cooldownText.offsetX", "cooldownText.offsetY", "cooldownText.shadow", "cooldownText.shadowColor", "cooldownText.shadowOffsetX", "cooldownText.shadowOffsetY", "cooldownText.mmss", "cooldownText.decimals", "cooldownText.decimalThreshold", "cooldownText.abbrevThreshold", "cooldownText.showBelowSeconds", "cooldownText.mode", "cooldownText.position", "cooldownText.freeX", "cooldownText.freeY" },
   keybindText = { "keybindText.enabled", "keybindText.font", "keybindText.size", "keybindText.color", "keybindText.outline", "keybindText.anchor", "keybindText.offsetX", "keybindText.offsetY", "hideKeybind" },
   customLabel = { "customLabel.text", "customLabel.size", "customLabel.color", "customLabel.anchor", "customLabel.xOffset", "customLabel.yOffset", "customLabel.showWhenActive", "customLabel.showWhenInactive", "customLabel.showInReadyState", "customLabel.showInCooldownState", "customLabel.showWhileRecharging", "customLabel.text2", "customLabel.size2", "customLabel.color2", "customLabel.anchor2", "customLabel.xOffset2", "customLabel.yOffset2", "customLabel.showWhenActive2", "customLabel.showWhenInactive2", "customLabel.showInReadyState2", "customLabel.showInCooldownState2", "customLabel.showWhileRecharging2", "customLabel.text3", "customLabel.size3", "customLabel.color3", "customLabel.anchor3", "customLabel.xOffset3", "customLabel.yOffset3", "customLabel.showWhenActive3", "customLabel.showWhenInactive3", "customLabel.showInReadyState3", "customLabel.showInCooldownState3", "customLabel.showWhileRecharging3", "customLabel.labelCount", "customLabel.font", "customLabel.outline", "customLabel.frameStrata", "customLabel.frameLevel" },
   alertEvents = { "alertEvents" },
@@ -4206,6 +4207,23 @@ function ns.GetCDMAuraIconsOptionsTable()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
     },
+    activeStateGlowColorNative = {
+      type = "toggle", name = "Blizzard Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+      order = 107.8422, width = 0.9,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+      hidden = function()
+        if HideIfNoAuraSelection() or collapsedSections.activeState then return true end
+        local c = GetAuraCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
     activeStateGlowIntensity = {
       type = "range",
       name = "Intensity",
@@ -5065,6 +5083,23 @@ function ns.GetCDMAuraIconsOptionsTable()
         return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
       end,
     },
+    inactiveGlowColorNative = {
+      type = "toggle", name = "Blizzard Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+      order = 107.9642, width = 0.9,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+      hidden = function()
+        if HideAuraInactiveGlow() then return true end
+        local c = GetAuraCfg()
+        return not (c and c.auraActiveState and c.auraActiveState.glowWhenMissing)
+      end,
+    },
     inactiveGlowIntensity = {
       type = "range",
       name = "Intensity",
@@ -5451,6 +5486,25 @@ function ns.GetCDMAuraIconsOptionsTable()
         end)
       end,
       order = 109.2, width = 0.55,
+      hidden = function()
+        if HideAuraProcGlow() then return true end
+        local c = GetAuraCfg()
+        local glowType = c and c.procGlow and c.procGlow.glowType or "default"
+        -- Hide for default type (color breaks Blizzard animation)
+        return glowType == "default"
+      end,
+    },
+    procGlowColorNative = {
+      type = "toggle", name = "Blizzard Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+      order = 109.2002, width = 0.9,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
       hidden = function()
         if HideAuraProcGlow() then return true end
         local c = GetAuraCfg()
@@ -8585,6 +8639,23 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
       end,
     },
+    readyStateGlowColorNative = {
+      type = "toggle", name = "Blizzard Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+      order = 107.8422, width = 0.9,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
+      hidden = function()
+        if HideIfNoCooldownSelection() or collapsedSections.readyState then return true end
+        local c = GetCooldownCfg()
+        return not (c and c.cooldownStateVisuals and c.cooldownStateVisuals.readyState and c.cooldownStateVisuals.readyState.glow)
+      end,
+    },
     readyStateGlowIntensity = {
       type = "range",
       name = "Intensity",
@@ -9863,6 +9934,23 @@ function ns.GetCDMCooldownIconsOptionsTable()
           return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
         end,
       },
+      auraActiveStateGlowColorNative = {
+        type = "toggle", name = "Blizzard Colors",
+        desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+        order = 107.9732, width = 0.9,
+        get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+        set = function(_, v)
+          local g = ns.db and ns.db.global
+          if g then g.nativeGlowColors = v and true or nil end
+          if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        hidden = function()
+          if HideCooldownAuraActiveState() then return true end
+          local c = GetAuraActiveStateCfg()
+          return not (c and c.auraActiveState and (c.auraActiveState.glow or c.auraActiveState.glowWhenMissing))
+        end,
+      },
       auraActiveStateGlowIntensity = {
         type = "range",
         name = "Intensity",
@@ -10367,6 +10455,25 @@ function ns.GetCDMCooldownIconsOptionsTable()
         end)
       end,
       order = 109.2, width = 0.55,
+      hidden = function()
+        if HideCooldownProcGlow() then return true end
+        local c = GetCooldownCfg()
+        local glowType = c and c.procGlow and c.procGlow.glowType or "default"
+        -- Hide for default type (color breaks Blizzard animation)
+        return glowType == "default"
+      end,
+    },
+    procGlowColorNative = {
+      type = "toggle", name = "Blizzard Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+      order = 109.2002, width = 0.9,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+        LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+      end,
       hidden = function()
         if HideCooldownProcGlow() then return true end
         local c = GetCooldownCfg()
@@ -11645,529 +11752,550 @@ function ns.GetCDMCooldownIconsOptionsTable()
         return false
       end,
     },
-    cdEnabled = {
-      type = "toggle", name = "Show",
-      desc = "Show custom cooldown timer text",
-      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.enabled ~= false end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.enabled ~= false end) end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.enabled = v end) end,
-      order = 151, width = 0.55, hidden = HideCooldownCooldownText,
+    -- Boxed sub-sections (3.8.11): the flat list became four inline groups so
+    -- the section reads as General / Position / Format / Color. Same option
+    -- keys and settings paths as before; only the nesting changed.
+    cdGrpGeneral = {
+      type = "group", inline = true, name = "General",
+      order = 151, hidden = HideCooldownCooldownText,
+      args = {
+        cdEnabled = {
+          type = "toggle", name = "Show",
+          desc = "Show custom cooldown timer text",
+          get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.enabled ~= false end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.enabled ~= false end) end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.enabled = v end) end,
+          order = 151, width = 0.6, hidden = HideCooldownCooldownText,
+        },
+        cdHideWhenHasCharges = {
+          type = "toggle", name = "Hide w/ Charges",
+          desc = "Hide cooldown text when charges are available (> 0). Useful for overlaying charge count and cooldown text on the same position — only cooldown text shows when all charges are spent.",
+          get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end) end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.hideWhenHasCharges = v end) end,
+          order = 151.3, width = 0.85, hidden = HideCooldownCooldownText,
+        },
+        cdTextDrag = {
+          type = "toggle", name = "Text Drag",
+          desc = "Enable dragging cooldown text to custom positions",
+          get = function() return ns.CDMEnhance and ns.CDMEnhance.IsTextDragMode() end,
+          set = function(_, v) if ns.CDMEnhance then ns.CDMEnhance.SetTextDragMode(v) end end,
+          order = 151.5, width = 0.7, hidden = HideCooldownCooldownText,
+        },
+        cdSize = {
+          type = "range", name = "Size", min = 4, max = 64, step = 1,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.size or 14 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.size = v end) end,
+          order = 152, width = 0.6, hidden = HideCooldownCooldownText,
+        },
+        cdFont = {
+          type = "select", name = "Font", dialogControl = "LSM30_Font",
+          values = LSM and LSM:HashTable("font") or {},
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.font or "Friz Quadrata TT" end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.font = v end) end,
+          order = 154, width = 0.9, hidden = HideCooldownCooldownText,
+        },
+        cdOutline = {
+          type = "select", name = "Outline", values = FONT_OUTLINES,
+          get = function() local c = GetCooldownCfg(); return GetOutlineValue(c and c.cooldownText and c.cooldownText.outline) end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.outline = v end) end,
+          order = 155, width = 0.85, hidden = HideCooldownCooldownText,
+        },
+        cdShadow = {
+          type = "toggle", name = "Shadow",
+          get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.shadow end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadow end) end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadow = v end) end,
+          order = 156, width = 0.55, hidden = HideCooldownCooldownText,
+        },
+        cdShadowX = {
+          type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadowOffsetX or 1 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadowOffsetX = v end) end,
+          order = 157, width = 0.55, hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.shadow) end,
+        },
+        cdShadowY = {
+          type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadowOffsetY or -1 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadowOffsetY = v end) end,
+          order = 158, width = 0.55, hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.shadow) end,
+        },
+      },
     },
-    cdHideWhenHasCharges = {
-      type = "toggle", name = "Hide w/ Charges",
-      desc = "Hide cooldown text when charges are available (> 0). Useful for overlaying charge count and cooldown text on the same position — only cooldown text shows when all charges are spent.",
-      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.hideWhenHasCharges == true end) end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.hideWhenHasCharges = v end) end,
-      order = 151.3, width = 0.85, hidden = HideCooldownCooldownText,
+    cdGrpPosition = {
+      type = "group", inline = true, name = "Position",
+      order = 159, hidden = HideCooldownCooldownText,
+      args = {
+        cdMode = {
+          type = "select", name = "Mode", values = TEXT_MODES,
+          desc = "Anchor = fixed position. Free = drag anywhere (automatically enables Text Drag Mode)",
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.mode or "anchor" end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c)
+              if not c.cooldownText then c.cooldownText = {} end
+              c.cooldownText.mode = v
+            end)
+            -- Auto-enable text drag mode when switching to free
+            if v == "free" and ns.CDMEnhance and not ns.CDMEnhance.IsTextDragMode() then
+              ns.CDMEnhance.SetTextDragMode(true)
+            end
+          end,
+          order = 160, width = 0.85, hidden = HideCooldownCooldownText,
+        },
+        cdAnchor = {
+          type = "select", name = "Anchor", values = TEXT_ANCHORS,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.anchor or "CENTER" end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.anchor = v end) end,
+          order = 161, width = 0.75, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
+        },
+        cdOffsetX = {
+          type = "range", name = "X Offset", min = -100, max = 100, step = 1,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.offsetX or 0 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.offsetX = v end) end,
+          order = 162, width = 0.55, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
+        },
+        cdOffsetY = {
+          type = "range", name = "Y Offset", min = -100, max = 100, step = 1,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.offsetY or 0 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.offsetY = v end) end,
+          order = 163, width = 0.55, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
+        },
+        cdFreeHint = {
+          type = "description", 
+          name = "|cff00ff00Text Drag Mode enabled.|r |cff888888Drag the cooldown text in-game to position it.|r",
+          order = 164, width = "full", 
+          hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
+        },
+      },
     },
-    cdTextDrag = {
-      type = "toggle", name = "Text Drag",
-      desc = "Enable dragging cooldown text to custom positions",
-      get = function() return ns.CDMEnhance and ns.CDMEnhance.IsTextDragMode() end,
-      set = function(_, v) if ns.CDMEnhance then ns.CDMEnhance.SetTextDragMode(v) end end,
-      order = 151.5, width = 0.7, hidden = HideCooldownCooldownText,
+    cdGrpFormat = {
+      type = "group", inline = true, name = "Format",
+      order = 164.1, hidden = HideCooldownCooldownText,
+      args = {
+        cdDecimals = {
+          type = "select", name = "Decimals",
+          desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
+          values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.decimals or 0 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimals = v end) end,
+          order = 164.2, width = 0.6, hidden = HideCooldownCooldownText,
+        },
+        cdDecimalThresholdEnabled = {
+          type = "toggle", name = "Show Below Threshold",
+          desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and (c.cooldownText.decimalThreshold or 0) > 0 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = v and 5 or 0 end) end,
+          order = 164.24, width = 0.95,
+          hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); return not c or not c.cooldownText or (c.cooldownText.decimals or 0) == 0 end,
+        },
+        cdDecimalThreshold = {
+          type = "input", name = "Below (s)",
+          desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
+          get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.decimalThreshold or 0; return tostring(v) end,
+          set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = n end) end,
+          order = 164.25, width = 0.85,
+          hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end if (c.cooldownText.decimals or 0) == 0 then return true end return (c.cooldownText.decimalThreshold or 0) <= 0 end,
+        },
+        cdAbbrevEnabled = {
+          type = "toggle", name = "Abbreviate (M:SS)",
+          desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
+          get = function() local c = GetCooldownCfg(); if not (c and c.cooldownText) then return false end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
+          set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = v and 60 or 0 end) end,
+          order = 164.29, width = 0.95, hidden = HideCooldownCooldownText,
+        },
+        cdAbbrevThreshold = {
+          type = "input", name = "Below (s)",
+          desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
+          get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
+          set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = n end) end,
+          order = 164.3, width = 0.85,
+          hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
+        },
+        cdShowBelow = {
+          type = "input", name = "Show Below (s)",
+          desc = "Keep the countdown hidden until the cooldown drops below this many seconds, then show it - for example 5 means the timer appears when the ability is 5 seconds away. Leave empty or 0 to always show it. Maximum 59.\n\n|cffffd700While this is in use it takes over the countdown format: the Decimals setting still applies below the threshold, Abbreviate does not (nothing is shown past a minute anyway).|r",
+          get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and tonumber(c.cooldownText.showBelowSeconds) or 0; return (v > 0) and tostring(v) or "" end,
+          set = function(_, v)
+            local n = tonumber(v) or 0
+            if n < 0 then n = 0 end
+            if n > 59 then n = 59 end
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.showBelowSeconds = (n > 0) and n or nil end)
+          end,
+          order = 164.31, width = 0.85, hidden = HideCooldownCooldownText,
+        },
+      },
     },
-    cdDurationColor = {
-      type = "toggle", name = "Color by Duration",
-      desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
-      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.durationColor == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColor == true end) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.durationColor = v end)
-        if ns.CDMTextColor then
-          ns.CDMTextColor.InvalidateCurves()
-          if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
-        end
-      end,
-      order = 164.6, width = 0.6, hidden = HideCooldownCooldownText,
-    },
-    cdDurationColorPreset = {
-      type = "select", name = "Color Template",
-      desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
-      sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
-      values = function()
-        if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
-          return ns.CDMTextColor.PRESET_NAMES
-        end
-        return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
-      end,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorPreset or "custom" end,
-      set = function(_, v)
-        local usePercent = false
-        local c = GetCooldownCfg()
-        if c and c.cooldownText then usePercent = c.cooldownText.durationColorUsePercent end
-        ApplySharedCooldownSetting(function(c2)
-          if not c2.cooldownText then c2.cooldownText = {} end
-          c2.cooldownText.durationColorPreset = v
-          if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
-            local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
-            if entries then c2.cooldownText.durationColorCustom = entries end
-            if defColor then c2.cooldownText.durationColorCustomDefault = defColor end
-          end
-        end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.63, width = 1.2,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurationColorUsePercent = {
-      type = "toggle", name = "Use % Thresholds",
-      desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorUsePercent end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c)
-          if not c.cooldownText then c.cooldownText = {} end
-          c.cooldownText.durationColorUsePercent = v
-          local preset = c.cooldownText.durationColorPreset or "custom"
-          if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
-            local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
-            if entries then c.cooldownText.durationColorCustom = entries end
-            if defColor then c.cooldownText.durationColorCustomDefault = defColor end
-          end
-        end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.61, width = 0.55,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    -- ═══ CUSTOM CURVE EDITOR (per-icon) ═══
-    cdDurCustomHeader = {
-      type = "description",
-      name = "|cffffd700Color Thresholds|r",
-      fontSize = "medium",
-      order = 164.65, width = "full",
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    -- Threshold 1
-    cdDurT1Enable = {
-      type = "toggle", name = "At", desc = "Enable threshold 1",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[1] = c.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}; c.cooldownText.durationColorCustom[1].enabled = v end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.661, width = 0.3,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurT1Value = {
-      type = "input", name = "", desc = "Below this many seconds, use this color",
-      dialogControl = "ArcUI_EditBox",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5 end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.662, width = 0.25,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
-      end,
-    },
-    cdDurT1Suffix = {
-      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
-      order = 164.663, width = 0.12,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
-      end,
-    },
-    cdDurT1Color = {
-      type = "color", name = "Color", hasAlpha = false,
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].color = {r=r,g=g,b=b,a=a or 1} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.664, width = 0.4,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
-      end,
-    },
-    -- Threshold 2
-    cdDurT2Enable = {
-      type = "toggle", name = "At", desc = "Enable threshold 2",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[2] = c.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[2].enabled = v end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.671, width = 0.3,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurT2Value = {
-      type = "input", name = "", desc = "Below this many seconds, use this color",
-      dialogControl = "ArcUI_EditBox",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60 end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.672, width = 0.25,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
-      end,
-    },
-    cdDurT2Suffix = {
-      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
-      order = 164.673, width = 0.12,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
-      end,
-    },
-    cdDurT2Color = {
-      type = "color", name = "Color", hasAlpha = false,
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].color = {r=r,g=g,b=b,a=a or 1} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.674, width = 0.4,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
-      end,
-    },
-    -- Threshold 3
-    cdDurT3Enable = {
-      type = "toggle", name = "At", desc = "Enable threshold 3",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[3] = c.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; c.cooldownText.durationColorCustom[3].enabled = v end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.681, width = 0.3,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurT3Value = {
-      type = "input", name = "", desc = "Below this many seconds, use this color",
-      dialogControl = "ArcUI_EditBox",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600 end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.682, width = 0.25,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
-      end,
-    },
-    cdDurT3Suffix = {
-      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
-      order = 164.683, width = 0.12,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
-      end,
-    },
-    cdDurT3Color = {
-      type = "color", name = "Color", hasAlpha = false,
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].color = {r=r,g=g,b=b,a=a or 1} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.684, width = 0.4,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
-      end,
-    },
-    -- Threshold 4
-    cdDurT4Enable = {
-      type = "toggle", name = "At", desc = "Enable threshold 4",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[4] = c.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[4].enabled = v end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.691, width = 0.3,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurT4Value = {
-      type = "input", name = "", desc = "Below this many seconds, use this color",
-      dialogControl = "ArcUI_EditBox",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120 end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.692, width = 0.25,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
-      end,
-    },
-    cdDurT4Suffix = {
-      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
-      order = 164.693, width = 0.12,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
-      end,
-    },
-    cdDurT4Color = {
-      type = "color", name = "Color", hasAlpha = false,
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].color = {r=r,g=g,b=b,a=a or 1} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.694, width = 0.4,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
-      end,
-    },
-    -- Threshold 5
-    cdDurT5Enable = {
-      type = "toggle", name = "At", desc = "Enable threshold 5",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[5] = c.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; c.cooldownText.durationColorCustom[5].enabled = v end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.701, width = 0.3,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        return not (c and c.cooldownText and c.cooldownText.durationColor)
-      end,
-    },
-    cdDurT5Value = {
-      type = "input", name = "", desc = "Below this many seconds, use this color",
-      dialogControl = "ArcUI_EditBox",
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300 end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.702, width = 0.25,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
-      end,
-    },
-    cdDurT5Suffix = {
-      type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
-      order = 164.703, width = 0.12,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
-      end,
-    },
-    cdDurT5Color = {
-      type = "color", name = "Color", hasAlpha = false,
-      get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].color = {r=r,g=g,b=b,a=a or 1} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.704, width = 0.4,
-      hidden = function()
-        if HideCooldownCooldownText() then return true end
-        local c = GetCooldownCfg()
-        if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
-        local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
-      end,
-    },
-    cdSize = {
-      type = "range", name = "Size", min = 4, max = 64, step = 1,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.size or 14 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.size = v end) end,
-      order = 152, width = 0.6, hidden = HideCooldownCooldownText,
-    },
-    cdColorHeader = {
-      type = "description", name = "\n|cffffd700Color|r", order = 164.5, width = "full", hidden = HideCooldownCooldownText,
-    },
-    cdColor = {
-      type = "color", name = "Color", hasAlpha = true,
-      get = function()
-        local c = GetCooldownCfg()
-        local col = c and c.cooldownText and c.cooldownText.color or {r=1,g=1,b=1,a=1}
-        return col.r or 1, col.g or 1, col.b or 1, col.a or 1
-      end,
-      set = function(_, r, g, b, a)
-        ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.color = {r=r, g=g, b=b, a=a} end)
-        if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
-      end,
-      order = 164.55, width = 0.55, hidden = HideCooldownCooldownText,
-    },
-    cdFont = {
-      type = "select", name = "Font", dialogControl = "LSM30_Font",
-      values = LSM and LSM:HashTable("font") or {},
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.font or "Friz Quadrata TT" end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.font = v end) end,
-      order = 154, width = 0.9, hidden = HideCooldownCooldownText,
-    },
-    cdOutline = {
-      type = "select", name = "Outline", values = FONT_OUTLINES,
-      get = function() local c = GetCooldownCfg(); return GetOutlineValue(c and c.cooldownText and c.cooldownText.outline) end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.outline = v end) end,
-      order = 155, width = 0.85, hidden = HideCooldownCooldownText,
-    },
-    cdShadow = {
-      type = "toggle", name = "Shadow",
-      get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.shadow end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadow end) end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadow = v end) end,
-      order = 156, width = 0.55, hidden = HideCooldownCooldownText,
-    },
-    cdShadowX = {
-      type = "range", name = "Shadow X", min = -20, max = 20, step = 1,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadowOffsetX or 1 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadowOffsetX = v end) end,
-      order = 157, width = 0.55, hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.shadow) end,
-    },
-    cdShadowY = {
-      type = "range", name = "Shadow Y", min = -20, max = 20, step = 1,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.shadowOffsetY or -1 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.shadowOffsetY = v end) end,
-      order = 158, width = 0.55, hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.shadow) end,
-    },
-    
-    -- Position Mode
-    cdPositionHeader = {
-      type = "description", name = "\n|cffffd700Position|r", order = 159, width = "full", hidden = HideCooldownCooldownText,
-    },
-    cdMode = {
-      type = "select", name = "Mode", values = TEXT_MODES,
-      desc = "Anchor = fixed position. Free = drag anywhere (automatically enables Text Drag Mode)",
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.mode or "anchor" end,
-      set = function(_, v)
-        ApplySharedCooldownSetting(function(c)
-          if not c.cooldownText then c.cooldownText = {} end
-          c.cooldownText.mode = v
-        end)
-        -- Auto-enable text drag mode when switching to free
-        if v == "free" and ns.CDMEnhance and not ns.CDMEnhance.IsTextDragMode() then
-          ns.CDMEnhance.SetTextDragMode(true)
-        end
-      end,
-      order = 160, width = 0.85, hidden = HideCooldownCooldownText,
-    },
-    cdAnchor = {
-      type = "select", name = "Anchor", values = TEXT_ANCHORS,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.anchor or "CENTER" end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.anchor = v end) end,
-      order = 161, width = 0.75, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
-    },
-    cdOffsetX = {
-      type = "range", name = "X Offset", min = -100, max = 100, step = 1,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.offsetX or 0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.offsetX = v end) end,
-      order = 162, width = 0.55, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
-    },
-    cdOffsetY = {
-      type = "range", name = "Y Offset", min = -100, max = 100, step = 1,
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.offsetY or 0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.offsetY = v end) end,
-      order = 163, width = 0.55, hidden = function() return HideCooldownCooldownText() or (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
-    },
-    cdFreeHint = {
-      type = "description", 
-      name = "|cff00ff00Text Drag Mode enabled.|r |cff888888Drag the cooldown text in-game to position it.|r",
-      order = 164, width = "full", 
-      hidden = function() return HideCooldownCooldownText() or not (GetCooldownCfg() and GetCooldownCfg().cooldownText and GetCooldownCfg().cooldownText.mode == "free") end,
-    },
-    -- ─── 3.6.6 Duration-text formatting (engine-rendered, zero polling) ───
-    cdFormatHeader = {
-      type = "description", name = "\n|cffffd700Format|r", order = 164.1, width = "full", hidden = HideCooldownCooldownText,
-    },
-    cdDecimals = {
-      type = "select", name = "Decimals",
-      desc = "How many decimal places the countdown shows. Rendered by the game engine — no polling cost.",
-      values = { [0] = "0 (3s)", [1] = "1 (3.5s)" },
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.decimals or 0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimals = v end) end,
-      order = 164.2, width = 0.6, hidden = HideCooldownCooldownText,
-    },
-    cdDecimalThresholdEnabled = {
-      type = "toggle", name = "Show Below Threshold",
-      desc = "When ON, only show the decimal under a custom remaining-time threshold. When OFF, the decimal is shown across the entire countdown.",
-      get = function() local c = GetCooldownCfg(); return c and c.cooldownText and (c.cooldownText.decimalThreshold or 0) > 0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = v and 5 or 0 end) end,
-      order = 164.24, width = 0.95,
-      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); return not c or not c.cooldownText or (c.cooldownText.decimals or 0) == 0 end,
-    },
-    cdDecimalThreshold = {
-      type = "input", name = "Below (s)",
-      desc = "Show the decimal only when remaining time is below this many seconds. Accepts whole or decimal seconds.",
-      get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.decimalThreshold or 0; return tostring(v) end,
-      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.decimalThreshold = n end) end,
-      order = 164.25, width = 0.85,
-      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end if (c.cooldownText.decimals or 0) == 0 then return true end return (c.cooldownText.decimalThreshold or 0) <= 0 end,
-    },
-    cdAbbrevEnabled = {
-      type = "toggle", name = "Abbreviate (M:SS)",
-      desc = "When ON, the countdown shows M:SS form (e.g. 1:31) below a threshold you set. When OFF, leaves Blizzard's default behavior in place.",
-      get = function() local c = GetCooldownCfg(); if not (c and c.cooldownText) then return false end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v ~= "default" and v ~= "" end return type(v) == "number" and v > 0 end,
-      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = v and 60 or 0 end) end,
-      order = 164.29, width = 0.95, hidden = HideCooldownCooldownText,
-    },
-    cdAbbrevThreshold = {
-      type = "input", name = "Below (s)",
-      desc = "Show M:SS form when remaining time is below this many seconds. Accepts whole or decimal seconds (e.g. 60, 300, 3600).",
-      get = function() local c = GetCooldownCfg(); local v = c and c.cooldownText and c.cooldownText.abbrevThreshold; if type(v) == "string" then if v == "1m" then v = 60 elseif v == "5m" then v = 300 elseif v == "1h" then v = 3600 else v = 0 end end if type(v) ~= "number" then v = 0 end return tostring(v) end,
-      set = function(_, v) local n = tonumber(v); if not n or n <= 0 then return end; ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.abbrevThreshold = n end) end,
-      order = 164.3, width = 0.85,
-      hidden = function() if HideCooldownCooldownText() then return true end local c = GetCooldownCfg(); if not c or not c.cooldownText then return true end local v = c.cooldownText.abbrevThreshold; if type(v) == "string" then return v == "default" or v == "" end return type(v) ~= "number" or v <= 0 end,
+    cdGrpColor = {
+      type = "group", inline = true, name = "Color",
+      order = 164.5, hidden = HideCooldownCooldownText,
+      args = {
+        cdColor = {
+          type = "color", name = "Color", hasAlpha = true,
+          get = function()
+            local c = GetCooldownCfg()
+            local col = c and c.cooldownText and c.cooldownText.color or {r=1,g=1,b=1,a=1}
+            return col.r or 1, col.g or 1, col.b or 1, col.a or 1
+          end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.color = {r=r, g=g, b=b, a=a} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.55, width = 0.55, hidden = HideCooldownCooldownText,
+        },
+        cdDurationColor = {
+          type = "toggle", name = "Color by Duration",
+          desc = "Dynamically color the cooldown countdown text based on remaining duration percentage. Colors transition as the cooldown ticks down.",
+          get = function() return GetCooldownBoolSetting(function(c) return c and c.cooldownText and c.cooldownText.durationColor == true end, function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColor == true end) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; c.cooldownText.durationColor = v end)
+            if ns.CDMTextColor then
+              ns.CDMTextColor.InvalidateCurves()
+              if v then ns.CDMTextColor.Start() else ns.CDMTextColor.CheckAndStart() end
+            end
+          end,
+          order = 164.6, width = 1.0, hidden = HideCooldownCooldownText,
+        },
+        cdDurationColorUsePercent = {
+          type = "toggle", name = "Use % Thresholds",
+          desc = "Use remaining percentage (0-100%) instead of seconds for color thresholds. Better for abilities with varying durations.",
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorUsePercent end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c)
+              if not c.cooldownText then c.cooldownText = {} end
+              c.cooldownText.durationColorUsePercent = v
+              local preset = c.cooldownText.durationColorPreset or "custom"
+              if preset ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+                local entries, defColor = ns.CDMTextColor.GetPresetEntries(preset, v)
+                if entries then c.cooldownText.durationColorCustom = entries end
+                if defColor then c.cooldownText.durationColorCustomDefault = defColor end
+              end
+            end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.61, width = 0.95,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurationColorPreset = {
+          type = "select", name = "Color Template",
+          desc = "Load a preset color scheme into the threshold editor below. Values and colors can then be customized.",
+          sorting = {"custom", "classic", "warm", "cool", "nature", "urgent"},
+          values = function()
+            if ns.CDMTextColor and ns.CDMTextColor.PRESET_NAMES then
+              return ns.CDMTextColor.PRESET_NAMES
+            end
+            return { custom = "Custom", classic = "Classic", warm = "Warm", cool = "Cool", nature = "Nature", urgent = "Urgent" }
+          end,
+          get = function() local c = GetCooldownCfg(); return c and c.cooldownText and c.cooldownText.durationColorPreset or "custom" end,
+          set = function(_, v)
+            local usePercent = false
+            local c = GetCooldownCfg()
+            if c and c.cooldownText then usePercent = c.cooldownText.durationColorUsePercent end
+            ApplySharedCooldownSetting(function(c2)
+              if not c2.cooldownText then c2.cooldownText = {} end
+              c2.cooldownText.durationColorPreset = v
+              if v ~= "custom" and ns.CDMTextColor and ns.CDMTextColor.GetPresetEntries then
+                local entries, defColor = ns.CDMTextColor.GetPresetEntries(v, usePercent)
+                if entries then c2.cooldownText.durationColorCustom = entries end
+                if defColor then c2.cooldownText.durationColorCustomDefault = defColor end
+              end
+            end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.63, width = 1.2,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurCustomHeader = {
+          type = "description",
+          name = "|cffffd700Color Thresholds|r",
+          fontSize = "medium",
+          order = 164.65, width = "full",
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT1Enable = {
+          type = "toggle", name = "At", desc = "Enable threshold 1",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[1] and e[1].enabled end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[1] = c.cooldownText.durationColorCustom[1] or {threshold=5,color={r=1,g=0.39,b=0.28,a=1}}; c.cooldownText.durationColorCustom[1].enabled = v end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.661, width = 0.3,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT1Value = {
+          type = "input", name = "", desc = "Below this many seconds, use this color",
+          dialogControl = "ArcUI_EditBox",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[1] and e[1].threshold or 5) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].threshold = tonumber(v) or 5 end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.662, width = 0.25,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+          end,
+        },
+        cdDurT1Suffix = {
+          type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+          order = 164.663, width = 0.12,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+          end,
+        },
+        cdDurT1Color = {
+          type = "color", name = "Color", hasAlpha = false,
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[1] and e[1].color; if col then return col.r or 1, col.g or 0.39, col.b or 0.28, col.a or 1 end; return 1, 0.39, 0.28, 1 end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[1] then return end; c.cooldownText.durationColorCustom[1].color = {r=r,g=g,b=b,a=a or 1} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.664, width = 0.4,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[1] and e[1].enabled)
+          end,
+        },
+        cdDurT2Enable = {
+          type = "toggle", name = "At", desc = "Enable threshold 2",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[2] and e[2].enabled end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[2] = c.cooldownText.durationColorCustom[2] or {threshold=60,color={r=1,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[2].enabled = v end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.671, width = 0.3,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT2Value = {
+          type = "input", name = "", desc = "Below this many seconds, use this color",
+          dialogControl = "ArcUI_EditBox",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[2] and e[2].threshold or 60) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].threshold = tonumber(v) or 60 end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.672, width = 0.25,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+          end,
+        },
+        cdDurT2Suffix = {
+          type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+          order = 164.673, width = 0.12,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+          end,
+        },
+        cdDurT2Color = {
+          type = "color", name = "Color", hasAlpha = false,
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[2] and e[2].color; if col then return col.r or 1, col.g or 1, col.b or 0, col.a or 1 end; return 1, 1, 0, 1 end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[2] then return end; c.cooldownText.durationColorCustom[2].color = {r=r,g=g,b=b,a=a or 1} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.674, width = 0.4,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[2] and e[2].enabled)
+          end,
+        },
+        cdDurT3Enable = {
+          type = "toggle", name = "At", desc = "Enable threshold 3",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[3] and e[3].enabled end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[3] = c.cooldownText.durationColorCustom[3] or {threshold=3600,color={r=1,g=1,b=1,a=1}}; c.cooldownText.durationColorCustom[3].enabled = v end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.681, width = 0.3,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT3Value = {
+          type = "input", name = "", desc = "Below this many seconds, use this color",
+          dialogControl = "ArcUI_EditBox",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[3] and e[3].threshold or 3600) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].threshold = tonumber(v) or 3600 end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.682, width = 0.25,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+          end,
+        },
+        cdDurT3Suffix = {
+          type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+          order = 164.683, width = 0.12,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+          end,
+        },
+        cdDurT3Color = {
+          type = "color", name = "Color", hasAlpha = false,
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[3] and e[3].color; if col then return col.r or 1, col.g or 1, col.b or 1, col.a or 1 end; return 1, 1, 1, 1 end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[3] then return end; c.cooldownText.durationColorCustom[3].color = {r=r,g=g,b=b,a=a or 1} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.684, width = 0.4,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[3] and e[3].enabled)
+          end,
+        },
+        cdDurT4Enable = {
+          type = "toggle", name = "At", desc = "Enable threshold 4",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[4] and e[4].enabled end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[4] = c.cooldownText.durationColorCustom[4] or {threshold=120,color={r=0,g=1,b=0,a=1}}; c.cooldownText.durationColorCustom[4].enabled = v end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.691, width = 0.3,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT4Value = {
+          type = "input", name = "", desc = "Below this many seconds, use this color",
+          dialogControl = "ArcUI_EditBox",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[4] and e[4].threshold or 120) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].threshold = tonumber(v) or 120 end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.692, width = 0.25,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+          end,
+        },
+        cdDurT4Suffix = {
+          type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+          order = 164.693, width = 0.12,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+          end,
+        },
+        cdDurT4Color = {
+          type = "color", name = "Color", hasAlpha = false,
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[4] and e[4].color; if col then return col.r or 0, col.g or 1, col.b or 0, col.a or 1 end; return 0, 1, 0, 1 end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[4] then return end; c.cooldownText.durationColorCustom[4].color = {r=r,g=g,b=b,a=a or 1} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.694, width = 0.4,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[4] and e[4].enabled)
+          end,
+        },
+        cdDurT5Enable = {
+          type = "toggle", name = "At", desc = "Enable threshold 5",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return e and e[5] and e[5].enabled end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText then c.cooldownText = {} end; if not c.cooldownText.durationColorCustom then c.cooldownText.durationColorCustom = {{enabled=true,threshold=5,color={r=1,g=0.39,b=0.28,a=1}},{enabled=false,threshold=60,color={r=1,g=1,b=0,a=1}},{enabled=false,threshold=3600,color={r=1,g=1,b=1,a=1}},{enabled=false,threshold=120,color={r=0,g=1,b=0,a=1}},{enabled=false,threshold=300,color={r=0.5,g=0.5,b=1,a=1}}} end; c.cooldownText.durationColorCustom[5] = c.cooldownText.durationColorCustom[5] or {threshold=300,color={r=0.5,g=0.5,b=1,a=1}}; c.cooldownText.durationColorCustom[5].enabled = v end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.701, width = 0.3,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            return not (c and c.cooldownText and c.cooldownText.durationColor)
+          end,
+        },
+        cdDurT5Value = {
+          type = "input", name = "", desc = "Below this many seconds, use this color",
+          dialogControl = "ArcUI_EditBox",
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; return tostring(e and e[5] and e[5].threshold or 300) end,
+          set = function(_, v)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].threshold = tonumber(v) or 300 end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.702, width = 0.25,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+          end,
+        },
+        cdDurT5Suffix = {
+          type = "description", name = function() local c = GetCooldownCfg(); return (c and c.cooldownText and c.cooldownText.durationColorUsePercent) and "%" or "s" end, fontSize = "medium",
+          order = 164.703, width = 0.12,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+          end,
+        },
+        cdDurT5Color = {
+          type = "color", name = "Color", hasAlpha = false,
+          get = function() local c = GetCooldownCfg(); local e = c and c.cooldownText and c.cooldownText.durationColorCustom; local col = e and e[5] and e[5].color; if col then return col.r or 0.5, col.g or 0.5, col.b or 1, col.a or 1 end; return 0.5, 0.5, 1, 1 end,
+          set = function(_, r, g, b, a)
+            ApplySharedCooldownSetting(function(c) if not c.cooldownText or not c.cooldownText.durationColorCustom or not c.cooldownText.durationColorCustom[5] then return end; c.cooldownText.durationColorCustom[5].color = {r=r,g=g,b=b,a=a or 1} end)
+            if ns.CDMTextColor then ns.CDMTextColor.InvalidateCurves() end
+          end,
+          order = 164.704, width = 0.4,
+          hidden = function()
+            if HideCooldownCooldownText() then return true end
+            local c = GetCooldownCfg()
+            if not (c and c.cooldownText and c.cooldownText.durationColor) then return true end
+            local e = c.cooldownText.durationColorCustom; return not (e and e[5] and e[5].enabled)
+          end,
+        },
+      },
     },
     resetCooldownText = {
       type = "execute",
@@ -12911,6 +13039,23 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           RefreshGlobalAuras()
         end,
         order = 14.22, width = 0.5,
+        hidden = function()
+          if collapsedGlobalAuraSections.activeState then return true end
+          local g = GetAuraGlobalCfg()
+          return not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow)
+        end,
+      },
+      activeStateGlowColorNative = {
+        type = "toggle", name = "Blizzard Colors",
+        desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+        order = 14.2202, width = 0.9,
+        get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+        set = function(_, v)
+          local g = ns.db and ns.db.global
+          if g then g.nativeGlowColors = v and true or nil end
+          if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
         hidden = function()
           if collapsedGlobalAuraSections.activeState then return true end
           local g = GetAuraGlobalCfg()
@@ -14061,6 +14206,24 @@ function ns.GetCDMGlobalAuraDefaultsOptionsTable()
           return glowType == "default"
         end,
       },
+      glowColorNative = {
+        type = "toggle", name = "Blizzard Colors",
+        desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+        order = 52.5002, width = 0.9,
+        get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+        set = function(_, v)
+          local g = ns.db and ns.db.global
+          if g then g.nativeGlowColors = v and true or nil end
+          if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
+        hidden = function()
+          if collapsedGlobalAuraSections.procGlow then return true end
+          local g = GetAuraGlobalCfg()
+          local glowType = g.procGlow and g.procGlow.glowType or "default"
+          return glowType == "default"
+        end,
+      },
       glowAlpha = {
         type = "range", name = "Intensity", min = 0, max = 1.0, step = 0.05,
         desc = "How bright the glow appears",
@@ -14645,6 +14808,23 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           RefreshGlobalCooldowns()
         end,
         order = 14.22, width = 0.5,
+        hidden = function()
+          if collapsedGlobalCooldownSections.readyState then return true end
+          local g = GetCooldownGlobalCfg()
+          return not (g.cooldownStateVisuals and g.cooldownStateVisuals.readyState and g.cooldownStateVisuals.readyState.glow)
+        end,
+      },
+      readyStateGlowColorNative = {
+        type = "toggle", name = "Blizzard Colors",
+        desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+        order = 14.2202, width = 0.9,
+        get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+        set = function(_, v)
+          local g = ns.db and ns.db.global
+          if g then g.nativeGlowColors = v and true or nil end
+          if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
         hidden = function()
           if collapsedGlobalCooldownSections.readyState then return true end
           local g = GetCooldownGlobalCfg()
@@ -15826,6 +16006,24 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
           RefreshGlobalCooldowns()
         end,
         order = 52.5, width = 0.4,
+        hidden = function()
+          if collapsedGlobalCooldownSections.procGlow then return true end
+          local g = GetCooldownGlobalCfg()
+          local glowType = g.procGlow and g.procGlow.glowType or "default"
+          return glowType == "default"
+        end,
+      },
+      glowColorNative = {
+        type = "toggle", name = "Blizzard Colors",
+        desc = "Use Blizzard's own glow colors for the Button and Blizzard Proc styles, the way they looked before patch 10.1.5. Those two styles tint their artwork with whatever color you pick, so the original look cannot be matched from the color wheel. One account-wide switch: turning it on here turns it on for every glow section at once. Other glow styles keep their color.",
+        order = 52.5002, width = 0.9,
+        get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+        set = function(_, v)
+          local g = ns.db and ns.db.global
+          if g then g.nativeGlowColors = v and true or nil end
+          if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+          LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+        end,
         hidden = function()
           if collapsedGlobalCooldownSections.procGlow then return true end
           local g = GetCooldownGlobalCfg()
@@ -18118,6 +18316,31 @@ function ns.GetCDMUtilitiesOptionsTable()
   end
 
   local args = {
+    -- ═══════════════════════════════════════════════════════════════════
+    -- GLOW COLORS (account-wide)
+    -- ═══════════════════════════════════════════════════════════════════
+    glowColorsToggle = {
+      type = "toggle",
+      name = "Glow Colors",
+      desc = "Click to expand/collapse",
+      dialogControl = "CollapsibleHeader",
+      order = 0.5, width = "full",
+      get = function() return not cs.glowColors end,
+      set = function(_, v) cs.glowColors = not v; LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI") end,
+    },
+    nativeGlowColors = {
+      type = "toggle",
+      name = "Blizzard Default Glow Colors",
+      desc = "Use Blizzard's own glow colors for the Button and Proc glow styles, the way they looked before patch 10.1.5.\n\nThose two styles tint their artwork with whatever color you pick, which is why the original look cannot be matched from the color wheel - it needs no color at all. With this on, the color setting is ignored for those two styles and they show Blizzard's colors.\n\nEvery other glow style keeps its own color. Applies everywhere at once.",
+      order = 0.51, width = 1.8,
+      hidden = function() return cs.glowColors end,
+      get = function() return ns.Glows and ns.Glows.IsNativeColors and ns.Glows.IsNativeColors() or false end,
+      set = function(_, v)
+        local g = ns.db and ns.db.global
+        if g then g.nativeGlowColors = v and true or nil end
+        if ns.Glows and ns.Glows.SetNativeColors then ns.Glows.SetNativeColors(v) end
+      end,
+    },
     -- ═══════════════════════════════════════════════════════════════════
     -- KEYBIND DISPLAY (global settings)
     -- ═══════════════════════════════════════════════════════════════════

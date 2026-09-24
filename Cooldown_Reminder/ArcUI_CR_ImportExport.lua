@@ -119,6 +119,7 @@ local EXPORTED_PER_SPELL_MAPS = {
     "spellSoundDisabled",
     "spellDelayMode",
     "spellDelaySeconds",
+    "spellLoadConditions",
 }
 
 -- ===================================================================

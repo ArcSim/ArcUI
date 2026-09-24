@@ -96,6 +96,7 @@ local DB_DEFAULTS = {
     spellSoundDisabled = {},    -- per-spell: when true, skip sound/TTS for this spell (icon only)
     spellDelayMode     = {},    -- per-spell: "off" | "afterCast" | "afterReady"
     spellDelaySeconds  = {},    -- per-spell: seconds for the delayed reminder
+    spellLoadConditions = {},   -- per-spell: { showOnSpecs = {1,3}|nil, talentConditions = {...}|nil, talentConditionMode = "all"|"any" }
     ttsVoiceOverride = "default", -- "default" (WoW TTS setting), "male", or "female"
     ttsRateOverride  = nil,     -- nil = use WoW TTS setting, otherwise -10..10
     locked           = true,
@@ -1534,6 +1535,61 @@ function Engine:OnUnitAura()
     --]]
 end
 
+-- ===================================================================
+-- LOAD CONDITIONS (3.8.11) — per-reminder spec filter + talent conditions,
+-- the same shapes Arc icons use (showOnSpecs = spec NUMBERS 1..4, talent
+-- condition objects from ns.TalentPicker). A reminder whose conditions fail
+-- on the current spec/talents is simply not tracked: RebuildTrackedSpells
+-- skips it (destroying any live record), and re-runs on spec / talent
+-- change so a swap flips reminders without a reload. Both signals are
+-- non-secret and only ever change out of combat.
+-- ===================================================================
+function CR.GetLoadConditions(dbKey, create)
+    local db = GetDB()
+    if not db then return nil end
+    if not db.spellLoadConditions then db.spellLoadConditions = {} end
+    local lc = db.spellLoadConditions[dbKey]
+    if not lc and create then
+        lc = {}
+        db.spellLoadConditions[dbKey] = lc
+    end
+    return lc
+end
+
+-- True when the reminder should be active for the current spec + talents.
+-- No conditions (or an empty spec list) = every spec, like Arc icons.
+function CR.IsReminderLoaded(dbKey)
+    local lc = CR.GetLoadConditions(dbKey, false)
+    if not lc then return true end
+    if lc.showOnSpecs and #lc.showOnSpecs > 0 then
+        local currentSpec = GetSpecialization and GetSpecialization() or 1
+        local allowed = false
+        for _, spec in ipairs(lc.showOnSpecs) do
+            if spec == currentSpec then allowed = true break end
+        end
+        if not allowed then return false end
+    end
+    if lc.talentConditions and #lc.talentConditions > 0
+        and ns.TalentPicker and ns.TalentPicker.CheckTalentConditions then
+        if not ns.TalentPicker.CheckTalentConditions(lc.talentConditions, lc.talentConditionMode or "all") then
+            return false
+        end
+    end
+    return true
+end
+
+-- Spec swaps and talent edits arrive as bursts (TRAIT_CONFIG_UPDATED fires
+-- several times per change); one rebuild per burst, never in the same frame.
+local loadCondRebuildPending = false
+function Engine:QueueLoadConditionRebuild(reason)
+    if loadCondRebuildPending then return end
+    loadCondRebuildPending = true
+    C_Timer.After(0.5, function()
+        loadCondRebuildPending = false
+        if Engine._initTime then Engine:RebuildTrackedSpells(reason or "load_conditions") end
+    end)
+end
+
 function Engine:RebuildTrackedSpells(reason)
     local db = GetDB()
     if not db or not db.whitelist then return end
@@ -1551,7 +1607,9 @@ function Engine:RebuildTrackedSpells(reason)
     -- Whatever ID the user enters is THE ID we watch.
     local want, wantItems = {}, {}
     for k, enabled in pairs(db.whitelist) do
-        if enabled then
+        -- Load conditions: a reminder that fails its spec/talent gate is
+        -- left untracked (its record, if any, is destroyed below).
+        if enabled and CR.IsReminderLoaded(k) then
             if type(k) == "string" and k:match("^i:(%d+)") then
                 local id = safeItemID(k:match("^i:(%d+)"))
                 if id then wantItems[id] = true end
@@ -3377,6 +3435,8 @@ eventFrame:RegisterEvent("PLAYER_EQUIPED_SPELLS_CHANGED")   -- item charge chang
 eventFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")          -- late item-data loads (re-resolve use-spell)
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")   -- proc glow ON (action-button overlay; spellID non-secret)
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")   -- proc glow OFF
+eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")   -- load conditions: spec filter
+eventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")            -- load conditions: talent conditions
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -3408,6 +3468,15 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit == "player" then Engine:OnPlayerCastSucceeded(spellID) end
+        return
+    end
+    if event == "PLAYER_SPECIALIZATION_CHANGED" then
+        local unit = ...
+        if unit == "player" then Engine:QueueLoadConditionRebuild("spec_changed") end
+        return
+    end
+    if event == "TRAIT_CONFIG_UPDATED" then
+        Engine:QueueLoadConditionRebuild("talents_changed")
         return
     end
     -- DISABLED with aura-gate system:

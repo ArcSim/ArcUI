@@ -1,3 +1,23 @@
+## 3.9.0
+
+### New Features
+
+- **Show Below on Cooldown Text** — Keep a cooldown's countdown hidden until it drops under a number of seconds you choose, so the timer only appears when the ability is almost back. Found in the cooldown icon's Duration/Cooldown Text Style under Format. Works in dungeons and raids too.
+- **Cooldown Reminder Load Conditions** — Each reminder can now be limited to chosen specs and talents, the same way Arc icons are. Swap spec or change talents and the reminder switches itself on or off with no reload. Reminders that are off for your current spec stay listed with a small note so you can still edit them.
+- **Blizzard Default Glow Colors** — A new Blizzard Colors checkbox next to every glow color picker (and in CDM Utilities) gives the Button and Blizzard Proc glow styles Blizzard's own colors from before patch 10.1.5. Those two styles tint their artwork with any color you pick, which is why the original look could never be matched from the color wheel. One account-wide switch, so ticking it in any section turns it on everywhere. Off by default.
+- **Loot Planner Slot Filter** — The Drops Overview gained a Slot dropdown next to Difficulty. Pick a slot and every boss opens at once showing only that slot's drops, so all your options for it sit side by side; bosses with nothing in that slot are hidden.
+
+### Improvements
+
+- **Duration/Cooldown Text Style** — The section is now organized into General, Position, Format and Color boxes instead of one long list, and the Color by Duration and Use % Thresholds labels no longer get cut off.
+
+### Bug Fixes
+
+- **Error in Raids and Dungeons** — Fixed the "attempt to compare local 'spellID' (a secret number value)" error that could fire hundreds of times inside instances. As part of the same fix, icons scanned inside an instance no longer fall back to an Unknown name until you leave.
+- **Hide CDM Icon/Bar Ghosts** — A Blizzard bar or icon hidden by one of your bars could reappear after login or a reload as a leftover copy that only went away once the options panel was opened. Released copies are no longer shown back, and every copy the game holds for that ability is hidden, not just the first one found.
+- **Loot Planner Drop Chances** — Tier tokens now count as a drop in the Adventure Guide percentages, and the odds follow the guide's class and spec filter even when a sim is loaded, so switching to another spec's loot view shows the right chance per item.
+- **Loot Planner Tooltips** — Sim-priced items in the Bonus Roll Overview now highlight your own primary stat. Warriors saw Agility or Intellect in white and Strength greyed out on multi-stat items.
+
 ## 3.8.10
 
 ### Improvements

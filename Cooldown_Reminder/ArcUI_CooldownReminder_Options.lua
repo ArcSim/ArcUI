@@ -100,9 +100,50 @@ end
 -- ===================================================================
 -- ACTIVE REMINDER ENTRY  (collapsible, like CreateActiveBarEntry)
 -- ===================================================================
+-- Load Conditions: spec-list toggle with the same normalisation as Arc icons
+-- (ns.ArcAurasOptions.ApplyArcSpecToggle): nil/empty = every spec; unticking
+-- from "all" materialises the full list first; re-ticking the last missing
+-- spec collapses back to nil.
+local function ApplyLoadCondSpecToggle(lc, specNum, value)
+    if not lc then return end
+    if not lc.showOnSpecs then lc.showOnSpecs = {} end
+    local numSpecs = GetNumSpecializations() or 4
+    if value then
+        local found = false
+        for _, s in ipairs(lc.showOnSpecs) do
+            if s == specNum then found = true break end
+        end
+        if not found then table.insert(lc.showOnSpecs, specNum) end
+    else
+        if #lc.showOnSpecs == 0 then
+            for i = 1, numSpecs do table.insert(lc.showOnSpecs, i) end
+        end
+        for i = #lc.showOnSpecs, 1, -1 do
+            if lc.showOnSpecs[i] == specNum then table.remove(lc.showOnSpecs, i) end
+        end
+    end
+    if #lc.showOnSpecs >= numSpecs then
+        local seen = {}
+        for _, s in ipairs(lc.showOnSpecs) do seen[s] = true end
+        local allChecked = true
+        for i = 1, numSpecs do
+            if not seen[i] then allChecked = false break end
+        end
+        if allChecked then lc.showOnSpecs = nil end
+    end
+end
+
 local function CreateActiveReminderEntry(spellID, isItem, orderBase)
     local optKey = isItem and ("i_"..spellID) or ("s_"..spellID)
     local dbKey  = isItem and ("i:"..tostring(spellID)) or tostring(spellID)
+
+    -- Any load-condition edit re-runs the engine's tracked-spell rebuild so
+    -- the reminder starts/stops immediately, then refreshes the panel.
+    local function RebuildForLoadConditions()
+        local engine = GetEngine()
+        if engine and engine.RebuildTrackedSpells then engine:RebuildTrackedSpells("load_conditions") end
+        NotifyChange()
+    end
 
     local function GetIcon()
         if isItem then
@@ -134,8 +175,12 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                 name   = function()
                     local name = GetName()
                     local icon = GetIcon()
-                    return string.format("|T%d:16:16:0:0|t |cff00ccff%s|r |cff888888(ID: %d)|r",
-                        icon, name, spellID)
+                    local tag = ""
+                    if CR.IsReminderLoaded and not CR.IsReminderLoaded(dbKey) then
+                        tag = "  |cff888888(not loaded on this spec)|r"
+                    end
+                    return string.format("|T%d:16:16:0:0|t |cff00ccff%s|r |cff888888(ID: %d)|r%s",
+                        icon, name, spellID, tag)
                 end,
                 desc             = "Click to expand/collapse",
                 dialogControl    = "CollapsibleHeader",
@@ -376,8 +421,72 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                     NotifyChange()
                 end,
             },
-            -- Delayed reminder: seconds
-            -- (rest of args follow below — original remove/spacer)
+            -- ─────────────────────────────────────────────────────────────
+            -- LOAD CONDITIONS (3.8.11): which specs, and which talents must
+            -- be active, for this reminder to be tracked at all. Same shapes
+            -- and picker as the Arc icon Load Conditions block. Any change
+            -- re-runs the engine's tracked-spell rebuild so it takes effect
+            -- immediately.
+            -- ─────────────────────────────────────────────────────────────
+            loadCondHeader = {
+                type   = "description",
+                name   = "\n|cffffd700Load Conditions|r  |cff666666(which specs and talents this reminder is active on. All unchecked or none set = every spec.)|r",
+                order  = 4.6,
+                width  = "full",
+                fontSize = "medium",
+                hidden = function() return not expandedKeys[optKey] end,
+            },
+            loadCondTalentSummary = {
+                type   = "description",
+                name   = function()
+                    local lc = CR.GetLoadConditions and CR.GetLoadConditions(dbKey, false)
+                    if ns.TalentPicker and ns.TalentPicker.GetConditionSummary then
+                        return ns.TalentPicker.GetConditionSummary(lc and lc.talentConditions, lc and lc.talentConditionMode)
+                    end
+                    return "|cff888888No talent conditions|r"
+                end,
+                order  = 4.7,
+                width  = "full",
+                fontSize = "small",
+                hidden = function() return not expandedKeys[optKey] end,
+            },
+            loadCondTalentEdit = {
+                type   = "execute",
+                name   = "Edit Talent Conditions",
+                desc   = "Open the talent picker to choose which talents must be active (or inactive) for this reminder to be tracked.",
+                order  = 4.71,
+                width  = 1.0,
+                hidden = function() return not expandedKeys[optKey] end,
+                func   = function()
+                    if not (ns.TalentPicker and ns.TalentPicker.OpenPicker and CR.GetLoadConditions) then return end
+                    local lc = CR.GetLoadConditions(dbKey, true)
+                    if not lc then return end
+                    ns.TalentPicker.OpenPicker(lc.talentConditions, lc.talentConditionMode, function(conditions, matchMode)
+                        lc.talentConditions = conditions
+                        lc.talentConditionMode = matchMode
+                        RebuildForLoadConditions()
+                    end)
+                end,
+            },
+            loadCondTalentClear = {
+                type   = "execute",
+                name   = "Clear",
+                desc   = "Remove all talent conditions for this reminder.",
+                order  = 4.72,
+                width  = 0.5,
+                hidden = function()
+                    if not expandedKeys[optKey] then return true end
+                    local lc = CR.GetLoadConditions and CR.GetLoadConditions(dbKey, false)
+                    return not (lc and lc.talentConditions and #lc.talentConditions > 0)
+                end,
+                func   = function()
+                    local lc = CR.GetLoadConditions and CR.GetLoadConditions(dbKey, false)
+                    if not lc then return end
+                    lc.talentConditions = nil
+                    lc.talentConditionMode = nil
+                    RebuildForLoadConditions()
+                end,
+            },
             -- Remove
             remove = {
                 type    = "execute",
@@ -398,6 +507,7 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                         if db.spellDelayMode then db.spellDelayMode["i:"..tostring(spellID)] = nil end
                         if db.spellDelaySeconds then db.spellDelaySeconds["i:"..tostring(spellID)] = nil end
                         if db.spellTriggers then db.spellTriggers["i:"..tostring(spellID)] = nil end
+                        if db.spellLoadConditions then db.spellLoadConditions["i:"..tostring(spellID)] = nil end
                     else
                         db.whitelist[tostring(spellID)] = nil
                         db.whitelist[spellID] = nil
@@ -428,6 +538,10 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                         if db.spellTriggers then
                             db.spellTriggers[tostring(spellID)] = nil
                             db.spellTriggers[spellID] = nil
+                        end
+                        if db.spellLoadConditions then
+                            db.spellLoadConditions[tostring(spellID)] = nil
+                            db.spellLoadConditions[spellID] = nil
                         end
                     end
                     GetEngine():RebuildTrackedSpells("remove")
@@ -1115,6 +1229,42 @@ local function CreateActiveReminderEntry(spellID, isItem, orderBase)
                 -- linger when a new trigger gets added at the same idx.
                 expandedKeys[trigExpandKey] = nil
                 NotifyChange()
+            end,
+        }
+    end
+
+    -- Load Conditions: one "Show on <spec>" checkbox per spec, between the
+    -- header (4.6) and the talent summary (4.7). Mirrors the Arc icon block.
+    for specNum = 1, 4 do
+        entry.args["loadCondSpec" .. specNum] = {
+            type  = "toggle",
+            name  = function()
+                local _, specName, _, specIcon = GetSpecializationInfo(specNum)
+                if specIcon and specName then
+                    return string.format("|T%s:14:14:0:0|t %s", specIcon, specName)
+                end
+                return specName or ("Spec " .. specNum)
+            end,
+            desc  = "Track this reminder on this spec. All checked (or none set) = every spec.",
+            order = 4.6 + specNum * 0.01,
+            width = 0.85,
+            hidden = function()
+                if not expandedKeys[optKey] then return true end
+                return (GetNumSpecializations() or 4) < specNum
+            end,
+            get = function()
+                local lc = CR.GetLoadConditions and CR.GetLoadConditions(dbKey, false)
+                if not lc or not lc.showOnSpecs or #lc.showOnSpecs == 0 then return true end
+                for _, spec in ipairs(lc.showOnSpecs) do
+                    if spec == specNum then return true end
+                end
+                return false
+            end,
+            set = function(_, val)
+                local lc = CR.GetLoadConditions and CR.GetLoadConditions(dbKey, true)
+                if not lc then return end
+                ApplyLoadCondSpecToggle(lc, specNum, val)
+                RebuildForLoadConditions()
             end,
         }
     end

@@ -319,6 +319,20 @@ clones inside the ArcUI directory.
   - if the clone is behind, `git -C E:\WoWDev\wow-ui-source pull`. Branch must match the client's
     track: **`live`** for current retail (default); `ptr`/`ptr2` for an upcoming PTR (e.g. a
     12.0.7 line); **`beta` is frozen/dead — never use it.**
+- **E:\WoWDev\wow-ui-source-forever** — the same thing for **WoW Forever** (camelot), and the
+  ONE exception to the "never Gethe" rule above: BigWigs does not carry Forever at all (its
+  remote has only `live` and `ptr`), so this is a clone of **Gethe/wow-ui-source, `forever`
+  branch** — which does track it, commit-for-build. Ground truth for every Forever API question;
+  grep and read it directly instead of guessing from retail.
+  - **LAYOUT DIFFERS from the BigWigs clones**: files live under `Interface\AddOns\` (WITH the
+    prefix), e.g. `Interface\AddOns\Blizzard_SharedTalentUI\Blizzard_SharedTalentFrame.lua`.
+  - build check: `git -C E:\WoWDev\wow-ui-source-forever log -1 --format=%s` → e.g.
+    `1.60.1 (69913)`; the client build is the `1.60.x.xxxxx` token on the `wow_classic_beta`
+    line of `E:\World of Warcraft\.build.info`. Behind? `git -C E:\WoWDev\wow-ui-source-forever pull`.
+  - Cloned `--single-branch --depth 1` (34 MB) since only current source matters here.
+  - Useful landmarks: `Blizzard_SwingTimer` (ArcNextSwing's dependency), `Blizzard_SharedTalentUI`
+    + `Blizzard_PlayerSpells\ClassTalents` (talent tree layout), and the ~7 Blizzard tocs carrying
+    `## AllowLoadGameType: camelot`.
 - **townlong-yak** (https://www.townlong-yak.com/framexml/) — fastest mirror, updates within
   minutes of a build dropping. Browse `/framexml/builds` for the newest build list and per-build
   files. Use it to grab a single file at the bleeding edge, diff two builds, or read a PTR line
