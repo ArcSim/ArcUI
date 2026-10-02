@@ -1,3 +1,18 @@
+## 3.9.1
+
+### Bug Fixes
+
+- **Sound Pickers** — Sound dropdowns open instantly even with several SharedMedia sound packs installed. Before, opening one could freeze the game for several seconds while it built a row for every sound. ArcUI now uses its own picker for this, so other addons' sound menus are untouched.
+- **Textures on Other Specs** — With the options panel open, textures from your other specs no longer draw on screen while you build a new spec's layout, and the texture list now respects Show Only Current Spec like the bar list does.
+- **Resource Bar Text Strata** — The text Strata and Level settings on resource bars (runes, runic power and every other resource) now take effect, so the number can sit above other bars even with the bar itself hidden. Before, only the bar's own strata did anything.
+- **Stuck Castbar in Mythic+** — The castbar could stay stuck on screen after some casts in a Mythic+ fight, Rebirth for example, until a reload. It now always clears once the cast is over.
+- **Resource Bar Ticks per Power Type** — With Tick Marks Auto Share off, each power type now keeps its own custom tick values, and color ranges follow the Colors box the same way. Before, every power type showed the same ticks whatever the box said. Your current ticks stay as they are until you edit a power type.
+
+### Improvements
+
+- **New Textures Load Only On Their Spec** — A newly created texture now loads only on the spec it was created on, like new icons already do. Widen it any time with the spec checkboxes in its row; existing textures are unchanged.
+- **Aura Groups Hold 20 Icons** — A Spell-ID Aura Group now shows up to 20 aura icons, up from 10. Before, icons past the tenth played their sound but never appeared.
+
 ## 3.9.0
 
 ### New Features

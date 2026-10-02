@@ -935,6 +935,17 @@ local function CastOnUpdate(self, elapsed)
         return
       end
     end
+    -- Same safety net for NORMAL casts (bug report: Rebirth in a Mythic+ fight left the bar
+    -- stuck until /reload). They only ended on a matching end event; when that event is missed
+    -- or its cast ID can't be matched, nothing else ended them. Like the default castbar, end
+    -- on time: once the cast is past its end and the game says nothing is being cast, hide.
+    -- The game check keeps a pushed-back cast alive; it only runs after the end time.
+    if not castIsChannel and not castIsEmpowered and castEndTime > 0
+       and (GetTime() - castEndTime) > 0.25 and not UnitCastingInfo("player") then
+      CastDebug("Safety net: hardcast past end time and nothing casting, stopping")
+      StopCast()
+      return
+    end
   -- Regular channels: refine timing on each tick until we get valid server timestamps.
   if castIsChannel and not castIsEmpowered and not castTimingRefined then
     local name, _, _, st, et = UnitChannelInfo("player")
@@ -1027,6 +1038,10 @@ end
 -- SHOW / STOP CAST
 -- ===================================================================
 local function ShowCast(spellID, startTimeMS, endTimeMS, isChannel, notInterruptible, isEmpowered, numStages, stageProps)
+  -- A spell ID read from UnitChannelInfo can be hidden while casting is restricted (Mythic+
+  -- fights). It is stored and compared below, so treat a hidden one as unknown up front.
+  if spellID ~= nil and issecretvalue and issecretvalue(spellID) then spellID = nil end
+  if notInterruptible ~= nil and issecretvalue and issecretvalue(notInterruptible) then notInterruptible = nil end
     local cfg = GetCastbarDB()
   if not cfg or not cfg.enabled
      or (ns.API and ns.API.IsModuleEnabled and not ns.API.IsModuleEnabled("castbar")) then
@@ -1348,6 +1363,23 @@ local function InstallGroupSyncHook()
   end)
 end
 
+-- Cast IDs and spell IDs from the spellcast events (and UnitCastingInfo) turn SECRET while
+-- casting is restricted, e.g. in a Mythic+ fight. A hidden value can't be compared or used in
+-- math, so every compare below goes through these helpers instead of erroring.
+local function IsHidden(v)
+  return v ~= nil and issecretvalue ~= nil and issecretvalue(v) == true
+end
+
+-- Is this end event about the cast our bar shows? Readable IDs compare as before (the guard
+-- that keeps a queued or rejected spell's events from ending the real cast). When either ID is
+-- hidden, ask the game instead: the event ends our cast only if nothing is being cast now.
+local function IsOurCast(guid)
+  if IsHidden(guid) or IsHidden(castCurrentGUID) then
+    return not UnitCastingInfo("player")
+  end
+  return guid == castCurrentGUID
+end
+
 castEventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
   if event == "PLAYER_LOGIN" then
     ns.Castbar.Init()
@@ -1421,11 +1453,21 @@ castEventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellI
 
   -- All UNIT_SPELLCAST_* events pass unit as the first argument
   if unit ~= "player" then return end
+  -- A hidden spell ID can't be compared or looked up; treat it as unknown.
+  if IsHidden(spellID) then spellID = nil end
 
   if event == "UNIT_SPELLCAST_START" then
     local name, _, _, startTimeMS, endTimeMS, _, _, notInterruptible = UnitCastingInfo("player")
-    CastDebug("SPELLCAST_START: spellID=" .. tostring(spellID) .. " name=" .. tostring(name))
     if name then
+      -- Hidden times can't drive our timer (math on them errors); skip this bar rather than
+      -- error. Hidden spell / interruptible values just lose their lookups.
+      if IsHidden(startTimeMS) or IsHidden(endTimeMS) then
+        CastDebug("SPELLCAST_START skipped: cast times are hidden")
+        return
+      end
+      if IsHidden(spellID) then spellID = nil end
+      if IsHidden(notInterruptible) then notInterruptible = nil end
+      CastDebug("SPELLCAST_START: spellID=" .. tostring(spellID))
       castCurrentGUID = castGUID
       ShowCast(spellID, startTimeMS, endTimeMS, false, notInterruptible)
     end
@@ -1490,7 +1532,8 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     -- retry (fixes Blizzard nil race)
     local function retry(n)
         C_Timer.After(0.05, function()
-            if castCurrentGUID ~= savedGUID then return end
+            if not IsHidden(castCurrentGUID) and not IsHidden(savedGUID)
+               and castCurrentGUID ~= savedGUID then return end
             if TryStart() then return end
             if n > 1 then retry(n - 1) end
         end)
@@ -1525,7 +1568,7 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     -- Cast was pushed back (hit while casting); update end time
     if castActive and not castIsChannel then
       local name, _, _, startTimeMS, endTimeMS = UnitCastingInfo("player")
-      if name then
+      if name and not IsHidden(startTimeMS) and not IsHidden(endTimeMS) then
         castStartTime = (startTimeMS or 0) / 1000
         castEndTime   = (endTimeMS   or 0) / 1000
       end
@@ -1535,7 +1578,7 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     -- Channel speed changed (e.g. Sped Up buff); skip empowered — their end time includes holdAtMax
     if castActive and castIsChannel and not castIsEmpowered then
       local name, _, _, startTimeMS, endTimeMS = UnitChannelInfo("player")
-      if name then
+      if name and not IsHidden(startTimeMS) and not IsHidden(endTimeMS) then
         castStartTime = (startTimeMS or 0) / 1000
         castEndTime   = (endTimeMS   or 0) / 1000
       end
@@ -1556,7 +1599,7 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     -- Without the guard the fresh cast's bar gets killed with a false "Cancelled".
     -- Channels keep the unguarded path: their castCurrentGUID may hold a spellID
     -- fallback so the GUID compare isn't reliable, and CHANNEL_STOP owns their end.
-    if not castIsChannel and not castIsEmpowered and castGUID ~= castCurrentGUID then return end
+    if not castIsChannel and not castIsEmpowered and not IsOurCast(castGUID) then return end
     if castActive then EndCast(true) end
 
   elseif event == "UNIT_SPELLCAST_STOP"
@@ -1566,7 +1609,7 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     if castIsChannel or castIsEmpowered then return end
     -- GUID guard: rejected/queued spell attempts fire STOP/FAILED with their own GUID, not the
     -- active cast's. Only end the cast when the GUID matches what we started with.
-    if castGUID ~= castCurrentGUID then return end
+    if not IsOurCast(castGUID) then return end
     if castActive then EndCast(false) end
 
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -1577,7 +1620,7 @@ elseif event == "UNIT_SPELLCAST_CHANNEL_START"
     -- Shimmer -- fires SUCCEEDED with its OWN GUID, not the active cast's. Without this the ongoing
     -- cast's bar would StopCast() and vanish mid-cast. Only end when the succeeded GUID matches the
     -- cast we started.
-    if castGUID ~= castCurrentGUID then return end
+    if not IsOurCast(castGUID) then return end
     StopCast()
 
   elseif event == "UNIT_SPELLCAST_CHANNEL_STOP"

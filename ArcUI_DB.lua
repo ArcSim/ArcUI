@@ -1547,6 +1547,13 @@ function ns.API.InitializeNewTexture()
       cfg.tracking.spellID = 0
       cfg.tracking.cooldownID = 0
       cfg.tracking.trackType = ""  -- Force user to select (same as bars)
+      -- A new texture loads only on the spec it is created on (same default
+      -- 3.8.10 gave new icons). Widen it with the spec checkboxes in its row;
+      -- existing textures are never touched. A reused slot keeps no stale list.
+      cfg.behavior = cfg.behavior or {}
+      local curSpec = GetSpecialization and GetSpecialization()
+      cfg.behavior.showOnSpecs = (curSpec and curSpec > 0) and { curSpec } or {}
+      cfg.behavior.showOnSpec = 0
       ns.API.InvalidateActiveTextureCache()
 
       if ns.Textures and ns.Textures.ShowTexture then

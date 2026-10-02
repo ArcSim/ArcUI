@@ -2071,12 +2071,33 @@ local function DeepCopyTable(src)
 end
 
 -- Snapshot cfg.display into a profile table (excludes shared + layout keys)
+-- Top-level lists that belong to a power profile besides cfg.thresholds (which
+-- every save/load site handles itself). They ride INSIDE the display snapshot
+-- under one reserved key, so every save, load and create-from-_base path
+-- carries them without per-site code. Before this only thresholds were ever
+-- profiled, so custom tick values and color ranges were shared across power
+-- types whatever the Auto Share boxes said (Discord 1555157716723437599).
+-- An old snapshot without the key leaves the current list untouched, so
+-- existing setups keep their ticks until the user edits a power type.
+local SNAP_TOP_LEVEL_KEY = "_arcTopLevel"
+local SNAP_TOP_LEVEL_LISTS = { "colorRanges", "abilityThresholds" }
+
 local function SnapshotDisplay(display, cfg)
   local snap = {}
   for k, v in pairs(display) do
-    if not ShouldExcludeFromProfile(k, cfg) then
+    if k ~= SNAP_TOP_LEVEL_KEY and not ShouldExcludeFromProfile(k, cfg) then
       snap[k] = DeepCopyTable(v)
     end
+  end
+  if cfg then
+    local top
+    for _, key in ipairs(SNAP_TOP_LEVEL_LISTS) do
+      if cfg[key] ~= nil and not ShouldExcludeTopLevel(key, cfg) then
+        top = top or {}
+        top[key] = DeepCopyTable(cfg[key])
+      end
+    end
+    snap[SNAP_TOP_LEVEL_KEY] = top
   end
   return snap
 end
@@ -2095,8 +2116,18 @@ local function RestoreDisplayFromSnapshot(snap, display, cfg)
   end
   -- Load snapshot values in (skip excluded keys from stale snapshots)
   for k, v in pairs(snap) do
-    if not ShouldExcludeFromProfile(k, cfg) then
+    if k ~= SNAP_TOP_LEVEL_KEY and not ShouldExcludeFromProfile(k, cfg) then
       display[k] = DeepCopyTable(v)
+    end
+  end
+  -- The profiled top-level lists (see SnapshotDisplay). A list the snapshot
+  -- does not carry, or one shared by Auto Share, keeps its current value.
+  local top = snap[SNAP_TOP_LEVEL_KEY]
+  if cfg and type(top) == "table" then
+    for _, key in ipairs(SNAP_TOP_LEVEL_LISTS) do
+      if top[key] ~= nil and not ShouldExcludeTopLevel(key, cfg) then
+        cfg[key] = DeepCopyTable(top[key])
+      end
     end
   end
 end
@@ -2597,6 +2628,12 @@ function ns.Resources.SeedCategoryIntoProfiles(barNumber, categoryName)
         for _, topKey in ipairs(topKeysToSeed) do
           if cfg[topKey] then
             profileData[topKey] = DeepCopyTable(cfg[topKey])
+            -- colorRanges / abilityThresholds are read back from the display
+            -- snapshot (SnapshotDisplay), so seed them there too
+            if topKey ~= "thresholds" then
+              profileData.display[SNAP_TOP_LEVEL_KEY] = profileData.display[SNAP_TOP_LEVEL_KEY] or {}
+              profileData.display[SNAP_TOP_LEVEL_KEY][topKey] = DeepCopyTable(cfg[topKey])
+            end
           end
         end
       end
@@ -6229,11 +6266,17 @@ function ns.Resources.ApplyAppearance(barNumber)
   -- Frame strata and level
   local strata = display.barFrameStrata or "HIGH"
   mainFrame:SetFrameStrata(strata)
-  textFrame:SetFrameStrata(strata)
-  
+
   local level = display.barFrameLevel or 10
   mainFrame:SetFrameLevel(level)
-  textFrame:SetFrameLevel(level + 100)
+
+  -- Value text: the panel's text Strata / Level (the shared stackText* keys,
+  -- same ones the aura bars read) win; unset falls back to the old default of
+  -- the bar's strata at bar level + 100. The text frame is parented to
+  -- UIParent, so its own strata is honoured. These were never read before
+  -- (Discord 1553884256521166980: text strata did nothing on rune/runic bars).
+  textFrame:SetFrameStrata(display.stackTextStrata or strata)
+  textFrame:SetFrameLevel(tonumber(display.stackTextLevel) or (level + 100))
   
   -- Update layer levels
   if mainFrame.layers then

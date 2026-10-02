@@ -29,6 +29,26 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.9.1",
+    sections = {
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Sound Pickers", desc = "Sound dropdowns open instantly even with several SharedMedia sound packs installed. Before, opening one could freeze the game for several seconds while it built a row for every sound. ArcUI now uses its own picker for this, so other addons' sound menus are untouched." },
+          { title = "Textures on Other Specs", desc = "With the options panel open, textures from your other specs no longer draw on screen while you build a new spec's layout, and the texture list now respects Show Only Current Spec like the bar list does." },
+          { title = "Resource Bar Text Strata", desc = "The text Strata and Level settings on resource bars (runes, runic power and every other resource) now take effect, so the number can sit above other bars even with the bar itself hidden. Before, only the bar's own strata did anything." },
+          { title = "Stuck Castbar in Mythic+", desc = "The castbar could stay stuck on screen after some casts in a Mythic+ fight, Rebirth for example, until a reload. It now always clears once the cast is over." },
+          { title = "Resource Bar Ticks per Power Type", desc = "With Tick Marks Auto Share off, each power type now keeps its own custom tick values, and color ranges follow the Colors box the same way. Before, every power type showed the same ticks whatever the box said. Your current ticks stay as they are until you edit a power type." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "New Textures Load Only On Their Spec", desc = "A newly created texture now loads only on the spec it was created on, like new icons already do. Widen it any time with the spec checkboxes in its row; existing textures are unchanged." },
+          { title = "Aura Groups Hold 20 Icons", desc = "A Spell-ID Aura Group now shows up to 20 aura icons, up from 10. Before, icons past the tenth played their sound but never appeared." },
+        },
+      },
+    },
+  },
+  {
     version = "3.9.0",
     sections = {
       {

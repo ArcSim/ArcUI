@@ -1353,15 +1353,21 @@ function Textures.UpdateTexture(num)
     return
   end
 
-  -- Load gates are bypassed while editing so the user can position/style.
+  -- Spec + talent gates ALWAYS apply, options open or not - same as the Aura
+  -- Bars (Display keeps both with the panel open). They used to be bypassed in
+  -- edit mode, which drew every other spec's textures while building a new
+  -- spec's UI (user report: Arcane textures cluttering a Fire setup).
+  if not SpecOK(cfg) then Textures.HideTexture(num); return end
+  if ns.TrackingOptions and ns.TrackingOptions.AreTalentConditionsMet
+     and not ns.TrackingOptions.AreTalentConditionsMet(cfg) then
+    Textures.HideTexture(num)
+    return
+  end
+
+  -- Only the runtime "Hide When..." conditions are bypassed while editing, so
+  -- a texture whose aura is down can still be positioned and styled.
   local hideWhenAlpha = 1
   if not optionsOpen then
-    if not SpecOK(cfg) then Textures.HideTexture(num); return end
-    if ns.TrackingOptions and ns.TrackingOptions.AreTalentConditionsMet
-       and not ns.TrackingOptions.AreTalentConditionsMet(cfg) then
-      Textures.HideTexture(num)
-      return
-    end
     -- "Hide When..." conditions -- shared evaluator, identical to the Aura Bars.
     if ns.CooldownBars and ns.CooldownBars.GetHideWhen then
       local hideWhen = ns.CooldownBars.GetHideWhen(cfg)

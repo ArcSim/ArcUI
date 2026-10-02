@@ -4580,7 +4580,7 @@ function ns.GetPingsOptionsTable()
                         get = function() return Cfg("alertsEnabled") end,
                         set = function(_, v) SetCfg("alertsEnabled", v) end },
                     alertSound = { type = "select", name = "Alert Sound", width = 1.4, order = 2,
-                        dialogControl = "LSM30_Sound",
+                        dialogControl = "ArcUI_LSMSound",
                         values = function()
                             local lsm = GetLSM()
                             return lsm and lsm:HashTable("sound") or { None = "None" }

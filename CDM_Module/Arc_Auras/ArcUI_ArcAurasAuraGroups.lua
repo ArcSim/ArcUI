@@ -55,7 +55,7 @@ local AG = ns.AuraIconGroups
 
 local IS_121 = (select(4, GetBuildInfo()) or 0) >= 120100
 
-local MEMBER_SLOTS = 10  -- engine groups per container (RC: pre-provisioned)
+local MEMBER_SLOTS = 20  -- engine groups per container (RC: pre-provisioned). Was 10 until 3.9.1 (Discord 1552416398: 11th+ members got sound but no icon)
 
 local runtimes = {}      -- groupName -> { engines={player=,target=}, cfg={iconW,iconH}, anchoredTo }
 local loadWindowOver = false

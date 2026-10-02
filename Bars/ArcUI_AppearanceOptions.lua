@@ -10289,7 +10289,10 @@ function ns.AppearanceOptions.GetOptionsTable()
         get = function()
           local cfg = GetSelectedConfig()
           local barLevel = cfg and cfg.display.barFrameLevel or 10
-          return tostring(cfg and cfg.display.stackTextLevel or (barLevel + 3))
+          -- resource bars put their text at bar level + 100 by default
+          -- (ns.Resources ApplyAppearance), other bars at + 3
+          local default = barLevel + (IsResourceBar() and 100 or 3)
+          return tostring(cfg and cfg.display.stackTextLevel or default)
         end,
         set = function(info, value)
           local cfg = GetSelectedConfig()

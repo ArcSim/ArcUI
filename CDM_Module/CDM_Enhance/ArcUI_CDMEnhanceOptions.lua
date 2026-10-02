@@ -683,7 +683,7 @@ local function AlertSoundNames()
   return (lsm and lsm:HashTable("sound")) or {}
 end
 
--- LSM30_Sound picker list. The media widget displays the KEYS and uses the
+-- ArcUI_LSMSound picker list (ArcUI's own virtual-list copy of LSM30_Sound). It displays the KEYS and uses the
 -- values only to preview the file, so this must stay name -> path (an
 -- ordinary select would render those paths as labels, which is exactly how
 -- these dropdowns ended up showing "Interface\AddOns\...ogg" and bare file
@@ -5723,7 +5723,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -5843,7 +5843,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -5910,7 +5910,7 @@ function ns.GetCDMAuraIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -10688,7 +10688,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -10800,7 +10800,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -10912,7 +10912,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,
@@ -11024,7 +11024,7 @@ function ns.GetCDMCooldownIconsOptionsTable()
         },
         sndFile = {
           type = "select",
-          dialogControl = "LSM30_Sound",
+          dialogControl = "ArcUI_LSMSound",
           name = "Sound File",
           desc = "Sound played for this trigger.",
           order = 2,

@@ -2684,7 +2684,10 @@ local function CreateActiveTextureEntry(num, orderBase)
       local db = ns.API and ns.API.GetDB and ns.API.GetDB()
       if not db or not db.textures then return true end
       local cfg = db.textures[num]
-      return not (cfg and cfg.tracking and cfg.tracking.enabled)
+      -- Same rule the bar rows use (ShouldShowBar): enabled slot, and with
+      -- "Show Only Current Spec" on, a spec match (no specs = every spec).
+      -- Texture rows used to skip the spec filter entirely.
+      return not ShouldShowBar(cfg)
     end,
     args = args,
   }

@@ -1786,7 +1786,7 @@ local function GetOptionsTable()
             newAuraGroupBtn = {
                 type = "execute",
                 name = "|cffff88ff+ Aura Group|r",
-                desc = "Create a Spell-ID Aura Group: a group for Arc aura icons where an icon only appears while its aura is active and the row compacts automatically — even in dungeons and raids.\n\n|cff888888Drag aura icons into it while this panel is open. Only spell-ID aura icons can join (CDM and spell icons use normal groups). Up to 10 icons per Aura Group.|r",
+                desc = "Create a Spell-ID Aura Group: a group for Arc aura icons where an icon only appears while its aura is active and the row compacts automatically — even in dungeons and raids.\n\n|cff888888Drag aura icons into it while this panel is open. Only spell-ID aura icons can join (CDM and spell icons use normal groups). Up to 20 icons per Aura Group.|r",
                 order = 22.3,
                 width = 0.8,
                 hidden = function()
@@ -2078,7 +2078,7 @@ local function GetOptionsTable()
             },
             auraGroupInfo = {
                 type = "description",
-                name = "|cffff88ffAura Group|r|cff888888 — drag aura icons in while this panel is open. Enable Dynamic Layout for the live compact view (icons show only while active, keeping your grid order and each icon's own styling). Up to 10 icons per Aura Group.|r",
+                name = "|cffff88ffAura Group|r|cff888888 — drag aura icons in while this panel is open. Enable Dynamic Layout for the live compact view (icons show only while active, keeping your grid order and each icon's own styling). Up to 20 icons per Aura Group.|r",
                 order = 30.5,
                 width = "full",
                 fontSize = "small",
