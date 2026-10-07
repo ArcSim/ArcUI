@@ -1,3 +1,9 @@
+## 3.9.1.a
+
+### Bug Fixes
+
+- **Charge Spells on Arc Icons** — Arc spell icons for spells that get an extra charge from a talent, like Stormstrike, show their cooldown swipe and recharge timer again. Before, after a talent or loadout change the icon could show only the charge count, with no swipe or timer, until a reload.
+
 ## 3.9.1
 
 ### Bug Fixes

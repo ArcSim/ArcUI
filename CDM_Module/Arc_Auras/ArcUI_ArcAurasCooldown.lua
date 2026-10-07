@@ -357,6 +357,19 @@ local function EnsureShadowFrames(fd)
     end
 end
 
+-- Charge classification. Talents can add or remove a spell's charges, so this
+-- re-runs on every talent / spells-changed pass, not just at creation: a stale
+-- false routes a 2-charge spell down the normal-spell feed (no swipe, no timer
+-- while recharging). maxCharges is non-secret.
+local function DetectCharges(fd)
+    if not fd or not fd.spellID then return end
+    local chargeInfo = C_Spell.GetSpellCharges(fd.spellID)
+    fd.isChargeSpell = (chargeInfo ~= nil)
+                       and (tonumber(chargeInfo.maxCharges) or 0) > 1
+    fd.hasChargeText = (chargeInfo ~= nil)
+    fd.maxCharges    = chargeInfo and tonumber(chargeInfo.maxCharges) or nil
+end
+
 -- Feed both shadows with ignoreGCD=true durObjs. Zero-span durObj = widget
 -- auto-hides, which is exactly the "ready / not running" state we want.
 local function FeedShadows(fd)
@@ -1636,11 +1649,7 @@ function ArcAurasCooldown.InitializeSpellFrame(arcID, frame, config)
     -- text for ANY spell where GetSpellCharges returned a table, even max=1,
     -- but we still gate cooldown semantics (recharging logic, glow-while-
     -- charges, etc.) on isChargeSpell to avoid mis-treating max=1 as max>1.
-    local chargeInfo = C_Spell.GetSpellCharges(spellID)
-    fd.isChargeSpell = (chargeInfo ~= nil)
-                       and (tonumber(chargeInfo.maxCharges) or 0) > 1
-    fd.hasChargeText = (chargeInfo ~= nil)
-    fd.maxCharges    = chargeInfo and tonumber(chargeInfo.maxCharges) or nil
+    DetectCharges(fd)
 
     -- Range check setup — EnableSpellRangeCheck opts in to SPELL_RANGE_CHECK_UPDATE
     if C_Spell.SpellHasRange and C_Spell.EnableSpellRangeCheck then
@@ -2270,6 +2279,9 @@ local _onEventFn = function(self, event, arg1, arg2, arg3, arg4)
                 -- FeedCooldown re-queries the API and re-applies ready/cooldown visuals.
                 for arcID, fd in pairs(ArcAurasCooldown.spellData) do
                     if fd.frame and fd.frame:IsShown() and not fd.frame._arcHiddenNotInSpec then
+                        if not fd.isCustomTimer and not fd.isCustomTotem then
+                            DetectCharges(fd)
+                        end
                         fd.frame._arcLastSpellState = nil
                         FeedCooldown(fd)
                     end
@@ -2357,13 +2369,7 @@ function ArcAurasCooldown.Initialize()
                 -- have a spellID. Custom totem frames (no spellID) must never be
                 -- in spellData, but guard so a stray nil-spellID entry can't
                 -- crash GetSpellCharges (and the rest of the refresh loop).
-                if fd.spellID then
-                    local chargeInfo = C_Spell.GetSpellCharges(fd.spellID)
-                    fd.isChargeSpell = (chargeInfo ~= nil)
-                                       and (tonumber(chargeInfo.maxCharges) or 0) > 1
-                    fd.hasChargeText = (chargeInfo ~= nil)
-                    fd.maxCharges    = chargeInfo and tonumber(chargeInfo.maxCharges) or nil
-                end
+                DetectCharges(fd)
                 FeedCooldown(fd)
                 UpdateProcGlow(fd)
             end
