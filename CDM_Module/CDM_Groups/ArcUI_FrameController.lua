@@ -3705,6 +3705,28 @@ local function InstallCDMHooks()
         end
     end
     
+    -- Viewer rebuilds (ReleaseAll + re-acquire) can hand every icon frame a
+    -- different cooldownID. Blizzard runs them on aura full updates (stealth,
+    -- first mount) as well as data changes. Hooks on CooldownViewerMixin /
+    -- CooldownViewerItemDataMixin never see these: the viewers and item mixins
+    -- copied those functions when Blizzard's addon loaded, before ours. Hook
+    -- the four viewer instances so a rebuild always gets a reconcile; without
+    -- it icons stayed in the wrong groups until combat or the options panel.
+    for _, viewerName in ipairs({ "EssentialCooldownViewer", "UtilityCooldownViewer",
+                                  "BuffIconCooldownViewer", "BuffBarCooldownViewer" }) do
+        local viewer = _G[viewerName]
+        if viewer and viewer.RefreshLayout and not viewer._arcFCRebuildHooked then
+            viewer._arcFCRebuildHooked = true
+            hooksecurefunc(viewer, "RefreshLayout", function()
+                if not _cdmGroupsEnabled then return end
+                -- Spec / talent / layout changes run their own longer debounce.
+                if state.specChangeDetected or state.talentChangeDetected or state.layoutChangeDetected then return end
+                TimelineAdd("CDM", "VIEWER_REBUILD", viewerName .. " RefreshLayout")
+                ScheduleReconcile(CONFIG.DEBOUNCE_NORMAL)
+            end)
+        end
+    end
+
     -- Hook CooldownViewerMixin.OnAcquireItemFrame to catch new frames
     if CooldownViewerMixin and CooldownViewerMixin.OnAcquireItemFrame then
         hooksecurefunc(CooldownViewerMixin, "OnAcquireItemFrame", function(viewer, frame)

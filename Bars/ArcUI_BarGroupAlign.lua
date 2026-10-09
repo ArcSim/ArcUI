@@ -45,7 +45,19 @@ end
 -- space, so the difference is directly usable as a SetPoint offset.
 -- ===================================================================
 
--- X inset: container BOTTOMLEFT → leftmost visible icon left edge.
+-- Which member frames mark the slot-area edge. The matched width spans the
+-- FULL grid, so a hidden icon still sitting in its slot counts too: measuring
+-- only visible icons put the bar's edge on the first visible one whenever an
+-- edge icon was hidden at apply time, and it stayed shifted until re-applied.
+-- A compact (dynamic) slot area spans active icons only, so there only shown
+-- icons count. Released frames have no anchors and read nil below.
+local function CountsForEdge(group, frame)
+  if frame:IsShown() then return true end
+  if group._slotAreaCompact then return false end
+  return frame:GetParent() == group.container
+end
+
+-- X inset: container BOTTOMLEFT → leftmost icon left edge.
 local function GetIconInsetX(group)
   local rawBase = group and group._slotInsetPx or 0
   if not group or not group.members or not group.container then return rawBase end
@@ -54,7 +66,7 @@ local function GetIconInsetX(group)
   local minLeft = math.huge
   for _, member in pairs(group.members) do
     local frame = member.frame
-    if frame and frame:IsShown() then
+    if frame and CountsForEdge(group, frame) then
       local fL = frame:GetLeft()
       if fL and fL < minLeft then minLeft = fL end
     end
@@ -76,7 +88,7 @@ local function GetIconInsetY(group)
   local maxTop = -math.huge
   for _, member in pairs(group.members) do
     local frame = member.frame
-    if frame and frame:IsShown() then
+    if frame and CountsForEdge(group, frame) then
       local fT = frame:GetTop()
       if fT and fT > maxTop then maxTop = fT end
     end
@@ -99,7 +111,7 @@ local function GetIconInsetBottom(group)
   local minBottom = math.huge
   for _, member in pairs(group.members) do
     local frame = member.frame
-    if frame and frame:IsShown() then
+    if frame and CountsForEdge(group, frame) then
       local fB = frame:GetBottom()
       if fB and fB < minBottom then minBottom = fB end
     end

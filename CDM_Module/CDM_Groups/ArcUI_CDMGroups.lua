@@ -10627,6 +10627,7 @@ function ns.CDMGroups.CreateGroup(name, groupType)
         -- for matchSlotsOnly width matching.  Plain WoW units — no pixel system needed.
 
         self._slotInsetPx = rawBase             -- read by Resources as UI units (name kept for compat)
+        self._slotAreaCompact = nil             -- full grid; the dynamic branch below flips it
         self._slotAreaW = cols * snapSlotW + (cols - 1) * snapSpacingX + totalExtraWidth + effectiveLeftOverflow + effectiveRightOverflow
         self._slotAreaH = rows * snapSlotH + (rows - 1) * snapSpacingY + totalExtraHeight + effectiveTopOverflow + effectiveBottomOverflow
         self._slotAreaWRaw = self._slotAreaW
@@ -11064,6 +11065,7 @@ function ns.CDMGroups.CreateGroup(name, groupType)
             -- icon width even when container size hasn't changed (e.g. initial load
             -- where container was already at compact size from a previous session).
             self._slotInsetPx = rawBase
+            self._slotAreaCompact = true        -- slot area spans active icons only
             self._slotAreaW = compactW - 2 * rawBase
             self._slotAreaH = compactH - 2 * rawBase
             self._slotAreaWRaw = self._slotAreaW

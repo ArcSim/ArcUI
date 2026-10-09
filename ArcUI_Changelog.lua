@@ -29,6 +29,25 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.9.2",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Out of Range Shadow Options", desc = "New Hide Shadow and Shadow Size options in Range Indicator. Hide the dark shadow and keep the red tint, or resize it." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Icons Shuffled After Stealth or Mounting", desc = "Icons no longer mix up between groups after a /reload and your first Stealth or mount." },
+          { title = "Tooltips Coming Back", desc = "With Show Tooltips off, tooltips stay off after Stealth or mounting." },
+          { title = "Out of Range Shadow Fit", desc = "The out-of-range shadow now fits the icon instead of spilling past it." },
+          { title = "Account Sharing on Alts", desc = "Alts pick up the shared layout again after sharing is turned off and back on. Alts that were already stuck need Enable ticked once." },
+          { title = "Castbar and Bars Shifting Sideways", desc = "Bars anchored with Match Slots Only stay lined up when the group's first icon is hidden." },
+        },
+      },
+    },
+  },
+  {
     version = "3.9.1.a",
     sections = {
       {

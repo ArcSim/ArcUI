@@ -232,6 +232,10 @@ local function RenameActiveToSpecName(specKey)
     end
 end
 
+-- sharedSyncDisabled value written by a class-wide turn-off (as opposed to true
+-- from a single character's Detach), so turning sharing back on can lift it.
+local CLASS_OFF = "class"
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Query Functions
 -- ───────────────────────────────────────────────────────────────────────────
@@ -415,6 +419,21 @@ function SP.SetEnabled(specKey, enabled)
                 SP.Push(sk, true)
             end
         end
+        -- A class-wide turn-off marked every character; turning it back on must
+        -- lift those marks too, or alts never auto-pull again. Per-character
+        -- Detach marks are true, not CLASS_OFF, and stay.
+        local svChar = GetAllCharData()
+        if svChar then
+            for _, charData in pairs(svChar) do
+                local cd = charData and charData.cdmGroups
+                local off = cd and cd.sharedSyncDisabled
+                if off then
+                    for _, sk in ipairs(specsToToggle) do
+                        if off[sk] == CLASS_OFF then off[sk] = nil end
+                    end
+                end
+            end
+        end
         PrintMsg("Enabled shared sync for all specs of this class (" .. #specsToToggle .. " specs)")
     else
         if not db.sharedSyncDisabled then db.sharedSyncDisabled = {} end
@@ -423,7 +442,7 @@ function SP.SetEnabled(specKey, enabled)
         end
         for _, sk in ipairs(specsToToggle) do
             db.sharedSync[sk] = nil
-            db.sharedSyncDisabled[sk] = true
+            db.sharedSyncDisabled[sk] = CLASS_OFF
             -- Delete global ref so new chars won't see it and auto-enable
             if ns.db and ns.db.global and ns.db.global.sharedProfiles then
                 ns.db.global.sharedProfiles[sk] = nil
@@ -443,7 +462,7 @@ function SP.SetEnabled(specKey, enabled)
                     for _, sk in ipairs(specsToToggle) do
                         cd.sharedSync[sk] = nil
                         if not cd.sharedSyncDisabled then cd.sharedSyncDisabled = {} end
-                        cd.sharedSyncDisabled[sk] = true
+                        cd.sharedSyncDisabled[sk] = CLASS_OFF
                     end
                 end
             end
@@ -1020,7 +1039,7 @@ function SP.DeleteSharedData(specKey)
                 if not cd.sharedSyncDisabled then cd.sharedSyncDisabled = {} end
                 for _, sk in ipairs(specsToDelete) do
                     if cd.sharedSync then cd.sharedSync[sk] = nil end
-                    cd.sharedSyncDisabled[sk] = true
+                    cd.sharedSyncDisabled[sk] = CLASS_OFF
                     if cd.sharedSyncTimestamp then cd.sharedSyncTimestamp[sk] = nil end
                 end
             end

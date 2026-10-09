@@ -244,9 +244,21 @@ function ApplyMouseMotionState(frame)
 end
 ns.CDMGroups.ApplyMouseMotionState = ApplyMouseMotionState
 
+-- Blizzard re-runs SetTooltipsShown on every icon it re-acquires (each viewer
+-- rebuild: stealth, mounting, aura full updates), which turns hover back on.
+-- When nothing changed spell, no reconcile pass re-applies the stored intent,
+-- so tooltips stayed on until the options panel was opened.
+local function OnBlizzardSetTooltipsShown(frame)
+    if frame._arcTooltipsDisabled then ApplyMouseMotionState(frame) end
+end
+
 local function ApplyTooltipSettings(frame, disableTooltips)
     if not frame then return end
     frame._arcTooltipsDisabled = disableTooltips and true or nil
+    if not frame._arcTooltipsShownHooked and frame.SetTooltipsShown then
+        frame._arcTooltipsShownHooked = true
+        hooksecurefunc(frame, "SetTooltipsShown", OnBlizzardSetTooltipsShown)
+    end
     ApplyMouseMotionState(frame)
 end
 ns.CDMGroups.ApplyTooltipSettings = ApplyTooltipSettings

@@ -1829,6 +1829,34 @@ local function CreateBorderEdges(frame)
   return edges
 end
 
+-- Blizzard sizes the out-of-range shadow to the whole item frame, shaped for
+-- its own unpadded icon; with ArcUI padding or aspect it spills past the icon
+-- and reads as a border. Fit it to the icon; Shadow Size scales it from there.
+-- iconW/iconH nil = hand it back to Blizzard's placement (Masque owns the icon).
+local function ApplyRangeShadowGeometry(frame, iconTex, rangeCfg, iconW, iconH)
+  local oor = frame.OutOfRange
+  if not oor or not iconTex then return end
+  if not iconW then
+    if oor._arcFitted then
+      oor._arcFitted = nil
+      oor:ClearAllPoints()
+      oor:SetAllPoints(frame)
+    end
+    return
+  end
+  local scale = tonumber(rangeCfg and rangeCfg.shadowScale) or 1
+  local ox, oy = 0, 0
+  if scale ~= 1 then
+    local es = frame:GetEffectiveScale()
+    ox = PixelUtil.GetNearestPixelSize(iconW * (scale - 1) / 2, es)
+    oy = PixelUtil.GetNearestPixelSize(iconH * (scale - 1) / 2, es)
+  end
+  oor:ClearAllPoints()
+  oor:SetPoint("TOPLEFT", iconTex, "TOPLEFT", -ox, oy)
+  oor:SetPoint("BOTTOMRIGHT", iconTex, "BOTTOMRIGHT", ox, -oy)
+  oor._arcFitted = true
+end
+
 local function UpdateIconBorder(frame, cdID, iconWidth, iconHeight, padding, zoom)
   if not cdID then return end
   -- AURA HOLDERS OWN THEIR OWN BORDER. Do not paint _arcBorderEdges on them.
@@ -2946,6 +2974,12 @@ ApplyIconStyle = function(frame, cdID)
       iconTex:ClearAllPoints()
       iconTex:SetPoint("TOPLEFT", frame, "TOPLEFT", padding, -padding)
       iconTex:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -padding, padding)
+    end
+    if masqueActive then
+      ApplyRangeShadowGeometry(frame, iconTex, nil)
+    else
+      ApplyRangeShadowGeometry(frame, iconTex, cfg.rangeIndicator,
+        frame:GetWidth() - 2 * padding, frame:GetHeight() - 2 * padding)
     end
   end
   
@@ -4497,6 +4531,11 @@ ApplyIconStyle = function(frame, cdID)
     if rangeCfg then
       -- Store config on the FRAME
       frame._arcRangeCfg = rangeCfg
+      -- Apply a just-ticked Hide Shadow now; Blizzard's next range refresh
+      -- re-shows it when unticked.
+      if frame.OutOfRange and (rangeCfg.enabled == false or rangeCfg.hideShadow) then
+        frame.OutOfRange:Hide()
+      end
       
       -- Hook RefreshIconColor — fires AFTER CDM sets red tint + shows OOR
       if not frame._arcRefreshIconColorHooked and frame.RefreshIconColor then
@@ -4504,8 +4543,13 @@ ApplyIconStyle = function(frame, cdID)
         
         hooksecurefunc(frame, "RefreshIconColor", function(self)
           local rCfg = self._arcRangeCfg
-          if not rCfg or rCfg.enabled ~= false then return end
-          
+          if not rCfg then return end
+          if rCfg.enabled ~= false then
+            -- Hide Shadow: keep Blizzard's red tint, drop only the shadow.
+            if rCfg.hideShadow and self.OutOfRange then self.OutOfRange:Hide() end
+            return
+          end
+
           -- Hide the OOR shadow overlay
           if self.GetOutOfRangeTexture then
             self:GetOutOfRangeTexture():Hide()
@@ -4548,7 +4592,7 @@ ApplyIconStyle = function(frame, cdID)
           local parent = self._arcParent
           if not parent then return end
           local rCfg = parent._arcRangeCfg
-          if rCfg and rCfg.enabled == false then
+          if rCfg and (rCfg.enabled == false or rCfg.hideShadow) then
             self:SetShown(false)
           end
         end)

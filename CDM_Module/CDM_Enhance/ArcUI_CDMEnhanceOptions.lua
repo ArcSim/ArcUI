@@ -136,7 +136,7 @@ local SECTION_FIELDS = {
     "auraActiveState.glowFrameLevel",
   },
   auraActiveState = { "auraActiveState.ignoreAuraOverride", "auraActiveState.glow", "auraActiveState.glowFollowPandemic", "auraActiveState.glowWhenMissing", "auraActiveState.glowType", "auraActiveState.glowColor", "auraActiveState.glowIntensity", "auraActiveState.glowScale", "auraActiveState.glowSpeed", "auraActiveState.glowLines", "auraActiveState.glowThickness", "auraActiveState.glowLength", "auraActiveState.glowParticles", "auraActiveState.glowCombatOnly", "auraActiveState.glowFrameStrata", "auraActiveState.glowFrameLevel", "auraActiveState.glowXOffset", "auraActiveState.glowYOffset", "auraActiveState.desaturateWhenInactive", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.reverseWhileAura" },  -- Aura Active State settings
-  rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled" },
+  rangeIndicator = { "rangeIndicator.rangeAlpha", "rangeIndicator.showRangeOverlay", "rangeIndicator.enabled", "rangeIndicator.hideShadow", "rangeIndicator.shadowScale" },
   procGlow = { "procGlow.showProcGlow", "procGlow.procGlowType", "procGlow.procGlowColor", "procGlow.color", "procGlow.enabled", "procGlow.xOffset", "procGlow.yOffset", "procGlow.strata", "procGlow.frameLevel" },
   border = { "border.enabled", "border.texture", "border.color", "border.thickness", "border.inset", "border.useClassColor", "border.followDesaturation" },
   cooldownSwipe = { "cooldownSwipe.showSwipe", "cooldownSwipe.showEdge", "cooldownSwipe.showBling", "cooldownSwipe.reverse", "cooldownSwipe.noGCDSwipe", "cooldownSwipe.swipeWaitForNoCharges", "cooldownSwipe.edgeWaitForNoCharges", "cooldownSwipe.swipeColor", "cooldownSwipe.auraSwipeColor", "cooldownSwipe.edgeColor", "cooldownSwipe.edgeScale", "cooldownSwipe.swipeInset", "cooldownSwipe.swipeInsetX", "cooldownSwipe.swipeInsetY", "cooldownSwipe.separateInsets", "cooldownSwipe.ignoreAuraOverride", "cooldownSwipe.ignoreHardICD" },
@@ -10369,6 +10369,25 @@ function ns.GetCDMCooldownIconsOptionsTable()
       set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.rangeIndicator then c.rangeIndicator = {} end; c.rangeIndicator.enabled = v end) end,
       order = 108.1, width = 1.0, hidden = HideCooldownRangeIndicator,
     },
+    rangeHideShadow = {
+      type = "toggle", name = "Hide Shadow",
+      desc = "Keep the red out-of-range tint but remove the dark shadow drawn over the icon.",
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.rangeIndicator and c.rangeIndicator.hideShadow == true end, function() local c = GetCooldownCfg(); return c and c.rangeIndicator and c.rangeIndicator.hideShadow == true end) end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.rangeIndicator then c.rangeIndicator = {} end; c.rangeIndicator.hideShadow = v end) end,
+      order = 108.2, width = 0.9,
+      hidden = HideCooldownRangeIndicator,
+      disabled = function() local c = GetCooldownCfg(); return c and c.rangeIndicator and c.rangeIndicator.enabled == false end,
+    },
+    rangeShadowScale = {
+      type = "range", name = "Shadow Size",
+      desc = "Size of the out-of-range shadow. 100% fits the icon exactly.",
+      min = 0.5, max = 1.5, step = 0.05, isPercent = true,
+      get = function() return GetCooldownBoolSetting(function(c) return c and c.rangeIndicator and c.rangeIndicator.shadowScale end, function() local c = GetCooldownCfg(); return c and c.rangeIndicator and c.rangeIndicator.shadowScale end) or 1 end,
+      set = function(_, v) ApplySharedCooldownSetting(function(c) if not c.rangeIndicator then c.rangeIndicator = {} end; c.rangeIndicator.shadowScale = v end) end,
+      order = 108.3, width = 1.2,
+      hidden = HideCooldownRangeIndicator,
+      disabled = function() local c = GetCooldownCfg(); local r = c and c.rangeIndicator; return r and (r.enabled == false or r.hideShadow == true) end,
+    },
     resetRangeIndicator = {
       type = "execute",
       name = "Reset Section",
@@ -16256,6 +16275,23 @@ function ns.GetCDMGlobalCooldownDefaultsOptionsTable()
         get = function() local g = GetCooldownGlobalCfg(); return not g.rangeIndicator or g.rangeIndicator.enabled ~= false end,
         set = function(_, v) ApplyCooldownGlobalSetting("rangeIndicator.enabled", v); RefreshGlobalCooldowns() end,
         order = 61, width = 1.0, hidden = function() return collapsedGlobalCooldownSections.rangeIndicator end,
+      },
+      rangeHideShadow = {
+        type = "toggle", name = "Hide Shadow",
+        desc = "Keep the red out-of-range tint but remove the dark shadow drawn over the icon.",
+        get = function() local g = GetCooldownGlobalCfg(); return g.rangeIndicator and g.rangeIndicator.hideShadow == true or false end,
+        set = function(_, v) ApplyCooldownGlobalSetting("rangeIndicator.hideShadow", v or nil); RefreshGlobalCooldowns() end,
+        order = 62, width = 0.9, hidden = function() return collapsedGlobalCooldownSections.rangeIndicator end,
+        disabled = function() local g = GetCooldownGlobalCfg(); return g.rangeIndicator and g.rangeIndicator.enabled == false end,
+      },
+      rangeShadowScale = {
+        type = "range", name = "Shadow Size",
+        desc = "Size of the out-of-range shadow. 100% fits the icon exactly.",
+        min = 0.5, max = 1.5, step = 0.05, isPercent = true,
+        get = function() local g = GetCooldownGlobalCfg(); return g.rangeIndicator and g.rangeIndicator.shadowScale or 1 end,
+        set = function(_, v) ApplyCooldownGlobalSetting("rangeIndicator.shadowScale", (v ~= 1) and v or nil); RefreshGlobalCooldowns() end,
+        order = 63, width = 1.2, hidden = function() return collapsedGlobalCooldownSections.rangeIndicator end,
+        disabled = function() local g = GetCooldownGlobalCfg(); local r = g.rangeIndicator; return r and (r.enabled == false or r.hideShadow == true) end,
       },
       
       -- ═══════════════════════════════════════════════════════════════════
