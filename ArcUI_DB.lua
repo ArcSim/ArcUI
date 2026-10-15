@@ -20,6 +20,15 @@ if not SetDesaturation then
   end
 end
 
+-- The texture picker shows a texture on one bar without saving it: while
+-- ns.TexPreview names that bar's owner (its display table, or a castbar key),
+-- the bar draws the previewed name instead of the saved one.
+function ns.API.BarTextureName(owner, saved)
+  local p = ns.TexPreview
+  if p and owner ~= nil and p.owner == owner then return p.key end
+  return saved
+end
+
 -- ===================================================================
 -- DEFAULT THRESHOLD PRESETS
 -- ===================================================================

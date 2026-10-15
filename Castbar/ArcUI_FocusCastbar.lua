@@ -774,8 +774,9 @@ local function ApplyAppearanceInternal(cfg)
         end
     end
 
-    local tex = (LSM and cfg.texture and cfg.texture ~= ""
-                 and LSM:Fetch("statusbar", cfg.texture))
+    local texName = ns.API.BarTextureName("focusCastbar", cfg.texture)
+    local tex = (LSM and texName and texName ~= ""
+                 and LSM:Fetch("statusbar", texName))
                 or "Interface\\TargetingFrame\\UI-StatusBar"
     mainFrame.fillBar:SetStatusBarTexture(tex)
     mainFrame.positioner:SetStatusBarTexture(tex)

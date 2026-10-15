@@ -1,8 +1,8 @@
-﻿## Interface: 120000, 120001, 120005, 120007, 120100
+﻿## Interface: 120000, 120001, 120005, 120007, 120100, 120105
 ## Title: Arc UI
 ## Notes: Buff/Debuff stack tracking bars, icons, resource bars, cooldown bars, and timer bars with CD Manager integration
 ## Author: Arc
-## Version: 3.9.2
+## Version: 3.9.3
 ## IconTexture: Interface\AddOns\ArcUI\Textures\ArcUI_Icon_400x400
 ## X-Wago-ID:mNw7Q2No
 ## X-Curse-Project-ID: 1391614
@@ -86,6 +86,7 @@ Bars\ArcUI_TrackingOptions.lua
 Presets\ArcUI_Presets.lua
 Bars\ArcUI_AppearanceOptions.lua
 Bars\ArcUI_Textures_Options.lua
+Bars\ArcUI_TexturePicker.lua
 Bars\ArcUI_CooldownBarOptions.lua
 Bars\ArcUI_TimerBarOptions.lua
 Bars\ArcUI_CustomOptions.lua

@@ -3159,8 +3159,9 @@ local function UpdateThresholdLayers(barNumber, secretValue, passedMaxValue, dis
   -- Get texture from settings
   local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
   local texturePath = "Interface\\TargetingFrame\\UI-StatusBar"
-  if LSM and cfg.display.texture then
-    local fetchedTexture = LSM:Fetch("statusbar", cfg.display.texture)
+  local texName = ns.API.BarTextureName(cfg.display, cfg.display.texture)
+  if LSM and texName then
+    local fetchedTexture = LSM:Fetch("statusbar", texName)
     if fetchedTexture then
       texturePath = fetchedTexture
     end
@@ -6605,8 +6606,9 @@ function ns.Resources.ApplyAppearance(barNumber)
     layer:ClearAllPoints()
     layer:SetAllPoints(mainFrame)
     
-    if LSM and display.texture then
-      local texture = LSM:Fetch("statusbar", display.texture)
+    local texName = ns.API.BarTextureName(display, display.texture)
+    if LSM and texName then
+      local texture = LSM:Fetch("statusbar", texName)
       if texture then
         layer:SetStatusBarTexture(texture)
       end

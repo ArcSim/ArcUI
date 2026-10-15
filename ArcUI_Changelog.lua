@@ -29,6 +29,27 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.9.3",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Bar Texture Picker", desc = "Choosing a bar texture opens a window showing every texture on a bar in your bar's colour, grouped by where it comes from, with search, favorites and recently used. Hover a texture to see it on your real bar, then Use texture to keep it. Works for aura, cooldown, resource and castbars." },
+        },
+      },
+      {
+        header = "Improvements", color = C_IMP, items = {
+          { title = "Patch 12.1.5", desc = "Updated for the current game patch." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Combat Lua Error", desc = "Fixed a Lua error that could repeat many times in combat, most often when opening from Stealth." },
+          { title = "Cooldown Bar Opacity", desc = "The opacity you set on cooldown, charge and timer bar colours now applies." },
+        },
+      },
+    },
+  },
+  {
     version = "3.9.2",
     sections = {
       {

@@ -801,8 +801,11 @@ end
 -- Throttle timer handle for RefreshBar (prevents flickering from rapid color picker changes)
 local refreshBarTimer = nil
 
-local function RefreshBarImmediate()
-  local barType, barNum = GetSelectedBarType()
+-- forType/forNum: a bar other than the selected one (the texture picker's
+-- preview stays on the bar it opened for)
+local function RefreshBarImmediate(forType, forNum)
+  local barType, barNum = forType, forNum
+  if not barType then barType, barNum = GetSelectedBarType() end
   if not barType or not barNum then return end
   
   -- Bump config version so Display's cached setup invalidates
@@ -928,6 +931,24 @@ end
 local function RefreshBarAndSwatches()
   RefreshBar()
   LibStub("AceConfigRegistry-3.0"):NotifyChange("ArcUI")
+end
+
+-- The texture picker's hook into the selected bar: it previews there without
+-- saving, and refreshes without NotifyChange so the panel is not rebuilt.
+local function TexturePreview()
+  local cfg = GetSelectedConfig()
+  if not (cfg and cfg.display) then return nil end
+  local barType, barNum = GetSelectedBarType()
+  return {
+    owner = cfg.display,
+    refresh = function() RefreshBarImmediate(barType, barNum) end,
+    color = cfg.display.barColor or { r = 0, g = 0.5, b = 1 },
+    barName = function()
+      local label = GetAllBarsDropdown()[selectedAppearanceBar] or ""
+      label = label:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+      return label:match(":%s*(.-)%s*$") or label
+    end,
+  }
 end
 
 local function StopPreview()
@@ -3445,7 +3466,8 @@ function ns.AppearanceOptions.GetOptionsTable()
       },
       barTexture = {
         type = "select",
-        dialogControl = "LSM30_Statusbar",
+        dialogControl = "ArcUI_TexturePicker",
+        arg = { texturePreview = TexturePreview },
         name = "Bar Texture",
         values = GetStatusBarTextures,
         get = function()

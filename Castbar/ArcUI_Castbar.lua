@@ -373,8 +373,9 @@ local function ResolveActiveDisplay(cfg, spellID, isChannel, isEmpowered, notInt
       color = override.barColor
       locked = true
     end
-    if override.textureOverrideEnabled and override.texture and override.texture ~= "" then
-      overrideTex = (LSM and LSM:Fetch("statusbar", override.texture)) or nil
+    local ovTex = ns.API.BarTextureName(override, override.texture)
+    if override.textureOverrideEnabled and ovTex and ovTex ~= "" then
+      overrideTex = (LSM and LSM:Fetch("statusbar", ovTex)) or nil
     end
   end
 
@@ -723,8 +724,9 @@ function ns.Castbar.ApplyAppearance()
 
   -- Texture for fill bar
   local texPath = "Interface\\TargetingFrame\\UI-StatusBar"
-  if LSM and cfg.texture then
-    texPath = LSM:Fetch("statusbar", cfg.texture) or texPath
+  local texName = ns.API.BarTextureName("castbar", cfg.texture)
+  if LSM and texName then
+    texPath = LSM:Fetch("statusbar", texName) or texPath
   end
   mainFrame.fillBar:SetStatusBarTexture(texPath)
   if mainFrame.stageSegBars then

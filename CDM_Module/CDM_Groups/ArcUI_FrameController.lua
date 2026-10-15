@@ -386,6 +386,8 @@ local function GetCallSource(skipLevels)
     skipLevels = skipLevels or 3  -- Skip: GetCallSource, TimelineAdd, actual caller
     local stack = debugstack(skipLevels, 1, 0)
     if not stack then return nil end
+    -- restricted contexts (combat from stealth, instances) hand back a secret stack
+    if issecretvalue and issecretvalue(stack) then return nil end
     
     -- Extract filename and line from stack trace
     -- Format: "path/to/File.lua:123: in function..."
@@ -405,6 +407,9 @@ local function GetCallSource(skipLevels)
 end
 
 local function TimelineAdd(category, action, details)
+    -- Nothing records with the timeline off, so skip the stack read: this runs
+    -- on every frame event, combat included.
+    if not externalTimelineCallback and not _G.ARCUI_FC_TIMELINE then return end
     -- Get caller source for debugging
     local source = GetCallSource(3)
     

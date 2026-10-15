@@ -122,6 +122,19 @@ local function PSetColor(c, key, r, g, b, a)
   PSet(c, key, { r = r, g = g, b = b, a = a })
 end
 
+-- The texture picker previews on the castbar without saving. It restyles
+-- through ApplyAppearance alone: Refresh's NotifyChange would rebuild the
+-- panel under the open picker.
+local function CastbarApply()
+  if ns.Castbar and ns.Castbar.ApplyAppearance then ns.Castbar.ApplyAppearance() end
+end
+local function TexturePreview()
+  local c = GetCastbarDB()
+  if not c then return nil end
+  local r, g, b = PGetColor(c, "barColor", 0.2, 0.8, 1, 1)
+  return { owner = "castbar", refresh = CastbarApply, barName = "Player castbar", color = { r = r, g = g, b = b } }
+end
+
 -- Per-profile color-threshold slot accessor (creates the array/entry on the right target).
 local function ThresholdSlot(c, i)
   local t = EditTarget(c, "colorThresholds")
@@ -485,7 +498,8 @@ function ns.CastbarOptions.GetOptionsTable()
         type          = "select",
         name          = "Texture",
         order         = 30.1,
-        dialogControl = "LSM30_Statusbar",
+        dialogControl = "ArcUI_TexturePicker",
+        arg           = { texturePreview = TexturePreview },
         values        = LSM and LSM:HashTable("statusbar") or {},
         hidden        = H("fill"),
         get           = function() local c = GetCastbarDB(); return c and PGet(c, "texture", "Blizzard") end,
@@ -1779,7 +1793,17 @@ function ns.CastbarOptions.GetOptionsTable()
       type          = "select",
       name          = "Texture",
       order         = base + 0.004,
-      dialogControl = "LSM30_Statusbar",
+      dialogControl = "ArcUI_TexturePicker",
+      -- shows on the castbar only while this spell is being cast
+      arg           = { texturePreview = function()
+        local ov, ctx = soGet(idx), TexturePreview()
+        if not (ov and ctx) then return nil end
+        ctx.owner = ov
+        if ov.barColorEnabled and type(ov.barColor) == "table" then ctx.color = ov.barColor end
+        local name = ov.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ov.spellID)
+        if name then ctx.barName = "Player castbar: " .. name end
+        return ctx
+      end },
       values        = LSM and LSM:HashTable("statusbar") or {},
       hidden        = function()
         if soHidden(idx) then return true end

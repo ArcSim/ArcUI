@@ -155,7 +155,19 @@ function ns.TargetCastbarOptions.GetOptionsTable()
   }
   a.fcTexture = {
     type = "select", name = "Bar Texture", order = 10.4,
-    dialogControl = "LSM30_Statusbar",
+    dialogControl = "ArcUI_TexturePicker",
+    -- previews without saving; ApplyAppearance alone so the panel is not rebuilt
+    arg = { texturePreview = function()
+      local c = GetDB()
+      if not c then return nil end
+      return {
+        owner = "targetCastbar", barName = "Target castbar",
+        color = c.barColor or { r = 1, g = 0.65, b = 0 },
+        refresh = function()
+          if ns.TargetCastbar and ns.TargetCastbar.ApplyAppearance then ns.TargetCastbar.ApplyAppearance() end
+        end,
+      }
+    end },
     values = LSM and LSM:HashTable("statusbar") or {},
     hidden = H("appearance"),
     get = function() local c = GetDB(); return c and c.texture or "Blizzard" end,

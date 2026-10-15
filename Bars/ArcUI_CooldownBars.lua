@@ -2834,7 +2834,7 @@ UpdateCooldownBar = function(barData)
         if freshDurObj then
           local colorResult = freshDurObj:EvaluateRemainingPercent(data.colorCurve)
           if colorResult then
-            barTexture:SetVertexColor(colorResult:GetRGB())
+            barTexture:SetVertexColor(colorResult:GetRGBA())
           else
             barTexture:SetVertexColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, data.baseColor.a or 1)
           end
@@ -2844,7 +2844,7 @@ UpdateCooldownBar = function(barData)
       -- Apply initial color
       local colorResult = durObj:EvaluateRemainingPercent(colorCurve)
       if colorResult then
-        barTexture:SetVertexColor(colorResult:GetRGB())
+        barTexture:SetVertexColor(colorResult:GetRGBA())
       else
         barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
       end
@@ -2852,7 +2852,7 @@ UpdateCooldownBar = function(barData)
       -- No color curve - clear OnUpdate and use base color
       barData.bar.colorCurveData = nil
       barData.bar:SetScript("OnUpdate", nil)
-      barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, 1)
+      barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
     end
     
     -- Duration text: SetFormattedText accepts secret values and applies format directly
@@ -2894,7 +2894,7 @@ UpdateCooldownBar = function(barData)
         end
       end
     end
-    barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 1)
+    barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
     barData.readyFill:SetAlpha(readyAlpha)
   else
     -- No duration (ready state) - clear color curve OnUpdate
@@ -2902,7 +2902,7 @@ UpdateCooldownBar = function(barData)
     barData.bar:SetScript("OnUpdate", nil)
     
     local barTexture = barData.bar:GetStatusBarTexture()
-    barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, 1)
+    barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
     barData.bar:SetMinMaxValues(0, 1)
     barData.bar:SetValue(1)
     
@@ -2935,7 +2935,7 @@ UpdateCooldownBar = function(barData)
         end
       end
     end
-    barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 1)
+    barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
     barData.readyFill:SetAlpha(1)
   end
 end
@@ -3247,11 +3247,11 @@ UpdateChargeBar = function(barData)
         local colorResult = freshDurObj:EvaluateRemainingPercent(data.colorCurve)
         if colorResult then
           for _, tex in ipairs(rechargeTextures) do
-            tex:SetVertexColor(colorResult:GetRGB())
+            tex:SetVertexColor(colorResult:GetRGBA())
           end
         else
           for _, tex in ipairs(rechargeTextures) do
-            tex:SetVertexColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, 1)
+            tex:SetVertexColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, data.baseColor.a or 1)
           end
         end
       end
@@ -3263,17 +3263,17 @@ UpdateChargeBar = function(barData)
       local colorResult = chargeDurObj:EvaluateRemainingPercent(colorCurve)
       if colorResult then
         for _, tex in ipairs(rechargeTextures) do
-          tex:SetVertexColor(colorResult:GetRGB())
+          tex:SetVertexColor(colorResult:GetRGBA())
         end
       else
         for _, tex in ipairs(rechargeTextures) do
-          tex:SetVertexColor(barColor.r, barColor.g, barColor.b, 1)
+          tex:SetVertexColor(barColor.r, barColor.g, barColor.b, barColor.a or 1)
         end
       end
     else
       -- No active recharge - use base color
       for _, tex in ipairs(rechargeTextures) do
-        tex:SetVertexColor(barColor.r, barColor.g, barColor.b, 1)
+        tex:SetVertexColor(barColor.r, barColor.g, barColor.b, barColor.a or 1)
       end
     end
     
@@ -5217,7 +5217,7 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
             if barData.maxCharges and barData.maxCharges > 0 then
               barData._lastMatchedBarWidth = barWidth  -- Cache so OnSizeChanged skips redundant recreate
               CreateChargeSlots(barData, barData.maxCharges, barWidth, slotHeight, slotSpacing, isVertical, display)
-              local texturePath = GetTexturePath(display.texture or "Blizzard")
+              local texturePath = GetTexturePath(ns.API.BarTextureName(display, display.texture) or "Blizzard")
               for _, slot in ipairs(barData.chargeSlots) do
                 if slot.fullBar then slot.fullBar:SetStatusBarTexture(texturePath) end
                 if slot.rechargeBar then slot.rechargeBar:SetStatusBarTexture(texturePath) end
@@ -5319,7 +5319,7 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
   -- BAR TEXTURE, COLOR, AND ORIENTATION
   -- ═══════════════════════════════════════════════════════════════
   if barData.bar then
-    local texturePath = GetTexturePath(display.texture or "Blizzard")
+    local texturePath = GetTexturePath(ns.API.BarTextureName(display, display.texture) or "Blizzard")
     barData.bar:SetStatusBarTexture(texturePath)
 
     -- USE TEXTURE COLORS: claim (or release) the fill tint. Set AFTER the
@@ -5758,7 +5758,7 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
     end
     
     -- Apply texture and colors to each slot (with opacity)
-    local texturePath = GetTexturePath(display.texture or "Blizzard")
+    local texturePath = GetTexturePath(ns.API.BarTextureName(display, display.texture) or "Blizzard")
     local opacity = display.opacity or 1.0
     local useDifferentFullColor = display.useDifferentFullColor
     local reverseFill = display.barReverseFill or false
@@ -6495,7 +6495,7 @@ function ns.CooldownBars.ApplyAppearance(spellID, barType)
     
     -- Ready fill color AND texture (matches bar settings when ready)
     if barData.readyFill then
-      local texturePath = GetTexturePath(display.texture or "Blizzard")
+      local texturePath = GetTexturePath(ns.API.BarTextureName(display, display.texture) or "Blizzard")
       barData.readyFill:SetStatusBarTexture(texturePath)
       local barColor = display.barColor or {r = 1, g = 0.5, b = 0.2, a = 1}
       barData.readyFill:SetStatusBarColor(barColor.r or 1, barColor.g or 0.5, barColor.b or 0.2, barColor.a or 1)
@@ -7585,7 +7585,7 @@ UpdateTimerBar = function(barData)
     -- Ready fill: show when 0 stacks and readyText enabled
     if barData.readyFill then
       if curStacks <= 0 and showReadyText and not isPreviewMode then
-        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 1)
+        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
         barData.readyFill:SetAlpha(1)
       else
         barData.readyFill:SetAlpha(0)
@@ -7660,7 +7660,7 @@ UpdateTimerBar = function(barData)
     -- Only show readyFill if showReadyText is explicitly enabled
     if barData.readyFill then
       if showReadyText and not isPreviewMode then
-        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 1)
+        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
         barData.readyFill:SetAlpha(1)
       else
         barData.readyFill:SetAlpha(0)
@@ -7733,7 +7733,7 @@ UpdateTimerBar = function(barData)
     
     if barData.readyFill then
       if showReadyText then
-        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, 1)
+        barData.readyFill:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
         barData.readyFill:SetAlpha(1)
       else
         barData.readyFill:SetAlpha(0)
@@ -7933,7 +7933,7 @@ function ns.CooldownBars.StartTimer(timerID)
       if data.colorCurve and data.barData.durObj then
         local colorResult = data.barData.durObj:EvaluateRemainingPercent(data.colorCurve)
         if colorResult then
-          data.barTexture:SetVertexColor(colorResult:GetRGB())
+          data.barTexture:SetVertexColor(colorResult:GetRGBA())
         else
           data.barTexture:SetVertexColor(data.baseColor.r, data.baseColor.g, data.baseColor.b, data.baseColor.a or 1)
         end
@@ -7945,7 +7945,7 @@ function ns.CooldownBars.StartTimer(timerID)
     -- Apply initial color from curve
     local colorResult = durObj:EvaluateRemainingPercent(colorCurve)
     if colorResult then
-      barTexture:SetVertexColor(colorResult:GetRGB())
+      barTexture:SetVertexColor(colorResult:GetRGBA())
     else
       barTexture:SetVertexColor(baseColor.r, baseColor.g, baseColor.b, baseColor.a or 1)
     end
@@ -9290,7 +9290,7 @@ local function OnContainerSizeChangedForCooldownBars(container, width, height)
                   if barData._lastMatchedBarWidth ~= barWidth then
                     barData._lastMatchedBarWidth = barWidth
                     CreateChargeSlots(barData, barData.maxCharges, barWidth, slotHeight, slotSpacing, isVertical, cfg.display)
-                    local texturePath = GetTexturePath(cfg.display.texture or "Blizzard")
+                    local texturePath = GetTexturePath(ns.API.BarTextureName(cfg.display, cfg.display.texture) or "Blizzard")
                     for _, slot in ipairs(barData.chargeSlots) do
                       if slot.fullBar then slot.fullBar:SetStatusBarTexture(texturePath) end
                       if slot.rechargeBar then slot.rechargeBar:SetStatusBarTexture(texturePath) end

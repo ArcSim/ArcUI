@@ -155,7 +155,19 @@ function ns.FocusCastbarOptions.GetOptionsTable()
   }
   a.fcTexture = {
     type = "select", name = "Bar Texture", order = 10.4,
-    dialogControl = "LSM30_Statusbar",
+    dialogControl = "ArcUI_TexturePicker",
+    -- previews without saving; ApplyAppearance alone so the panel is not rebuilt
+    arg = { texturePreview = function()
+      local c = GetDB()
+      if not c then return nil end
+      return {
+        owner = "focusCastbar", barName = "Focus castbar",
+        color = c.barColor or { r = 1, g = 0.65, b = 0 },
+        refresh = function()
+          if ns.FocusCastbar and ns.FocusCastbar.ApplyAppearance then ns.FocusCastbar.ApplyAppearance() end
+        end,
+      }
+    end },
     values = LSM and LSM:HashTable("statusbar") or {},
     hidden = H("appearance"),
     get = function() local c = GetDB(); return c and c.texture or "Blizzard" end,

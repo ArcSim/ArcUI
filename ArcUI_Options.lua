@@ -1000,7 +1000,7 @@ local function GetOptionsTable()
           },
           globalBarTexture = {
             type = "select",
-            dialogControl = "LSM30_Statusbar",
+            dialogControl = "ArcUI_TexturePicker",
             name = "Statusbar Texture",
             order = 6,
             width = 1.2,

@@ -1,3 +1,18 @@
+## 3.9.3
+
+### New Features
+
+- **Bar Texture Picker** — Choosing a bar texture opens a window showing every texture on a bar in your bar's colour, grouped by where it comes from, with search, favorites and recently used. Hover a texture to see it on your real bar, then Use texture to keep it. Works for aura, cooldown, resource and castbars.
+
+### Improvements
+
+- **Patch 12.1.5** — Updated for the current game patch.
+
+### Bug Fixes
+
+- **Combat Lua Error** — Fixed a Lua error that could repeat many times in combat, most often when opening from Stealth.
+- **Cooldown Bar Opacity** — The opacity you set on cooldown, charge and timer bar colours now applies.
+
 ## 3.9.2
 
 ### New Features

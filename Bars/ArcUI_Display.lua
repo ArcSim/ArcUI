@@ -2304,8 +2304,9 @@ local function ApplyMirrorFillLayer(barFrame, barConfig, baseColor, isVertical, 
   end
 
   local path = "Interface\\TargetingFrame\\UI-StatusBar"
-  if LSM and barConfig.display.texture then
-    local fetched = LSM:Fetch("statusbar", barConfig.display.texture)
+  local texName = ns.API.BarTextureName(barConfig.display, barConfig.display.texture)
+  if LSM and texName then
+    local fetched = LSM:Fetch("statusbar", texName)
     if fetched then path = fetched end
   end
   tex:SetTexture(path)
@@ -2838,7 +2839,7 @@ function ns.Display.UpdateBar(barNumber, stacks, maxStacks, active, durationFont
   local texturePath = barFrame._cachedTexturePath
   if needsSetup or not texturePath then
     texturePath = "Interface\\TargetingFrame\\UI-StatusBar"
-    local wantTexture = barConfig.display.texture
+    local wantTexture = ns.API.BarTextureName(barConfig.display, barConfig.display.texture)
     local textureMissing = false
     if LSM and wantTexture then
       -- noDefault fetch: nil = the medium is not registered YET (a media
@@ -4766,10 +4767,11 @@ function ns.Display.UpdateDurationBar(barNumber, stacks, maxStacks, active, sour
     -- Get texture (use global LSM from top of file) - only when needed
     local texturePath = "Interface\\TargetingFrame\\UI-StatusBar"
     local textureMissing = false
-    if LSM and barConfig.display.texture then
+    local texName = ns.API.BarTextureName(barConfig.display, barConfig.display.texture)
+    if LSM and texName then
       -- noDefault: nil = not registered yet (login race) - fall back for
       -- this call and keep the version unlocked so the next call retries
-      local fetchedTexture = LSM:Fetch("statusbar", barConfig.display.texture, true)
+      local fetchedTexture = LSM:Fetch("statusbar", texName, true)
       if fetchedTexture then
         texturePath = fetchedTexture
       else
@@ -6469,7 +6471,7 @@ function ns.Display.ApplyAppearance(barNumber)
   
   -- Texture
   if LSM then
-    local texture = LSM:Fetch("statusbar", cfg.texture)
+    local texture = LSM:Fetch("statusbar", ns.API.BarTextureName(cfg, cfg.texture))
     if texture then
       barFrame.bar:SetStatusBarTexture(texture)
     end
