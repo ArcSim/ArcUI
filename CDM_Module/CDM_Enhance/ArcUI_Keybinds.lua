@@ -514,16 +514,15 @@ local function RebuildCache()
         end
     end
     
-    -- Handle bonus bars (stances/forms) - slots 73-120 map to ACTIONBUTTON when active
-    local bonusOffset = C_ActionBar and C_ActionBar.GetBonusBarOffset and C_ActionBar.GetBonusBarOffset() or 0
-    if bonusOffset and not issecretvalue(bonusOffset) and bonusOffset > 0 then
-        local bonusStartSlot = 72 + ((bonusOffset - 1) * 12) + 1
-        for i = 1, 12 do
-            local slot = bonusStartSlot + i - 1
-            if slot <= 120 then
-                ProcessSlotIntoCache(slot, "ACTIONBUTTON" .. i)
-            end
-        end
+    -- Handle bonus bars (stances/forms) - slots 73-120 (4 pages x 12 slots).
+    -- Scan ALL bonus pages unconditionally, not just the currently active one,
+    -- so keybind text for form-specific abilities (e.g. Bear Form skills)
+    -- stays populated even while out of that form. ACTIONBUTTON<i> is a fixed
+    -- physical keybind regardless of which page is displayed, and
+    -- HasAction/GetActionInfo work on inactive pages too, so this is safe.
+    for slot = 73, 120 do
+        local i = ((slot - 73) % 12) + 1
+        ProcessSlotIntoCache(slot, "ACTIONBUTTON" .. i)
     end
     
     -- Rescan cached addon buttons (fast - no EnumerateFrames)
