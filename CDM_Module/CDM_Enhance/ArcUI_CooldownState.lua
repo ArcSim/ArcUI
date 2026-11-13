@@ -1939,8 +1939,10 @@ local function ShouldShowAuraActiveGlow(auraActiveCfg, frame, isReady)
     end
   end
   if not auraActiveCfg then return false end
-  if auraActiveCfg.glowFollowPandemic then return false end
-  local glowOnActive  = auraActiveCfg.glow == true
+  -- Pandemic Timing hands the ACTIVE glow to the pandemic hooks; the missing
+  -- glow stays here. A leftover glowFollowPandemic with the active glow off
+  -- (its option is hidden then) means nothing.
+  local glowOnActive  = auraActiveCfg.glow == true and not auraActiveCfg.glowFollowPandemic
   local glowOnMissing = auraActiveCfg.glowWhenMissing == true
   if not glowOnActive and not glowOnMissing then return false end
   if auraActiveCfg.glowCombatOnly then
@@ -2004,6 +2006,11 @@ local function HideAuraActiveGlow(frame)
     frame._arcAuraGlowPreviewAlpha = nil
   end
 end
+
+-- CDMEnhance's pandemic hooks, combat edges and options preview forward here
+ns.CooldownState.ShouldShowAuraActiveGlow = ShouldShowAuraActiveGlow
+ns.CooldownState.ShowAuraActiveGlow       = ShowAuraActiveGlow
+ns.CooldownState.HideAuraActiveGlow       = HideAuraActiveGlow
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Used by both HandleCooldownLogic and HandleIgnoreAuraOverride.

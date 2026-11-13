@@ -1643,7 +1643,8 @@ local function EnsureLootPool()
                 -- into the season pools - that is exactly how Kings' Rest
                 -- bosses and a difficulty-2 bucket ended up inside them
                 local viewInst = EJCurrentInstanceID()
-                if viewInst and db and viewInst == db.currentRaidInst
+                if viewInst and db
+                    and (viewInst == db.currentRaidInst or (db.seasonRaidSet and db.seasonRaidSet[viewInst]))
                     and (diffNow == 14 or diffNow == 15 or diffNow == 16 or diffNow == 17) then
                     for enc, set in pairs(fresh) do
                         -- only replace a boss's cached pool with a COMPLETE
@@ -2871,6 +2872,93 @@ local function GetCurrentRaidInstanceID()
     return newest or last
 end
 
+-- Every raid of the newest journal tier, in journal order: the season. A
+-- season can add a raid mid-way (a one-boss raid listed last), so the boss
+-- pages walk all of them, never just the newest. Live when the journal
+-- engine is free, else the copy from the last walk. A table field, not a
+-- local: this file sits near Lua's local limit.
+NS.SeasonRaids = function()
+    local list = {}
+    if not (EncounterJournal and EncounterJournal:IsShown())
+        and EJ_GetNumTiers and EJ_SelectTier and EJ_GetInstanceByIndex then
+        EJ_SelectTier(EJ_GetNumTiers())
+        local i = 1
+        while true do
+            local id, nm = EJ_GetInstanceByIndex(i, true)
+            if not id then break end
+            list[#list + 1] = { id = id, name = nm }
+            i = i + 1
+        end
+    end
+    if not db then return list end
+    if #list > 0 then
+        db.seasonRaids = list
+        local set = {}
+        for _, r in ipairs(list) do set[r.id] = true end
+        db.seasonRaidSet = set
+    elseif db.seasonRaids then
+        list = db.seasonRaids
+    end
+    return list
+end
+
+-- The seasons of the newest journal tier. Each names the journal instance
+-- of its FIRST raid; it owns every raid listed after that one up to the
+-- next season's first raid, so a raid added mid-season joins by itself. A
+-- new season is one line. An entry with no `first` starts at the tier's top.
+NS.SEASONS = {
+    { key = "s1", name = "Season 1" },
+    { key = "s2", name = "Season 2", first = 1320 },   -- The Venomous Abyss
+}
+
+-- Seasons that have raids in the tier, oldest first: { key, name, raids }.
+-- A tier none of the `first` raids is in (a new expansion) is one season.
+NS.SeasonList = function()
+    local raids = NS.SeasonRaids()
+    local at, starts = {}, {}
+    for i, r in ipairs(raids) do at[r.id] = i end
+    for _, s in ipairs(NS.SEASONS) do
+        if s.first and at[s.first] then starts[#starts + 1] = { s = s, at = at[s.first] } end
+    end
+    if #starts == 0 then
+        return #raids > 0 and { { key = "cur", name = "This Season", raids = raids } } or {}
+    end
+    table.sort(starts, function(a, b) return a.at < b.at end)
+    if not NS.SEASONS[1].first and starts[1].at > 1 then
+        table.insert(starts, 1, { s = NS.SEASONS[1], at = 1 })
+    end
+    local list = {}
+    for k, st in ipairs(starts) do
+        local stop = starts[k + 1] and (starts[k + 1].at - 1) or #raids
+        local own = {}
+        for i = st.at, stop do own[#own + 1] = raids[i] end
+        list[#list + 1] = { key = st.s.key, name = st.s.name, raids = own }
+    end
+    return list
+end
+
+-- The season the boss pages show: the saved pick, else the newest. Mythic+
+-- always means the newest: the game only lists this season's dungeons.
+NS.SelectedSeason = function(mplus)
+    local list = NS.SeasonList()
+    local pick = not mplus and char and char.settings and char.settings.season
+    for _, s in ipairs(list) do
+        if s.key == pick then return s, list end
+    end
+    return list[#list], list
+end
+
+-- AceConfig values + sorting for the Season select.
+NS.SeasonSelect = function(mplus)
+    local cur, list = NS.SelectedSeason(mplus)
+    local values, order = {}, {}
+    for _, s in ipairs(mplus and { cur } or list) do
+        values[s.key] = s.name
+        order[#order + 1] = s.key
+    end
+    return values, order
+end
+
 local function OpenJournalToCurrentRaid()
     if not EncounterJournal then C_AddOns.LoadAddOn("Blizzard_EncounterJournal") end
     local inst = GetCurrentRaidInstanceID()
@@ -4008,6 +4096,18 @@ local function BuildOverviewArgs()
                 return count and ("Bonus rolls: |cffffd100%d|r"):format(count) or "Bonus rolls: ?"
             end,
         },
+        season = {
+            type = "select", order = 1.8, name = "Season", width = 0.8,
+            values = function() return (NS.SeasonSelect(OvDiff() == "mplusBonus")) end,
+            sorting = function() return select(2, NS.SeasonSelect(OvDiff() == "mplusBonus")) end,
+            get = function()
+                local s = NS.SelectedSeason(OvDiff() == "mplusBonus")
+                return s and s.key
+            end,
+            set = function(_, v)
+                if char then char.settings.season = v; OvRefreshList() end
+            end,
+        },
         diff = {
             type = "select", order = 2, name = "Difficulty", width = 1.0,
             values = { [17] = "Raid Finder", [14] = "Normal", [15] = "Heroic", [16] = "Mythic",
@@ -4121,6 +4221,18 @@ local function BuildDropsArgs()
         slotOrder[#slotOrder + 1] = d.key
     end
     return {
+        season = {
+            type = "select", order = 0.5, name = "Season", width = 0.8,
+            values = function() return (NS.SeasonSelect(DropsDiff() == "mplus")) end,
+            sorting = function() return select(2, NS.SeasonSelect(DropsDiff() == "mplus")) end,
+            get = function()
+                local s = NS.SelectedSeason(DropsDiff() == "mplus")
+                return s and s.key
+            end,
+            set = function(_, v)
+                if char then char.settings.season = v; OvRefreshList() end
+            end,
+        },
         diff = {
             type = "select", order = 1, name = "Difficulty", width = 1.0,
             values = { [17] = "Raid Finder", [14] = "Normal", [15] = "Heroic", [16] = "Mythic",
@@ -4582,8 +4694,40 @@ OvRefreshList = function()
     if mplus then
         entries = GetSeasonDungeonList()
     else
-        inst = GetCurrentRaidInstanceID()
-        if inst and EJ_GetEncounterInfoByIndex then
+        -- the picked season's raids, each under its name once there are several
+        local sel = NS.SelectedSeason()
+        local raids = sel and sel.raids or {}
+        if #raids > 0 and EJ_GetEncounterInfoByIndex then
+            entries = {}
+            local perRaid = {}
+            for _, r in ipairs(raids) do
+                local bosses = {}
+                local bi = 1
+                while true do
+                    local nm, _, bid = EJ_GetEncounterInfoByIndex(bi, r.id)
+                    if not nm or not bid then break end
+                    bosses[#bosses + 1] = { id = bid, name = nm }
+                    bi = bi + 1
+                end
+                if #bosses > 0 then
+                    db.bossList = db.bossList or {}
+                    db.bossList[r.id] = bosses
+                elseif db.bossList and db.bossList[r.id] then
+                    bosses = db.bossList[r.id]
+                end
+                if #bosses > 0 then perRaid[#perRaid + 1] = { raid = r, bosses = bosses } end
+            end
+            for _, pr in ipairs(perRaid) do
+                for k, b in ipairs(pr.bosses) do
+                    local e = { id = b.id, name = b.name }
+                    if k == 1 and #perRaid > 1 then e.raidHead = pr.raid.name end
+                    entries[#entries + 1] = e
+                end
+            end
+            inst = perRaid[1] and perRaid[1].raid.id or raids[1].id
+        end
+        if not entries then inst = GetCurrentRaidInstanceID() end
+        if not entries and inst and EJ_GetEncounterInfoByIndex then
             local bosses = {}
             local bi = 1
             while true do
@@ -4603,8 +4747,26 @@ OvRefreshList = function()
     end
     local y, shown, itemsShown = 0, 0, 0
     local bestRow, bestEV
+    local heads = 0
+    ovHost.raidHeads = ovHost.raidHeads or {}
     for _, entry in ipairs(entries or {}) do
         local id, bossName = entry.id, entry.name
+        if entry.raidHead then
+            heads = heads + 1
+            local h = ovHost.raidHeads[heads]
+            if not h then
+                h = ovHost.content:CreateFontString(nil, "OVERLAY")
+                h:SetFont(STANDARD_TEXT_FONT, 11, "")
+                h:SetTextColor(0.247, 0.788, 0.949, 1)
+                h:SetJustifyH("LEFT")
+                ovHost.raidHeads[heads] = h
+            end
+            h:ClearAllPoints()
+            h:SetPoint("TOPLEFT", 4, y - 4)
+            h:SetText(entry.raidHead)
+            h:Show()
+            y = y - 20
+        end
         shown = shown + 1
         local row = ovHost.rows[shown] or OvCreateRow(shown)
         row:ClearAllPoints()
@@ -4789,6 +4951,7 @@ OvRefreshList = function()
     if bestRow and bestRow:IsShown() then bestRow.best:Show() end
     for k = shown + 1, #ovHost.rows do ovHost.rows[k]:Hide() end
     for k = itemsShown + 1, #ovHost.itemRows do ovHost.itemRows[k]:Hide() end
+    for k = heads + 1, #ovHost.raidHeads do ovHost.raidHeads[k]:Hide() end
     ovHost.content:SetHeight(math.max(1, -y + 4))
     ovHost.scroll:UpdateScroll()
     -- 0 rows: the journal engine has not streamed this list yet (right

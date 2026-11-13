@@ -306,6 +306,15 @@ function SC.IsOverlayActive(frame)
   return (rec and rec.active) and true or false
 end
 
+-- An icon whose settings want the count overlay but has no live one: the
+-- settle that builds overlays ran before the CDM handed this frame its aura
+-- (login), or the aura moved onto a frame that never had one.
+function SC.NeedsOverlay(frame, cfg)
+  if not frame or not WantsOverlay(cfg) then return false end
+  local rec = overlayRecs[frame]
+  return not (rec and rec.active)
+end
+
 -- Create-time geometry only; formatter/style land in SetOverlayState (they
 -- depend on the frame's CURRENT occupant, which changes over the session).
 local function WireOverlayButton(btn, cdmFrame)

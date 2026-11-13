@@ -29,6 +29,24 @@ local C_DESC  = "ffb0b0b0"  -- entry description
 -- ===================================================================
 CL.versions = {
   {
+    version = "3.9.4",
+    sections = {
+      {
+        header = "New Features", color = C_NEW, items = {
+          { title = "Loot Planner Season Picker", desc = "The Bonus Roll and Drops overviews have a Season drop-down, so you can switch between this season's raids and last season's." },
+        },
+      },
+      {
+        header = "Bug Fixes", color = C_FIX, items = {
+          { title = "Kith'ix in the Loot Planner", desc = "The new raid now shows alongside the Venomous Abyss, with each raid's bosses under its name, instead of replacing it." },
+          { title = "Show at 1 Stack", desc = "Stack counts set to show from 1 stack now appear right away after logging in and when icons reshuffle." },
+          { title = "Aura Icon Shadow", desc = "With Keep CDM Styling on, aura icons no longer leave an empty shadow square behind while the aura is missing." },
+          { title = "Pandemic and Missing Glow", desc = "An icon's aura glow can now light up both while the aura is missing and in its pandemic window, and Pandemic Timing glows again on cooldown icons." },
+        },
+      },
+    },
+  },
+  {
     version = "3.9.3",
     sections = {
       {

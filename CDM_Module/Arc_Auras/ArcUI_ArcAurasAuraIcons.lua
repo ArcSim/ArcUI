@@ -356,6 +356,15 @@ local function WireAuraButton(btn, arcID)
     btn._arcIconOverride = iconOv
     btn._arcArcID = arcID
 
+    -- Keep CDM Styling shadow for the ACTIVE look. It lives on the button so
+    -- it shows and hides with the aura; the holder's own copy carries the
+    -- missing look at the Inactive Alpha. Created here for the same pooling
+    -- reason as the override above.
+    local cdmShadow = btn:CreateTexture(nil, "OVERLAY", nil, 2)
+    cdmShadow:SetAtlas("UI-HUD-CoolDownManager-IconOverlay", false)
+    cdmShadow:Hide()
+    btn._arcCDMShadow = cdmShadow
+
     -- Aura swipe: REVERSED (fresh buff bright, dark grows as it runs out).
     -- Duration display = the swipe's OWN countdown numbers (CDM parity:
     -- bare "8", not the engine default-formatter's "8 s" — EQOL does the
@@ -1172,6 +1181,25 @@ function AuraIcons.StyleActiveButton(btn, settings, sizeRef)
     ApplyBorderEdges(btn.TextOverlay or btn, btn, "_arcBtnBorder",
         (not forceHide) and settings and settings.border or nil, 1)
 
+    -- CDM shadow on the button, same extents as CDMEnhance's holder shadow.
+    -- Sized from sizeRef: rect reads inside the button partition are secret.
+    local cdmShadow = btn._arcCDMShadow
+    if cdmShadow then
+        local spec = ns.CDMShared and ns.CDMShared.GetCurrentSpecData
+            and ns.CDMShared.GetCurrentSpecData()
+        local w = sizeRef and sizeRef:GetWidth()
+        if spec and spec.keepCDMStyle and not forceHide and w and w > 0 then
+            local mul = (settings and settings.shadowSize) or 1.0
+            local ox, oy = w * 0.18 * mul, sizeRef:GetHeight() * 0.16 * mul
+            cdmShadow:ClearAllPoints()
+            cdmShadow:SetPoint("TOPLEFT", btn, "TOPLEFT", -ox, oy)
+            cdmShadow:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", ox, -oy)
+            cdmShadow:Show()
+        else
+            cdmShadow:Hide()
+        end
+    end
+
     local cht = (settings and settings.chargeText) or {}
     local st = btn._arcStacks
     if st then
@@ -1312,6 +1340,10 @@ function AuraIcons.ApplySettings(arcID, legalBtn)
     holder._arcBypassFrameAlphaHook = false
     holder._lastAppliedAlpha = 1
     holder.Icon:SetAlpha(missAlpha)
+    -- the holder's Keep CDM Styling shadow is part of the missing look too;
+    -- CDMEnhance shows and places it, this alpha is the one it uses
+    holder._arcAuraMissAlpha = missAlpha
+    if holder._arcIconOverlay then holder._arcIconOverlay:SetAlpha(missAlpha) end
     -- GHOST BORDER: our own edges (same painter as the active border, so the
     -- geometry matches pixel-for-pixel), following the missing-state alpha
     -- (Inactive Alpha 0 = fully hidden, no floating empty frame). CDMEnhance's

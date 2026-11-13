@@ -2779,6 +2779,17 @@ ns.CDMEnhance.ApplyForceHideText = ApplyForceHideText
 -- The FLAG is released unconditionally (every setter is config-gated, so a
 -- config-gated clear strands it when the user disables glowFollowPandemic);
 -- only the HIDE stays config-gated, so this never kills an unrelated glow.
+-- Pandemic over: drop the aura glow, then bring back a Glow When Aura Missing
+-- glow if the aura is gone (nil-compares only, secret-safe). The two glows
+-- share one key, so a plain hide here used to take the missing glow with it.
+local function EndPandemicAuraGlow(frame, aas)
+  HideAuraActiveGlow(frame)
+  if aas.glowWhenMissing == true and frame.auraInstanceID == nil and frame.totemData == nil
+     and ns.CDMEnhance.ShouldShowAuraActiveGlow(aas, frame, false) then
+    ShowAuraActiveGlow(frame, aas)
+  end
+end
+
 local function ClearPandemicGlow(frame)
   if not frame then return end
   frame._arcPandemicGlowActive = nil
@@ -2787,7 +2798,7 @@ local function ClearPandemicGlow(frame)
   local aasW = cfgW and cfgW.auraActiveState
   local svW  = cfgW and GetEffectiveStateVisuals(cfgW)
   if aasW and aasW.glow == true and aasW.glowFollowPandemic == true then
-    HideAuraActiveGlow(frame)
+    EndPandemicAuraGlow(frame, aasW)
   elseif svW and svW.readyGlow and svW.glowFollowPandemic then
     if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(frame) end
   end
@@ -3231,8 +3242,9 @@ ApplyIconStyle = function(frame, cdID)
         end
         -- Update shadow overlay anchors
         if self._arcIconOverlay then
-          local overlayAlpha = self._arcIconOverlay:GetAlpha()
-          if overlayAlpha and overlayAlpha > 0 then
+          -- shown, not alpha > 0: an aura holder's shadow can sit at alpha 0
+          -- and must still be in place when it surfaces
+          if self._arcIconOverlay:IsShown() then
             local iconTex = self.Icon or self.icon
             local anchor = iconTex or self
             local shadowSize = (self._arcCfg and self._arcCfg.shadowSize) or 1.0
@@ -4502,7 +4514,9 @@ ApplyIconStyle = function(frame, cdID)
       frame._arcIconOverlay:Hide()
     else
       frame._arcIconOverlay:Show()
-      frame._arcIconOverlay:SetAlpha(1)
+      -- aura holders stay at frame alpha 1, so their shadow takes the aura
+      -- icon's missing alpha; the live button carries its own copy
+      frame._arcIconOverlay:SetAlpha(frame._arcIsAuraIcon and (frame._arcAuraMissAlpha or 0) or 1)
       local iconTex = frame.Icon or frame.icon
       local anchor = iconTex or frame
       -- Shadow extend = 18% W / 16% H (from CDM XML: 9px on 50px Essential icon)
@@ -4773,7 +4787,7 @@ ApplyIconStyle = function(frame, cdID)
         local sv1  = panCfg1 and GetEffectiveStateVisuals(panCfg1)
         if aas1 and aas1.glow == true and aas1.glowFollowPandemic == true then
           self._arcPandemicGlowActive = nil
-          HideAuraActiveGlow(self)
+          EndPandemicAuraGlow(self, aas1)
         elseif sv1 and sv1.readyGlow and sv1.glowFollowPandemic then
           self._arcPandemicGlowActive = nil
           if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(self) end
@@ -4838,7 +4852,7 @@ ApplyIconStyle = function(frame, cdID)
         local sv3  = panCfg3 and GetEffectiveStateVisuals(panCfg3)
         if aas3 and aas3.glow == true and aas3.glowFollowPandemic == true then
           self._arcPandemicGlowActive = nil
-          HideAuraActiveGlow(self)
+          EndPandemicAuraGlow(self, aas3)
         elseif sv3 and sv3.readyGlow and sv3.glowFollowPandemic then
           self._arcPandemicGlowActive = nil
           if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(self) end
@@ -4853,7 +4867,7 @@ ApplyIconStyle = function(frame, cdID)
         local sv5  = panCfg5 and GetEffectiveStateVisuals(panCfg5)
         if aas5 and aas5.glow == true and aas5.glowFollowPandemic == true then
           self._arcPandemicGlowActive = nil
-          HideAuraActiveGlow(self)
+          EndPandemicAuraGlow(self, aas5)
         elseif sv5 and sv5.readyGlow and sv5.glowFollowPandemic then
           self._arcPandemicGlowActive = nil
           if ns.CDMEnhance.HideReadyGlow then ns.CDMEnhance.HideReadyGlow(self) end
@@ -4927,6 +4941,13 @@ function SetupChargeText(frame, cdID, cfg)
   -- showSingleStack ON:  suppress native Applications, use our mirror (also shows "1")
   if frame.Applications then
     local appFrame = frame.Applications
+    -- One settle per (frame, occupant) when the overlay is wanted but missing;
+    -- otherwise the count stayed off until a setting was toggled.
+    if ns.StackColor and ns.StackColor.NeedsOverlay and ns.StackColor.NeedsOverlay(frame, cfg)
+       and frame._arcSCSettleFor ~= cdID and ns.CDMEnhance.RequestStackSettle then
+      frame._arcSCSettleFor = cdID
+      ns.CDMEnhance.RequestStackSettle()
+    end
     -- 12.1 COUNT OVERLAY OWNS THE DISPLAY: while the StackColor overlay is
     -- live on this frame, THIS branch is the single writer for the native
     -- count's alpha — re-assert the hide every style pass (CDM re-Shows the

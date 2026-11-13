@@ -27,8 +27,15 @@ local HAS_ACTION_PINGS = (C_Ping ~= nil)
 -- the standalone owns the feature; ArcUI's copy steps aside completely.
 -- ("ArcPingFeed" was the folder name between the two Arc Pings namings, so it
 -- is still checked for anyone who installed during that window.)
-local STANDALONE_LOADED = C_AddOns and C_AddOns.IsAddOnLoaded
+-- Arc Auras' own pings module outranks this copy too while it is switched on
+-- (its saved flag is true or nil); read at load, so a switch needs a reload.
+local ARCAURAS_OWNS = C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("ArcAuras")
+    and type(ArcAurasDB) == "table" and type(ArcAurasDB.pings) == "table"
+    and ArcAurasDB.pings.on == true
+local STANDALONE_ADDON = C_AddOns and C_AddOns.IsAddOnLoaded
     and (C_AddOns.IsAddOnLoaded("ArcPingFeed") or C_AddOns.IsAddOnLoaded("ArcPings"))
+-- dormant for either owner; the name stays from when the standalone was the only one
+local STANDALONE_LOADED = STANDALONE_ADDON or ARCAURAS_OWNS
 
 function Pings.IsAvailable() return HAS_ACTION_PINGS and not STANDALONE_LOADED end
 
@@ -4155,7 +4162,9 @@ function ns.GetPingsOptionsTable()
             type = "group", name = "Pings",
             args = {
                 sa = { type = "description", order = 1, fontSize = "medium",
-                    name = "The standalone |cff33ff99Arc Pings|r addon is loaded — configure it there (/arcpings). ArcUI's built-in feed is dormant so the two never fight.\n" },
+                    name = STANDALONE_ADDON
+                        and "The standalone |cff33ff99Arc Pings|r addon is loaded — configure it there (/arcpings). ArcUI's built-in feed is dormant so the two never fight.\n"
+                        or "Arc Auras' |cff33ff99Arc Pings|r module is on: set it up there (Arc Auras > Modules). ArcUI's built-in feed is off so the two never fight.\n" },
                 -- pingable Arc icons are ArcUI-only and always on, so nothing to
                 -- configure here -- just say they still work
                 iconsDesc = { type = "description", order = 2, fontSize = "medium",

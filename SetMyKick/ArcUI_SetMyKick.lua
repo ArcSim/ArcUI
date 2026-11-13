@@ -230,6 +230,14 @@ local function IsStandaloneLoaded()
 	return C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("KickAssist")
 end
 
+-- Arc Auras' Kick Assist module outranks this copy too while it is switched
+-- on (its saved flag is true or nil); a switch takes effect on reload.
+local function ArcAurasOwnsKick()
+	return C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("ArcAuras")
+		and type(ArcAurasDB) == "table" and type(ArcAurasDB.kick) == "table"
+		and ArcAurasDB.kick.on == true
+end
+
 local function EnsureDB()
 	if DB then return DB end
 	if not ns.db then return nil end
@@ -1233,7 +1241,7 @@ end
 function SMK.SetEnabled(v)
 	if EnsureDB() == nil then return end
 	GDB.enabled = v and true or false
-	if IsStandaloneLoaded() then return end
+	if IsStandaloneLoaded() or ArcAurasOwnsKick() then return end
 	if GDB.enabled then ActivateRuntime() else DeactivateRuntime() end
 end
 
@@ -1274,6 +1282,19 @@ function ns.GetSetMyKickOptionsTable()
 				tip = {
 					type = "description", order = 4, fontSize = "small",
 					name = "To use the version built into ArcUI instead, disable the standalone \"Kick Assist\" addon and reload.",
+				},
+			},
+		}
+	end
+
+	if ArcAurasOwnsKick() then
+		return {
+			type = "group",
+			name = "Kick Assist",
+			args = {
+				notice = {
+					type = "description", order = 1, fontSize = "medium",
+					name = "|cffffd200Kick Assist|r is on in Arc Auras (Arc Auras > Modules), so the built-in version is off to avoid duplicates.",
 				},
 			},
 		}
@@ -1432,7 +1453,7 @@ end
 
 function SMK.Init()
 	EnsureDB()
-	if IsStandaloneLoaded() then return end -- standalone owns it; stay dormant
+	if IsStandaloneLoaded() or ArcAurasOwnsKick() then return end -- another owner has it; stay dormant
 
 	if not slashRegistered then
 		slashRegistered = true

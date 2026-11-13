@@ -275,10 +275,10 @@ function AF.ShouldShowAuraActiveGlow(auraActiveCfg, frame, isReady)
 
   if not auraActiveCfg then return false end
 
-  -- glowFollowPandemic: CDM pandemic hooks own show/hide — suppress normal aura-gain path
-  if auraActiveCfg.glowFollowPandemic then return false end
-
-  local glowOnActive  = auraActiveCfg.glow == true
+  -- Pandemic Timing hands the ACTIVE glow to the CDM pandemic hooks; the
+  -- missing glow stays here. A leftover glowFollowPandemic with the active
+  -- glow off (its option is hidden then) means nothing.
+  local glowOnActive  = auraActiveCfg.glow == true and not auraActiveCfg.glowFollowPandemic
   local glowOnMissing = auraActiveCfg.glowWhenMissing == true
   if not glowOnActive and not glowOnMissing then return false end
 
